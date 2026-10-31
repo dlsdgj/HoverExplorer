@@ -13,7 +13,7 @@ namespace HoverExplorer
 {
     internal static class Program
     {
-        public const string Version = "1.0.9.8";
+        public const string Version = "1.0.9.9";
 
         private static string _desktopPath;
         private static IntPtr _listview = IntPtr.Zero;
@@ -211,22 +211,30 @@ namespace HoverExplorer
                 Text = "HoverExplorer",
             };
             var trayMenu = new ContextMenuStrip();
+            // 深浅主题：DarkColorTable 的各属性实时读 Config.BG/Fg —— 主题切换后菜单自动跟上。
+            // 此前托盘菜单没挂渲染器，系统浅色下菜单白底，与整套深色 UI 割裂
+            trayMenu.ForeColor = Config.FG;
+            trayMenu.Renderer = new ToolStripProfessionalRenderer(new DarkColorTable());
             var explorerItem = new ToolStripMenuItem(I18n.T("explorer_hover"));
+            _trayExplorerItem = explorerItem;
             explorerItem.CheckOnClick = true;
             explorerItem.Checked = Config.ExplorerEnabled;
             explorerItem.CheckedChanged += (s, e) =>
             {
                 Config.ExplorerEnabled = explorerItem.Checked;
                 Config.Save();
+                if (_settingsForm != null && !_settingsForm.IsDisposed) _settingsForm.SyncFromTray();
             };
             trayMenu.Items.Add(explorerItem);
             var previewItem = new ToolStripMenuItem(I18n.T("file_preview"));
+            _trayPreviewItem = previewItem;
             previewItem.CheckOnClick = true;
             previewItem.Checked = Config.PreviewFiles;
             previewItem.CheckedChanged += (s, e) =>
             {
                 Config.PreviewFiles = previewItem.Checked;
                 Config.Save();
+                if (_settingsForm != null && !_settingsForm.IsDisposed) _settingsForm.SyncFromTray();
             };
             trayMenu.Items.Add(previewItem);
             var origItem = new ToolStripMenuItem(I18n.T("preview_orig"));
@@ -289,11 +297,14 @@ namespace HoverExplorer
             refreshExitText();
 
             var themeItem = new ToolStripMenuItem(I18n.T("theme"));
+            var themeAuto = new ToolStripMenuItem(I18n.T("theme_auto")) { Checked = (Config.Theme == "auto") };
             var themeDark = new ToolStripMenuItem(I18n.T("theme_dark")) { Checked = (Config.Theme == "dark") };
             var themeLight = new ToolStripMenuItem(I18n.T("theme_light")) { Checked = (Config.Theme == "light") };
-            Action refreshThemeMenus = () => { themeDark.Checked = Config.Theme == "dark"; themeLight.Checked = Config.Theme == "light"; };
-            themeDark.Click += (s, e) => { Config.Theme = "dark"; Config.ApplyTheme(); Config.Save(); refreshThemeMenus(); PopupForm.ClearUiIconCache(); foreach (var p in _panels) p.RefreshPanel(); foreach (var c in _pinCards) { if (!c.IsDisposed) c.ApplyPalette(); } EntryListForm.NotifyChanged(); if (_entryCardForm != null && !_entryCardForm.IsDisposed) _entryCardForm.Relayout(); };
-            themeLight.Click += (s, e) => { Config.Theme = "light"; Config.ApplyTheme(); Config.Save(); refreshThemeMenus(); PopupForm.ClearUiIconCache(); foreach (var p in _panels) p.RefreshPanel(); foreach (var c in _pinCards) { if (!c.IsDisposed) c.ApplyPalette(); } EntryListForm.NotifyChanged(); if (_entryCardForm != null && !_entryCardForm.IsDisposed) _entryCardForm.Relayout(); };
+            Action refreshThemeMenus = () => { themeAuto.Checked = Config.Theme == "auto"; themeDark.Checked = Config.Theme == "dark"; themeLight.Checked = Config.Theme == "light"; };
+            themeAuto.Click += (s, e) => { Config.Theme = "auto"; ApplyThemeChange(); refreshThemeMenus(); };
+            themeDark.Click += (s, e) => { Config.Theme = "dark"; ApplyThemeChange(); refreshThemeMenus(); };
+            themeLight.Click += (s, e) => { Config.Theme = "light"; ApplyThemeChange(); refreshThemeMenus(); };
+            themeItem.DropDownItems.Add(themeAuto);
             themeItem.DropDownItems.Add(themeDark);
             themeItem.DropDownItems.Add(themeLight);
 
@@ -381,6 +392,7 @@ namespace HoverExplorer
             trayMenu.Items.Add(exitItem);
 
             TrayMenu = trayMenu;
+            ThemeStripRecursive(trayMenu);
             // 选项菜单关闭后解除所有面板的菜单打开标记（避免面板被悬停丢失逻辑关闭后标记残留）
             trayMenu.Closed += (s, e) => { foreach (var p in _panels) p.MenuOpen = false; };
             _notifyIcon.ContextMenuStrip = trayMenu;
@@ -629,6 +641,42 @@ namespace HoverExplorer
             _saveTimer.Stop();
             _saveTimer.Start();
         }
+
+        // 菜单全局主题化：递归所有子下拉（语言/主题等子菜单是独立 ToolStrip，不继承父级
+        // ForeColor/渲染器——漏一层就是黑字白底）。DarkColorTable 属性实时读 Config，
+        // 主题切换后重挂即全局换装
+        private static void ThemeStripRecursive(ToolStrip strip)
+        {
+            if (strip == null) return;
+            strip.ForeColor = Config.FG;
+            strip.Renderer = new ToolStripProfessionalRenderer(new DarkColorTable());
+            foreach (ToolStripItem it in strip.Items)
+            {
+                it.ForeColor = Config.FG;
+                var dd = it as ToolStripDropDownItem;
+                if (dd != null && dd.HasDropDownItems) ThemeStripRecursive(dd.DropDown);
+            }
+        }
+
+        // 主题切换级联（托盘菜单三选一与"跟随系统"自动切换共用同一刷新链）
+        internal static void ApplyThemeChange()
+        {
+            Config.ApplyTheme();
+            Config.Save();
+            _lastSysDark = Config.SystemDark;
+            PopupForm.ClearUiIconCache();
+            if (TrayMenu != null) ThemeStripRecursive(TrayMenu);   // 全菜单层级跟主题
+            foreach (var p in _panels) p.RefreshPanel();
+            foreach (var c in _pinCards) { if (!c.IsDisposed) c.ApplyPalette(); }
+            EntryListForm.NotifyChanged();
+            if (_entryCardForm != null && !_entryCardForm.IsDisposed) _entryCardForm.Relayout();
+        }
+
+        private static bool _lastGatePass = true;
+
+        // "跟随系统"轮询状态（Tick 内 2s 节流一次注册表读取）
+        private static DateTime _lastSysThemeAt = DateTime.UtcNow;
+        private static bool _lastSysDark = Config.SystemDark;
 
         private static void Tick()
         {
@@ -997,6 +1045,12 @@ namespace HoverExplorer
             // 捕获健康检查放在所有提前 return 之前：即使菜单打开/悬停已关闭也要自愈，
             // 否则一旦捕获残留，点击被路由到卡片，用户连操作入口都点不到
             ReleaseStuckCaptures();
+            // 跟随系统主题：Theme=auto 时轮询系统深浅色（2s 节流，注册表读取代价可忽略），变化即级联刷新
+            if (Config.Theme == "auto" && (DateTime.UtcNow - _lastSysThemeAt).TotalSeconds >= 2)
+            {
+                _lastSysThemeAt = DateTime.UtcNow;
+                if (Config.SystemDark != _lastSysDark) ApplyThemeChange();
+            }
             // 钩子同步放在所有提前 return 之前：暂停/菜单等分支也要能卸载，钩子不能常驻。
             // 鼠标钩子 = 拖拽会话中且左键仍按住（会话标志在下方更新，这里按松键兜底卸载）；
             // 键盘钩子 = 任一面板可见
@@ -1122,9 +1176,22 @@ namespace HoverExplorer
                 return;
             }
 
-            // Alt 临时禁用悬停：按住时不检测新悬停目标（保活/置顶逻辑已跑完，已有面板自然衰减关闭）
-            if (Config.AltSuppressHover && (Control.ModifierKeys & Keys.Alt) == Keys.Alt)
-                return;
+            // 悬停抑制：Alt 临时禁用 / 修饰键门控（按住才触发）。
+            // 文件夹面板与文件预览各自一套门控：只拦各自功能，未拦的一方继续检测
+            bool folderSup = Config.HoverSuppressed(false);
+            bool previewSup = Config.HoverSuppressed(true);
+            // 门控状态翻转日志：诊断"时灵时不灵"——不灵的那一下看这里（放行/抑制）与 [hover] 目标
+            bool gatePass = !(folderSup && previewSup);
+            if (gatePass != _lastGatePass)
+            {
+                DebugLog("[gate] " + (gatePass ? "放行" : "抑制") + " @" + mx + "," + my);
+                _lastGatePass = gatePass;
+            }
+            MaybeGateHint(mx, my);
+            // 两套都拦住：跳过昂贵的悬停检测（hoverPath 保持 null），但不能提前 return——
+            // 下方的关闭维护（预览 300ms 宽限关闭 + MaybeClose 面板衰减）必须照常跑，
+            // 否则按门控键打开的预览/面板在松键后永远不关
+            bool bothSup = folderSup && previewSup;
 
             string hoverPath = null;
             bool hoverIsDir = false;
@@ -1176,7 +1243,7 @@ namespace HoverExplorer
                 }
             }
 
-            if (!menuOpen && !inEntryRect)
+            if (!menuOpen && !inEntryRect && !bothSup)
             {
                 if (NativeMethods.PointOnDesktop(mx, my))
                 {
@@ -1197,6 +1264,9 @@ namespace HoverExplorer
             string hoverFolder = (hoverPath != null && hoverIsDir) ? hoverPath : null;
             // 无面板时悬停文件（图片/文本）直接预览，受"文件预览"开关控制
             string hoverFile = (hoverPath != null && !hoverIsDir && !_dragSessionActive && _panels.All(p => p.Pinned)) ? hoverPath : null;
+            // 门控只拦各自功能：文件夹被拦不弹面板，预览被拦不弹预览（未拦的一方正常走）
+            if (folderSup) hoverFolder = null;
+            if (previewSup) hoverFile = null;
             if (hoverPath != null && Config.HideTooltip) HideTooltips();
             if (hoverPath != _lastHoverPath)
             {
@@ -1274,18 +1344,6 @@ namespace HoverExplorer
                             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
                         DebugLog("[panel] OPENED at " + p2.Left + "," + p2.Top + " size " + p2.Width + "x" + p2.Height
                             + " visible=" + p2.Visible + " topmost=" + p2.TopMost);
-                        // 截图面板区域确认是否真的可见
-                        try
-                        {
-                            using (var bmp = new System.Drawing.Bitmap(p2.Width, p2.Height))
-                            using (var g = System.Drawing.Graphics.FromImage(bmp))
-                            {
-                                g.CopyFromScreen(p2.Left, p2.Top, 0, 0, bmp.Size);
-                                bmp.Save("C:\\Users\\Administrator\\Desktop\\HoverFolder\\cs\\panel_shot.png");
-                            }
-                            DebugLog("[panel] shot saved");
-                        }
-                        catch (Exception ex) { DebugLog("[panel] shot err: " + ex.Message); }
                         // 诊断：z 序在面板上方的窗口
                         var prev = NativeMethods.GetWindow(p2.Handle, NativeMethods.GW_HWNDPREV);
                         int cnt = 0;
@@ -1382,6 +1440,43 @@ namespace HoverExplorer
             return _reader;
         }
 
+        // ===== 门控发现提示：门控开启而用户没按键直接悬停到条目约 1.5s，光标旁轻提示一次。
+        // 提示后 5 分钟内不重复；鼠标移动即重计驻留。只在实际悬停到条目上才提示（桌面空白不打扰）=====
+        private static DateTime _supDwellStart = DateTime.MinValue;
+        private static Point _supDwellPos;
+        private static bool _supDwellArmed;
+        private static DateTime _gateHintAt = DateTime.MinValue;
+
+        private static void MaybeGateHint(int mx, int my)
+        {
+            if (!Config.FolderGateEnabled && !Config.PreviewGateEnabled) { _supDwellStart = DateTime.MinValue; return; }
+            if (!(Config.HoverSuppressed(false) || Config.HoverSuppressed(true))) { _supDwellStart = DateTime.MinValue; return; }
+            var now = DateTime.UtcNow;
+            if (_supDwellStart == DateTime.MinValue || mx != _supDwellPos.X || my != _supDwellPos.Y)
+            {
+                _supDwellStart = now; _supDwellPos = new Point(mx, my); _supDwellArmed = false;
+                return;
+            }
+            if (_supDwellArmed || (now - _supDwellStart).TotalMilliseconds < 1500) return;
+            if ((now - _gateHintAt).TotalMinutes < 5) return;
+            _supDwellArmed = true;
+            Rectangle hr; bool isDir;
+            string p = null;
+            if (NativeMethods.PointOnDesktop(mx, my))
+                p = DetectDesktopItem(mx, my, out hr, out isDir);
+            else if (Config.TcEnabled)
+                p = TcSupport.DetectHoverItem(mx, my, out hr, out isDir);
+            else if (Config.ExplorerEnabled)
+                p = ExplorerSupport.DetectHoverItem(mx, my, out hr, out isDir);
+            if (string.IsNullOrEmpty(p) && Config.PerchEnabled)
+                p = PerchSupport.DetectHoverItem(mx, my, out hr, out isDir);
+            if (string.IsNullOrEmpty(p)) return;
+            _gateHintAt = now;
+            int mods = Config.FolderGateEnabled ? Config.FolderGateMods : Config.PreviewGateMods;
+            Tips.Flash(string.Format(I18n.T("gate_hint"), Config.ModsLabel(mods)), 1400);
+            DebugLog("[gate] hint shown @ " + mx + "," + my + " target=" + p);
+        }
+
         private static void OpenSub(PopupForm sender, int level, string path, int rowScreenY)
         {
             DebugLog("[cascade] OpenSub 子面板 level=" + (level + 1) + " path=" + path + " 当前面板数=" + _panels.Count);
@@ -1459,14 +1554,14 @@ namespace HoverExplorer
             foreach (var p in _panels)
             {
                 if (p.IsDisposed || !p.IsHandleCreated) continue;
-                Win11.Apply(p.Handle, Config.Theme != "light", Config.Border);
+                Win11.Apply(p.Handle, Config.IsDark, Config.Border);
                 Win11.RefreshNc(p.Handle);   // 重跑 NCCALCSIZE（描边环增减）并整帧重画
                 p.Invalidate(true);
             }
             foreach (var c in _pinCards)
             {
                 if (c.IsDisposed || !c.IsHandleCreated) continue;
-                Win11.Apply(c.Handle, Config.Theme != "light", Config.Border);
+                Win11.Apply(c.Handle, Config.IsDark, Config.Border);
                 Win11.ForceSquareCorners(c.Handle);   // 卡片始终直角，不跟随圆角模式
                 c.Invalidate(true);
             }
@@ -1489,10 +1584,17 @@ namespace HoverExplorer
         }
 
         // 设置面板即改即生效：统一落盘 + 桌面色块/托盘文案刷新，按需重注册热键、刷新存活面板
+        private static ToolStripMenuItem _trayExplorerItem;
+        private static ToolStripMenuItem _trayPreviewItem;
+
         internal static void ApplySettingsLive(bool hotkeys, bool panels)
         {            Config.Save();
             UpdateEntryIndicator();
-            if (hotkeys)
+            // 设置窗改了 Explorer 悬停 / 文件预览 → 托盘勾选态跟上（程序化赋值触发
+            // CheckedChanged 把同值写回 Config，无副作用）
+            if (_trayExplorerItem != null) _trayExplorerItem.Checked = Config.ExplorerEnabled;
+            if (_trayPreviewItem != null) _trayPreviewItem.Checked = Config.PreviewFiles;
+            if (hotkeys && _hotkey != null)
             {
                 _hotkey.ReRegisterCard();
                 _hotkey.ReRegisterEntry();
@@ -2027,7 +2129,7 @@ namespace HoverExplorer
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            Win11.ApplyRounded(Handle, Config.Theme != "light");
+            Win11.ApplyRounded(Handle, Config.IsDark);
         }
 
         protected override void OnPaint(PaintEventArgs e)

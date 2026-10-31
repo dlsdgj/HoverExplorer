@@ -922,6 +922,7 @@ namespace HoverExplorer
         private void ShowCardMenu()
         {
             var m = new ContextMenuStrip { BackColor = Config.BG, ForeColor = Config.FG, Font = new Font(Config.FontName, Config.FontSize) };
+            m.Renderer = new ToolStripProfessionalRenderer(new DarkColorTable());
             if (_item.Kind == "url")
             {
                 m.Items.Add(I18n.T("open"), null, (s, e) => Run());

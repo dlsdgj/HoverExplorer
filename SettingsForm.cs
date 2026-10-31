@@ -40,6 +40,11 @@ namespace HoverExplorer
         private ToggleSwitch _keepToggle;
         private ToggleSwitch _rowSwapToggle;
         private ToggleSwitch _altSuppressToggle;
+        private DarkCombo _modeExplorer;  // 悬停浏览模式：0 关闭 1 总是 2 按住Ctrl 3 按住Shift 4 按住Alt
+        private Label _altGateHint;       // 门控键=Alt 时的互斥说明（动态显隐）
+        private bool _internalSync;       // 托盘→设置回写时抑制 SelectedIndexChanged 的反向应用
+        private DarkCombo _modePreview;   // 文件预览模式（同上）
+        private ToggleSwitch _pvMuteToggle;         // 视频预览默认静音
         private ToggleSwitch _entryToggle;
         // 预览类型分类开关（图片/视频/音频/文档/文本/压缩包/字体/其他）
         private ToggleSwitch _pvImageToggle;
@@ -60,9 +65,9 @@ namespace HoverExplorer
         private MsStepper _closeDelayStepper;
         private MsStepper _entryDelayStepper;
 
-        private ComboBox _cornerCombo;
-        private ComboBox _tcSortCombo;
-        private ComboBox _sortCombo;
+        private DarkCombo _cornerCombo;
+        private DarkCombo _tcSortCombo;
+        private DarkCombo _sortCombo;
         private Label _areaLbl;
         private Button _areaPickBtn;
         private Button _pausePickBtn;
@@ -219,7 +224,7 @@ namespace HoverExplorer
             };
             // FlowLayoutPanel.DoubleBuffered 受保护：反射开启，滚动移动时整列子控件一次合成绘制，消除卡顿闪烁
             typeof(Control).GetProperty("DoubleBuffered", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance).SetValue(_scrollPanel, true, null);
-            bool dark0 = Config.Theme != "light";
+            bool dark0 = Config.IsDark;
             _scrollBar = new SlimScrollBar
             {
                 Style = SlimScrollBar.BarStyle.Thin,
@@ -326,15 +331,35 @@ namespace HoverExplorer
             _altSuppressToggle.Toggled += (s, e) => _fnApplySettings(false, false);
             y = _hoverGroup.AddRow(y, I18n.T("alt_suppress"), I18n.T("alt_suppress_desc"), _altSuppressToggle);
 
-            // 窗口边角：直角（卡片风默认）/ 圆角·粗描边（Win11）；切换即时重刷存活窗口
-            _cornerCombo = new ComboBox
+            // 悬停浏览（桌面/资源管理器）与文件预览：各一个下拉搞定——关闭 / 总是 / 按住某键才触发。
+            // 即改即生效，ApplySettingsLive 会把托盘勾选态同步
+            _modeExplorer = _fnMakeModeCombo(ModeFromConfig(Config.ExplorerEnabled, Config.FolderGateEnabled, Config.FolderGateMods));
+            _modeExplorer.SelectedIndexChanged += (s, e) => { _fnUpdateAltGateHint(); _fnApplySettings(false, false); };
+            y = _hoverGroup.AddRow(y, I18n.T("explorer_hover"), I18n.T("mode_desc"), _modeExplorer);
+
+            _modePreview = _fnMakeModeCombo(ModeFromConfig(Config.PreviewFiles, Config.PreviewGateEnabled, Config.PreviewGateMods));
+            _modePreview.SelectedIndexChanged += (s, e) => { _fnUpdateAltGateHint(); _fnApplySettings(false, false); };
+            y = _hoverGroup.AddRow(y, I18n.T("file_preview"), I18n.T("mode_desc"), _modePreview);
+
+            // Alt 互斥提示行：任一模式选了"按住 Alt"就亮出说明（门控键=Alt 时按 Alt 是放行不是禁用）。
+            // 空间常驻（RowH），避免 AccGroup 只增不减的行高机制导致布局跳动
+            _altGateHint = new Label
             {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Font = new Font(Config.FontName, 8.5f),
-                Width = 150,
-                Height = 24
+                Location = new Point(AccGroup.InL, AccGroup.HeadH + y),
+                AutoSize = true,
+                Font = new Font(Config.FontName, 8f),
+                Visible = false,
+                Tag = "paint"
             };
-            _cornerCombo.Items.AddRange(new object[] { I18n.T("corner_square"), I18n.T("corner_round") });
+            _hoverGroup.Controls.Add(_altGateHint);
+            _hoverGroup.ExpandRow(y, RowH);
+            y += RowH;
+            _fnUpdateAltGateHint();   // 打开设置窗时若已选"按住 Alt"，提示立即就位
+
+            // 窗口边角：直角（卡片风默认）/ 圆角·粗描边（Win11）；切换即时重刷存活窗口
+            _cornerCombo = new DarkCombo { Font = new Font(Config.FontName, 8.5f), Width = 150, Height = 24 };
+            _cornerCombo.SetItems(new object[] { I18n.T("corner_square"), I18n.T("corner_round") },
+                Config.WindowCorners == 1 ? 1 : 0);
             _cornerCombo.SelectedIndex = Config.WindowCorners == 1 ? 1 : 0;
             _cornerCombo.SelectedIndexChanged += (s, e) =>
             {
@@ -349,7 +374,7 @@ namespace HoverExplorer
             _hoverGroup.FinishRows();
 
 
-            // ==== 组：预览类型（逐类开关，参考 QTTabBar 的"按类型预览"设置）====
+            // ==== 组：预览类型（逐类开关，的"按类型预览"设置）====
             _pvTypeGroup = _fnNewGroup(I18n.T("group_preview_types"), false);
             _pvTypeGroup.AddHeadLink("@成熟的剪辑猿", "https://b23.tv/hVdEGrA");
             _pvTypeGroup.AddHeadLink("GitHub", "https://github.com/akahoz94");
@@ -357,6 +382,10 @@ namespace HoverExplorer
             _pvSpeedToggle = new ToggleSwitch { On = Config.SpeedToggle };
             _pvSpeedToggle.Toggled += (s, e) => { _fnApplySettings(false, false); };
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_type_speed"), null, _pvSpeedToggle);
+            // 视频预览默认静音（办公室友好）：悬停触发的视频先无声，点控制条喇叭键恢复
+            _pvMuteToggle = new ToggleSwitch { On = Config.PreviewMuted };
+            _pvMuteToggle.Toggled += (s, e) => _fnApplySettings(false, false);
+            y = _pvTypeGroup.AddRow(y, I18n.T("mute_video"), I18n.T("mute_video_desc"), _pvMuteToggle);
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_types_desc"), null, null);
 
             _pvImageToggle = new ToggleSwitch { On = Config.PreviewImage };
@@ -462,7 +491,7 @@ namespace HoverExplorer
             int row1Y = AccGroup.HeadH + y;
             var schemeLbl = new Label { Text = I18n.T("palette_scheme") + ":", Font = new Font(Config.FontName, 9f), ForeColor = Config.FG, Location = new Point(12, row1Y + 4), AutoSize = true, Visible = false };
             palGroup.Controls.Add(schemeLbl);
-            var schemeCombo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font(Config.FontName, 9f), Location = new Point(12 + schemeLbl.PreferredWidth + 8, row1Y), Width = 130, BackColor = Config.BG, ForeColor = Config.FG, Visible = false };
+            var schemeCombo = new DarkCombo { Font = new Font(Config.FontName, 9f), Location = new Point(12 + schemeLbl.PreferredWidth + 8, row1Y), Width = 130, Visible = false };
             palGroup.Controls.Add(schemeCombo);
             var btnDelScheme = mkBtn(I18n.T("del_scheme"));
             var btnSaveAs = mkBtn(I18n.T("save_as"));
@@ -627,7 +656,7 @@ namespace HoverExplorer
             int cpRow1Y = AccGroup.HeadH + y;
             var cpSchemeLbl = new Label { Text = I18n.T("palette_scheme") + ":", Font = new Font(Config.FontName, 9f), ForeColor = Config.FG, Location = new Point(12, cpRow1Y + 4), AutoSize = true, Visible = false };
             _cardGroup.Controls.Add(cpSchemeLbl);
-            var cpSchemeCombo = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Font = new Font(Config.FontName, 9f), Location = new Point(12 + cpSchemeLbl.PreferredWidth + 8, cpRow1Y), Width = 130, BackColor = Config.BG, ForeColor = Config.FG, Visible = false };
+            var cpSchemeCombo = new DarkCombo { Font = new Font(Config.FontName, 9f), Location = new Point(12 + cpSchemeLbl.PreferredWidth + 8, cpRow1Y), Width = 130, Visible = false };
             _cardGroup.Controls.Add(cpSchemeCombo);
             Func<string, Button> cpBtn = delegate(string text) { var b = new Button { Text = text, Font = new Font(Config.FontName, 9f), FlatStyle = FlatStyle.Flat, BackColor = Config.BG, ForeColor = Config.FG, Height = 26, Visible = false }; b.FlatAppearance.BorderColor = Config.Border; return b; };
             Action cpApply = null;
@@ -660,7 +689,7 @@ namespace HoverExplorer
             cpEditor.Controls.Add(cpStripW);
             int cpFontY = cpExtraY + 24;
             cpEditor.Controls.Add(new Label { Text = I18n.T("cp_font"), Font = new Font(Config.FontName, 9f), ForeColor = Config.FG, Location = new Point(0, cpFontY + 3), AutoSize = true });
-            var cpFontCombo = new ComboBox { Location = new Point(cpAttrX, cpFontY), Size = new Size(200, 22), Font = new Font(Config.FontName, 9f), DropDownStyle = ComboBoxStyle.DropDownList };
+            var cpFontCombo = new DarkCombo { Location = new Point(cpAttrX, cpFontY), Size = new Size(200, 24), Font = new Font(Config.FontName, 9f) };
             using (var ifc = new InstalledFontCollection())
                 foreach (var ff in ifc.Families)
                     cpFontCombo.Items.Add(ff.Name);
@@ -861,13 +890,7 @@ namespace HoverExplorer
             _sortGroup = _fnNewGroup(I18n.T("group_sort"), false);
             _sortGroup.AddChip("");
 
-            _sortCombo = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Font = new Font(Config.FontName, 8.5f),
-                Width = 170,
-                Height = 24
-            };
+            _sortCombo = new DarkCombo { Font = new Font(Config.FontName, 8.5f), Width = 170, Height = 24 };
             _sortCombo.Items.AddRange(new object[] {
                 I18n.T("sort_name") + " ↑", I18n.T("sort_name") + " ↓",
                 I18n.T("sort_size") + " ↑", I18n.T("sort_size") + " ↓",
@@ -888,14 +911,7 @@ namespace HoverExplorer
             _tcGroup = _fnNewGroup(I18n.T("group_tc"), false);
             _tcGroup.AddChip(I18n.T("tag_paused"), true);
 
-            _tcSortCombo = new ComboBox
-            {
-                DropDownStyle = ComboBoxStyle.DropDownList,
-                Font = new Font(Config.FontName, 8.5f),
-                Enabled = false,
-                Width = 170,
-                Height = 24
-            };
+            _tcSortCombo = new DarkCombo { Font = new Font(Config.FontName, 8.5f), Enabled = false, Width = 170, Height = 24 };
             _tcSortCombo.Items.AddRange(new object[] { "自动 (读 TC ini)", "名称 ↑", "名称 ↓", "日期 ↑", "日期 ↓", "大小 ↑", "大小 ↓", "扩展名 ↑", "扩展名 ↓" });
             _tcSortCombo.SelectedIndex = Config.TcSortMode + 1;
 
@@ -909,6 +925,7 @@ namespace HoverExplorer
                 try { Clipboard.SetText("jtugqivi"); MessageBox.Show(I18n.T("donated"), I18n.T("donate"), MessageBoxButtons.OK, MessageBoxIcon.Information); } catch { }
             };
             var aboutGroup = _fnNewGroup(I18n.T("group_about"), true);
+            aboutGroup.FreeformLayout = true;   // 自由排版说明文本，几何审计按行式规则扫会误报
             const int qrSize = 150;
             Image qrImg = null;
             try { var s = typeof(SettingsForm).Assembly.GetManifestResourceStream("HoverExplorer.donate_qr.png"); if (s != null) qrImg = Image.FromStream(s); } catch { }
@@ -977,8 +994,65 @@ namespace HoverExplorer
                 }
             };
             aboutGroup.Controls.Add(fixerLink);
+            // 为什么要下载 ffmpeg（与 MP3 段同款"标题+正文+链接"结构）+ 一键下载（Mp3Fixer 同款方案）。
+            // 落点=程序目录（不可写退 %LOCALAPPDATA%\HoverExplorer），下完探测立即生效。
+            // 状态提示与链接同行（右侧），不占行高、不推动下方绝对定位的内容
+            int ffdlY = fixerLink.Bottom + 14;
+            var ffDlTitle = new Label { Text = I18n.T("ffmpeg_dl_title"), Location = new Point(PadX, ffdlY), AutoSize = true, Font = new Font(Config.FontName, 8.5f, FontStyle.Bold), Tag = "sub", Visible = false };
+            aboutGroup.Controls.Add(ffDlTitle);
+            var ffDlBody = new Label
+            {
+                Text = I18n.T("ffmpeg_dl_body"),
+                Location = new Point(PadX, ffdlY + 20),
+                AutoSize = false,
+                Size = new Size(aboutGroup.Width - PadX * 2, 60),
+                ForeColor = Config.PlaceholderFg,
+                Font = new Font(Config.FontName, 8f),
+                Tag = "sub",
+                Visible = false
+            };
+            ffDlBody.Height = Math.Max(48, (int)Math.Ceiling((double)TextRenderer.MeasureText(ffDlBody.Text, ffDlBody.Font, ffDlBody.Size, TextFormatFlags.WordBreak).Height / 12.0) * 12 + 4);
+            aboutGroup.Controls.Add(ffDlBody);
+            var ffDlLink = MakeLink(I18n.T("ffmpeg_download"), PadX, ffDlBody.Bottom + 6, null);
+            aboutGroup.Controls.Add(ffDlLink);
+            var ffDlStatus = new Label
+            {
+                Location = new Point(ffDlLink.Right + 10, ffDlLink.Top + 2),
+                AutoSize = true,
+                ForeColor = Config.PlaceholderFg,
+                Font = new Font(Config.FontName, 8f),
+                Tag = "sub",
+                Visible = false
+            };
+            aboutGroup.Controls.Add(ffDlStatus);
+            ffDlLink.Click += (s, e) =>
+            {
+                if (FfmpegDownload.Busy) return;
+                if (FfmpegTools.FindFfmpeg() != null)
+                {
+                    var r = System.Windows.Forms.MessageBox.Show(this, I18n.T("ffmpeg_download_confirm"),
+                        I18n.T("ffmpeg_download"), MessageBoxButtons.YesNo, MessageBoxIcon.Question);
+                    if (r != DialogResult.Yes) return;
+                }
+                ffDlLink.Enabled = false;
+                ffDlStatus.Visible = true;
+                ffDlStatus.Text = I18n.T("ffmpeg_downloading", "0%");
+                Action<string> status = txt =>
+                {
+                    try { BeginInvoke((MethodInvoker)delegate { ffDlStatus.Text = I18n.T("ffmpeg_downloading", txt); }); } catch { }
+                };
+                FfmpegDownload.Download(status, (ok, msg) =>
+                {
+                    try { BeginInvoke((MethodInvoker)delegate
+                    {
+                        ffDlLink.Enabled = true;
+                        ffDlStatus.Text = ok ? I18n.T("ffmpeg_download_done", msg) : I18n.T("ffmpeg_download_fail", msg);
+                        if (ok) _fnUpdateFfmpegStatus();   // 不动用户显式路径：留空时 FindFfmpeg 自动发现新落点
+                    }); } catch { }
+                });
+            };
             // Windows Defender 误报说明
-            int wdY = fixerLink.Bottom + 14;
+            int wdY = ffDlLink.Bottom + 14;
             var wdTitle = new Label { Text = I18n.T("wd_notice_title"), Location = new Point(PadX, wdY), AutoSize = true, Font = new Font(Config.FontName, 8.5f, FontStyle.Bold), Tag = "sub", Visible = false };
             aboutGroup.Controls.Add(wdTitle);
             var wdBody = new Label
@@ -1332,6 +1406,8 @@ namespace HoverExplorer
         // 即改即生效：把控件当前值整批写入 Config 并提交（无确定/取消按钮，改动实时生效）
         private void _fnApplySettings(bool hotkeys, bool panels)
         {
+            if (_internalSync) return;   // 托盘→设置回写触发的下拉事件：Config 已是最新，不再整批应用
+
             Config.HotkeyEnabled = _hoverToggle.On;
             Config.HotkeyModifiers = _hoverMods;
             Config.HotkeyKey = _hoverKey;
@@ -1344,6 +1420,8 @@ namespace HoverExplorer
             Config.KeepOnLeave = _keepToggle.On;
             Config.RowSwapSides = _rowSwapToggle.On;
             Config.AltSuppressHover = _altSuppressToggle.On;
+            if (_modeExplorer != null) ApplyMode(true, _modeExplorer.SelectedIndex);
+            if (_modePreview != null) ApplyMode(false, _modePreview.SelectedIndex);
             int sortSel = _sortCombo.SelectedIndex >= 0 ? _sortCombo.SelectedIndex : 0;
             Config.SortMode = sortSel / 2 == 1 ? "size" : (sortSel / 2 == 2 ? "date" : "name");
             Config.SortDesc = (sortSel % 2 == 1);
@@ -1376,6 +1454,69 @@ namespace HoverExplorer
                 }
             }
             Program.ApplySettingsLive(hotkeys, panels);
+        }
+
+        // 任一模式下拉选了"按住 Alt" → 亮出互斥说明
+        private void _fnUpdateAltGateHint()
+        {
+            if (_altGateHint == null) return;
+            // 三态提示：①某功能选了"按住 Alt" → 互斥说明；②两功能都不再"总是"触发 →
+            // "按住 Alt 禁用"已无用武之地（保留功能只提示，不改行为）；③隐藏。
+            // ①优先于②（更具体、更易误解的场景先解释）
+            int ex = _modeExplorer != null ? _modeExplorer.SelectedIndex : 1;
+            int pv = _modePreview != null ? _modePreview.SelectedIndex : 1;
+            string text = null;
+            if (ex == 4 || pv == 4) text = I18n.T("alt_gate_hint");
+            else if (ex != 1 && pv != 1) text = I18n.T("alt_suppress_redundant");
+            _altGateHint.Visible = text != null;
+            if (text == null) return;
+            _altGateHint.Text = text;
+            _altGateHint.ForeColor = Config.IsDark ? ColorTranslator.FromHtml("#e5b84f") : ColorTranslator.FromHtml("#a8720a");
+        }
+
+        // 模式下拉（悬停浏览/文件预览共用）：0 关闭 1 总是 2 按住Ctrl 3 按住Shift 4 按住Alt
+        private DarkCombo _fnMakeModeCombo(int mode)
+        {
+            var cb = new DarkCombo { Font = new Font(Config.FontName, 8.5f), Width = 130, Height = 24 };
+            cb.SetItems(new object[] { I18n.T("mode_off"), I18n.T("mode_always"), I18n.T("mode_ctrl"), I18n.T("mode_shift"), I18n.T("mode_alt") },
+                Math.Max(0, Math.Min(4, mode)));
+            return cb;
+        }
+
+
+
+        // Config 三个底层字段（启用/门控开/门控键）→ 模式档位；组合键设置已简化掉，归入 Ctrl 档
+        private static int ModeFromConfig(bool enabled, bool gateOn, int mods)
+        {
+            if (!enabled) return 0;
+            if (!gateOn) return 1;
+            if (mods == 1) return 3;
+            if (mods == 4) return 4;
+            return 2;
+        }
+
+        // 托盘勾选改动 Config 后回叫：模式下拉回读 Config，设置窗开着也不出现两处说法不一
+        internal void SyncFromTray()
+        {
+            if (_modeExplorer == null || _modePreview == null) return;
+            _internalSync = true;
+            try
+            {
+                _modeExplorer.SelectedIndex = ModeFromConfig(Config.ExplorerEnabled, Config.FolderGateEnabled, Config.FolderGateMods);
+                _modePreview.SelectedIndex = ModeFromConfig(Config.PreviewFiles, Config.PreviewGateEnabled, Config.PreviewGateMods);
+            }
+            finally { _internalSync = false; }
+            _fnUpdateAltGateHint();
+        }
+
+        // 模式档位 → 底层字段。门控键含 Alt 时与"按住 Alt 禁用"互补：按 Alt 是放行而非禁用
+        private static void ApplyMode(bool explorer, int mode)
+        {
+            bool en = mode > 0;
+            bool gate = mode >= 2;
+            int mods = mode == 3 ? 1 : mode == 4 ? 4 : 2;
+            if (explorer) { Config.ExplorerEnabled = en; Config.FolderGateEnabled = gate; Config.FolderGateMods = mods; }
+            else { Config.PreviewFiles = en; Config.PreviewGateEnabled = gate; Config.PreviewGateMods = mods; }
         }
 
         private void _fnUpdateHoverState()
@@ -1427,7 +1568,7 @@ namespace HoverExplorer
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            Win11.ApplyRounded(Handle, Config.Theme != "light");
+            Win11.ApplyRounded(Handle, Config.IsDark);
         }
 
         private void ApplyThemeColors()
@@ -1451,6 +1592,7 @@ namespace HoverExplorer
                 if (c is AccGroup) { ((AccGroup)c).ApplyTheme(); continue; }
                 if (c is SlimScrollBar) { c.Invalidate(); continue; }       // 透明底自绘，不覆盖
                 if (c is ToggleSwitch || c is HotkeyPill || c is DelayStepper || c is ChipLabel) { c.Invalidate(); continue; }
+                if (c is DarkCombo) { c.Invalidate(); continue; }
                 if (c is ComboBox || c is PictureBox) continue;
                 if ((c.Tag as string) == "paint") { c.Invalidate(); continue; }
                 if ((c.Tag as string) == "sub") { c.ForeColor = Config.PlaceholderFg; continue; }
@@ -1662,15 +1804,17 @@ namespace HoverExplorer
                 Controls.Add(t);
                 Label d = null;
                 int contentRight = Width - InR;
+                int descW = 0;
                 if (!string.IsNullOrEmpty(desc))
                 {
                     int descRight = right != null ? contentRight - right.Width - 24 : contentRight;
+                    descW = Math.Max(160, descRight - InL);
                     d = new Label
                     {
                         Text = desc,
                         Location = new Point(InL, HeadH + y + 19),
                         AutoSize = true,
-                        MaximumSize = new Size(Math.Max(160, descRight - InL), 0),
+                        MaximumSize = new Size(descW, 0),
                         ForeColor = Config.PlaceholderFg,
                         Font = new Font(Config.FontName, 8f),
                         Tag = "sub",
@@ -1685,7 +1829,13 @@ namespace HoverExplorer
                     right.Visible = _open;
                     Controls.Add(right);
                 }
-                int rowH = d != null ? Math.Max(RowH, 19 + d.PreferredHeight + 8) : RowH;
+                // 显式按渲染同算法测高：PreferredHeight 在字体回退/DPI 差异下会少算换行行数，
+                // 描述最后一行被下一行压住（ffmpeg 路径行的实例）
+                int descH = 0;
+                if (d != null)
+                    descH = TextRenderer.MeasureText(desc, d.Font, new Size(descW, 10000),
+                        TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl).Height;
+                int rowH = d != null ? Math.Max(RowH, 19 + descH + 14) : RowH;   // +14 保险余量：不同 DPI/字体回退下测量仍可能差半个字形
                 _contentH = Math.Max(_contentH, y + rowH);
                 if (_open) Height = HeadH + _contentH;
                 return y + rowH;
@@ -1697,6 +1847,9 @@ namespace HoverExplorer
                 _contentH = Math.Max(_contentH, y + rowH);
                 if (_open) Height = HeadH + _contentH;
             }
+
+            // 自由排版组（关于）：说明段落手动定位，几何审计的行式规则不适用
+            public bool FreeformLayout;
 
             public void FinishRows()
             {
@@ -1719,6 +1872,8 @@ namespace HoverExplorer
                     }
                     // 标题标签必须跟随头部条底色，否则浅色系下出现与头部割裂的白色矩形
                     if (c == _title) { c.BackColor = Config.BgHover; c.ForeColor = Config.FG; continue; }
+                    var hl = c as LinkLabel;
+                    if (hl != null) { _fnThemeLink(hl); continue; }
                     c.BackColor = Config.BG;
                     c.ForeColor = Config.FG;
                 }
@@ -1726,8 +1881,13 @@ namespace HoverExplorer
                 {
                     if (c == _head) continue;
                     if (c is HotkeyPill || c is DelayStepper) { c.Invalidate(); continue; }
-                    if (c is Button || c is ComboBox) continue;
+                    if (c is ComboBox || c is DarkCombo) { c.Invalidate(); continue; }
+                    if (c is Button) continue;
                     if ((c.Tag as string) == "paint") { c.Invalidate(); continue; }
+                    // LinkLabel 检查必须在 "sub" 之前：MakeLink 出来的链接全带 Tag="sub"，
+                    // 先走 sub 分支就永远刷不到 LinkColor，深色下一片系统深蓝看不清
+                    var ll = c as LinkLabel;
+                    if (ll != null) { _fnThemeLink(ll); continue; }
                     if ((c.Tag as string) == "sub") { c.ForeColor = Config.PlaceholderFg; continue; }
                     c.BackColor = Config.BG;
                     c.ForeColor = Config.FG;
@@ -1735,6 +1895,19 @@ namespace HoverExplorer
                 Invalidate();
             }
 
+
+            // 链接主题化：系统默认蓝或任一主题的 Accent（上次刷的可能是切换前的旧 Accent）都刷成当前
+            // Accent；自定义色的不动（如更新提示红点 #E03131）
+            private static void _fnThemeLink(LinkLabel link)
+            {
+                bool themed = link.LinkColor == Color.FromArgb(0, 0, 255)                              // LinkLabel 默认系统蓝
+                    || link.LinkColor == ColorTranslator.FromHtml("#0067c0")                           // 浅色 Accent
+                    || link.LinkColor == ColorTranslator.FromHtml("#6aa9ff");                          // 深色 Accent
+                if (!themed) return;
+                link.LinkColor = Config.Accent;
+                link.ActiveLinkColor = Config.Accent;
+                link.Invalidate();
+            }
 
             protected override void OnPaint(PaintEventArgs e)
             {
@@ -1778,23 +1951,194 @@ namespace HoverExplorer
             {
                 using (var f = new Font(Config.FontName, 8f))
                 {
-                    var sz = TextRenderer.MeasureText(_text, f, Size.Empty, TextFormatFlags.NoPadding);
-                    Size = new Size(sz.Width + 14, 20);
+                    // NoPadding 测量对 CJK 字符（如"秒"）会偏窄，绘制时贴边被裁——用带内边距的
+                    // 默认测量再放宽 10px，保证任何文本四周都有余量
+                    var sz = TextRenderer.MeasureText(_text, f);
+                    Size = new Size(sz.Width + 10, 20);
                 }
             }
 
             protected override void OnPaint(PaintEventArgs e)
             {
                 var g = e.Graphics;
-                bool dark = Config.Theme != "light";
+                bool dark = Config.IsDark;
                 Color bg = _amber ? (dark ? ColorTranslator.FromHtml("#453a15") : ColorTranslator.FromHtml("#fdf0cd")) : Config.BgHover;
-                Color fg = _amber ? (dark ? ColorTranslator.FromHtml("#e5b84f") : ColorTranslator.FromHtml("#a8720a")) : Config.PlaceholderFg;
+                // 非 amber chip 文字不能用 PlaceholderFg：浅色 #7a7a88 压在 #efeff2 底上对比度不足看不清
+                Color fg = _amber ? (dark ? ColorTranslator.FromHtml("#e5b84f") : ColorTranslator.FromHtml("#a8720a"))
+                                  : (dark ? ColorTranslator.FromHtml("#9a9aa8") : ColorTranslator.FromHtml("#55555f"));
                 Color border = _amber ? bg : Config.Border;
                 using (var b = new SolidBrush(bg)) g.FillRectangle(b, 0, 0, Width, Height);
                 using (var p = new Pen(border)) g.DrawRectangle(p, 0, 0, Width - 1, Height - 1);
                 using (var f = new Font(Config.FontName, 8f))
                     TextRenderer.DrawText(g, _text, f, new Rectangle(0, 0, Width, Height), fg, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
             }
+        }
+
+        // 深色下拉：ComboBox 的边框/箭头按钮是系统 chrome（OwnerDraw 只能画内容区；进程未声明
+        // 暗色感知时系统暗色也渲染白框，DarkMode_Explorer 又依赖未公开 API 的进程级初始化），
+        // 自绘整个控件 + 弹层列表，颜色全部实时读 Config → 跟随应用主题（含"跟随系统"）。
+        // 不可聚焦（Selectable=false）→ 从根上没有系统焦点环。只支持 DropDownList 语义
+        private class DarkCombo : Control
+        {
+            public event EventHandler SelectedIndexChanged;
+            private int _index = -1;
+            private static DarkComboPopup _popup;
+            private static DarkCombo _popupOwner;
+
+            public class ComboItemCollection
+            {
+                internal readonly List<string> List = new List<string>();
+                public void Add(string s) { List.Add(s); }
+                public void Clear() { List.Clear(); }
+                public int Count { get { return List.Count; } }
+                public bool Contains(string s) { return s != null && List.Contains(s); }
+                public void AddRange(object[] items) { foreach (var it in items) List.Add(it == null ? "" : it.ToString()); }
+            }
+            public readonly ComboItemCollection Items = new ComboItemCollection();
+
+            public DarkCombo()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                    | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                SetStyle(ControlStyles.Selectable, false);
+                Cursor = Cursors.Hand;
+                Height = 24;
+            }
+
+            internal int ItemCount { get { return Items.Count; } }
+            internal string ItemAt(int i) { return Items.List[i]; }
+
+            public void SetItems(object[] items, int index)
+            {
+                Items.Clear();
+                foreach (var it in items) Items.Add(it.ToString());
+                SelectedIndex = index;
+            }
+            public int SelectedIndex
+            {
+                get { return _index; }
+                set { SetIndex(value, false); }
+            }
+            public object SelectedItem
+            {
+                get { return _index >= 0 && _index < Items.Count ? (object)Items.List[_index] : null; }
+                set { SetIndex(value == null ? -1 : Items.List.IndexOf(value.ToString()), false); }
+            }
+            private void SetIndex(int i, bool silent)
+            {
+                if (i == _index) return;
+                _index = i;
+                Invalidate();
+                if (!silent)
+                {
+                    var h = SelectedIndexChanged;
+                    if (h != null) h(this, EventArgs.Empty);
+                }
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                using (var b = new SolidBrush(Enabled ? Config.BG : Config.BgHover)) g.FillRectangle(b, ClientRectangle);
+                using (var p = new Pen(Config.Border)) g.DrawRectangle(p, 0, 0, Width - 1, Height - 1);
+                string text = _index >= 0 && _index < Items.Count ? Items.List[_index] : "";
+                Color fg = Enabled ? Config.FG : Config.PlaceholderFg;
+                TextRenderer.DrawText(g, text, Font, new Rectangle(7, 0, Width - 32, Height), fg,
+                    TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                TextRenderer.DrawText(g, "▾", Font, new Rectangle(Width - 24, 0, 20, Height), fg,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+            }
+
+            protected override void OnMouseClick(MouseEventArgs e)
+            {
+                base.OnMouseClick(e);
+                if (e.Button == MouseButtons.Left && Enabled && Items.Count > 0) ShowPopup();
+            }
+
+            private void ShowPopup()
+            {
+                ClosePopup();
+                _popupOwner = this;
+                _popup = new DarkComboPopup(this);
+                var wa = Screen.FromControl(this).WorkingArea;
+                var pt = PointToScreen(new Point(-2, Height + 2));
+                int ph = ItemCount * 24 + 6;
+                if (pt.Y + ph > wa.Bottom) pt.Y = Math.Max(wa.Top, PointToScreen(Point.Empty).Y - ph - 2);
+                pt.X = Math.Min(Math.Max(wa.Left, pt.X), wa.Right - Width - 8);
+                _popup.Bounds = new Rectangle(pt.X, pt.Y, Math.Max(120, Width), ph);
+                _popup.Show(this);
+                _popup.Deactivate += (s, e) => ClosePopup();
+            }
+            internal void ClosePopup()
+            {
+                if (_popup == null) return;
+                try { _popup.Close(); _popup.Dispose(); } catch { }
+                _popup = null; _popupOwner = null;
+            }
+            internal void Commit(int idx)
+            {
+                ClosePopup();
+                if (idx < 0 || idx >= Items.Count || idx == _index) return;
+                SetIndex(idx, false);
+            }
+        }
+
+        // 下拉弹层：无边框置顶小窗，条目自绘（悬停 BtnHover、当前项 Accent），点击外部自动关
+        private class DarkComboPopup : Form
+        {
+            private readonly DarkCombo _combo;
+            private int _hover = -1;
+
+            public DarkComboPopup(DarkCombo combo)
+            {
+                _combo = combo;
+                FormBorderStyle = FormBorderStyle.None;
+                StartPosition = FormStartPosition.Manual;
+                ShowInTaskbar = false;
+                TopMost = true;
+                DoubleBuffered = true;
+                BackColor = Config.BG;
+                Height = combo.ItemCount * 24 + 6;
+            }
+
+            private Rectangle ItemRect(int i) { return new Rectangle(3, 3 + i * 24, Width - 6, 24); }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                using (var p = new Pen(Config.Border)) e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1);
+                for (int i = 0; i < _combo.ItemCount; i++)
+                {
+                    var rc = ItemRect(i);
+                    bool cur = i == _combo.SelectedIndex;
+                    using (var b = new SolidBrush(i == _hover ? Config.BtnHover : Config.BG)) e.Graphics.FillRectangle(b, rc);
+                    TextRenderer.DrawText(e.Graphics, _combo.ItemAt(i), Font, rc, cur ? Config.Accent : Config.FG,
+                        TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+                }
+            }
+
+            protected override void OnMouseMove(MouseEventArgs e)
+            {
+                base.OnMouseMove(e);
+                int i = Hit(e.Location);
+                if (i != _hover) { _hover = i; Invalidate(); }
+            }
+            protected override void OnMouseLeave(EventArgs e)
+            {
+                base.OnMouseLeave(e);
+                if (_hover != -1) { _hover = -1; Invalidate(); }
+            }
+            protected override void OnMouseClick(MouseEventArgs e)
+            {
+                base.OnMouseClick(e);
+                int i = Hit(e.Location);
+                if (i >= 0) _combo.Commit(i);
+            }
+            protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+            {
+                if (keyData == Keys.Escape) { _combo.ClosePopup(); return true; }
+                return base.ProcessCmdKey(ref msg, keyData);
+            }
+            private int Hit(Point p) { for (int i = 0; i < _combo.ItemCount; i++) if (ItemRect(i).Contains(p)) return i; return -1; }
         }
 
         // 标题行状态点：展开 = Accent
@@ -1867,7 +2211,7 @@ namespace HoverExplorer
                 Color track;
                 if (!Enabled) track = Config.Border;
                 else if (_on) track = Config.Accent;
-                else track = Config.Theme != "light" ? ColorTranslator.FromHtml("#3a3a42") : ColorTranslator.FromHtml("#d4d4da");
+                else track = Config.IsDark ? ColorTranslator.FromHtml("#3a3a42") : ColorTranslator.FromHtml("#d4d4da");
                 using (var path = _fnRoundRect(0.5f, 0.5f, Width - 1, Height - 1, (Height - 1) / 2f))
                 using (var b = new SolidBrush(track))
                     g.FillPath(b, path);

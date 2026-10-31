@@ -53,7 +53,7 @@ namespace HoverExplorer
         {
             base.OnHandleCreated(e);
             // 与面板/预览一致：暗色标题区 + DWM 圆角（Win11）+ 投影
-            Win11.Apply(Handle, Config.Theme != "light", Config.Border);
+            Win11.Apply(Handle, Config.IsDark, Config.Border);
         }
 
         public EntryListForm(Action<string, Point> onOpenFolder)
@@ -487,6 +487,7 @@ namespace HoverExplorer
         private void _fnTabMenu(int gi)
         {
             var m = new ContextMenuStrip { ShowImageMargin = false, BackColor = Config.BG, ForeColor = Config.FG, Font = new Font(Config.FontName, Config.FontSize) };
+                m.Renderer = new ToolStripProfessionalRenderer(new DarkColorTable());
             m.Items.Add(I18n.T("rename"), null, (s, e) =>
             {
                 var g = Config.FavoriteGroups[gi];
@@ -799,6 +800,7 @@ namespace HoverExplorer
         private void _fnRowMenu(EntryRow row)
         {
             var m = new ContextMenuStrip { ShowImageMargin = false, BackColor = Config.BG, ForeColor = Config.FG, Font = new Font(Config.FontName, Config.FontSize) };
+                m.Renderer = new ToolStripProfessionalRenderer(new DarkColorTable());
             if (!row.IsFav)
                 m.Items.Add(I18n.T("add_fav"), null, (s, e) =>
                 {

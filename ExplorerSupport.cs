@@ -40,6 +40,15 @@ namespace HoverExplorer
             return list;
         }
 
+        // UIA 命中缓存：全量检测 ~100ms，0.1s 级延时窗口内每 tick 重复检测会因
+        // "检测期间指针微移" 反复作废（时灵时不灵的根因）。600ms 内指针仍在命中区
+        // （放宽 8x4px）→ 直接复用上次结果，微秒级；离开即重检
+        private static IntPtr _hitHwnd;
+        private static string _hitPath;
+        private static System.Drawing.Rectangle _hitRect, _outRect;
+        private static bool _hitIsDir;
+        private static DateTime _hitAt = DateTime.MinValue;
+
         public static string DetectHoverItem(int mx, int my, out System.Drawing.Rectangle rect, out bool isDir)
         {
             rect = System.Drawing.Rectangle.Empty;
@@ -58,6 +67,17 @@ namespace HoverExplorer
             }
             if (explorerHwnd == IntPtr.Zero) return null;
 
+            if (_hitHwnd == explorerHwnd && (DateTime.UtcNow - _hitAt).TotalMilliseconds < 600)
+            {
+                var hitZone = System.Drawing.Rectangle.Inflate(_hitRect, 8, 4);
+                if (hitZone.Contains(mx, my))
+                {
+                    _hitAt = DateTime.UtcNow;   // 仍在命中区：续期，0.1s 延时窗口内不再走 UIA
+                    rect = _outRect; isDir = _hitIsDir;
+                    return _hitPath;
+                }
+            }
+
             string name = ExplorerUia.DetectHoverItemCore(mx, my, explorerHwnd, out rect);
             if (name == null)
             {
@@ -71,6 +91,8 @@ namespace HoverExplorer
 
             string fullPath = Path.Combine(dirPath, name);
             isDir = Directory.Exists(fullPath);
+            _hitHwnd = explorerHwnd; _hitPath = fullPath; _hitIsDir = isDir;
+            _hitRect = rect; _outRect = rect; _hitAt = DateTime.UtcNow;
             return fullPath;
         }
 
