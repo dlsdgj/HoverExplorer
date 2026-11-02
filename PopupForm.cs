@@ -193,6 +193,19 @@ namespace HoverExplorer
             if (_form != null) _form.HideTip();
         }
 
+        // 一次性提示（门控发现提示用）：光标旁显示 ms 毫秒后自动消失，与控件悬停提示共用 TipForm
+        private static Timer _flashTimer;
+        public static void Flash(string text, int ms)
+        {
+            if (_form == null) _form = new TipForm();
+            _form.SetText(text);
+            _form.Follow();
+            _form.ShowTip();
+            if (_flashTimer == null) { _flashTimer = new Timer(); _flashTimer.Tick += (s2, e2) => { _flashTimer.Stop(); Hide(); }; }
+            _flashTimer.Interval = Math.Max(300, ms);
+            _flashTimer.Stop(); _flashTimer.Start();
+        }
+
         // 提示窗口也要参与每 Tick 提顶：面板/预览会被强制提到 TopMost 最前，否则它反而被盖住
         public static void EnsureTopmost()
         {
@@ -530,7 +543,7 @@ namespace HoverExplorer
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            Win11.Apply(Handle, Config.Theme != "light", Config.Border);
+            Win11.Apply(Handle, Config.IsDark, Config.Border);
 
         }
         private Image _img;
@@ -676,7 +689,7 @@ namespace HoverExplorer
             _content = tb;
             _scrollPanel.Controls.Add(tb);
             BindResize(tb);
-            Win11.ApplyScrollTheme(tb, Config.Theme != "light");
+            Win11.ApplyScrollTheme(tb, Config.IsDark);
             tb.TextChanged += (s, e) =>
             {
                 if (!_textDirty) { _textDirty = true; _saveBtn.Visible = true; UpdateToolbarBtnPos(); }
@@ -1415,7 +1428,7 @@ namespace HoverExplorer
 
             _scrollPanel = new Panel { AutoScroll = false, BackColor = Config.BG };
             Controls.Add(_scrollPanel);
-            Win11.ApplyScrollTheme(_scrollPanel, Config.Theme != "light");
+            Win11.ApplyScrollTheme(_scrollPanel, Config.IsDark);
 
 
             _iconLbl = new Label
@@ -1821,16 +1834,15 @@ namespace HoverExplorer
             RememberSize(newW, newH);
         }
 
-        private static List<string> GetImageFiles(string dir)
+        // 目录内文件按当前排序（名称/大小/日期 + 升降序）排好；filter 挑选参与的文件
+        internal static List<string> GetSortedFiles(string dir, Func<string, bool> filter)
         {
             var result = new List<string>();
             string[] all;
             try { all = Directory.GetFiles(dir); } catch { return result; }
             foreach (var f in all)
             {
-                string ext = Path.GetExtension(f);
-                if (Config.ImgExts.Contains(ext) || Config.IcoExts.Contains(ext))
-                    result.Add(f);
+                if (filter == null || filter(f)) result.Add(f);
             }
             // 滚轮切换顺序与文件列表一致（名称/大小/日期 + 升降序），而不是固定按名称
             string mode = PopupForm.SortMode;
@@ -1865,12 +1877,15 @@ namespace HoverExplorer
             return sorted;
         }
 
-        private void SwitchFile(int dir)
+        // 图片预览原地换图（滚轮）：仅图片类预览可走
+        internal bool IsImagePreview { get { return _content is PictureBox && _img != null; } }
+
+        internal void SwitchFile(int dir)
         {
             if (string.IsNullOrEmpty(FilePath)) return;
             string dir0 = Path.GetDirectoryName(FilePath);
             if (string.IsNullOrEmpty(dir0)) return;
-            var imgs = GetImageFiles(dir0);
+            var imgs = GetSortedFiles(dir0, f => Config.ImgExts.Contains(Path.GetExtension(f)) || Config.IcoExts.Contains(Path.GetExtension(f)));
             if (imgs.Count == 0) return;
             int idx = imgs.FindIndex(f => string.Equals(f, FilePath, StringComparison.OrdinalIgnoreCase));
             if (idx < 0) idx = 0;
@@ -2646,7 +2661,7 @@ namespace HoverExplorer
         private static readonly Dictionary<string, Image> _uiIconCache = new Dictionary<string, Image>();
         internal static Image UiIcon(string key, Func<Image> create)
         {
-            string fullKey = key + "|" + Config.Theme;
+            string fullKey = key + "|" + (Config.IsDark ? "d" : "l");
             Image img;
             if (_uiIconCache.TryGetValue(fullKey, out img)) return img;
             img = create();
@@ -2666,7 +2681,7 @@ namespace HoverExplorer
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            Win11.Apply(Handle, Config.Theme != "light", Config.Border);
+            Win11.Apply(Handle, Config.IsDark, Config.Border);
         }
 
         protected override void OnResize(EventArgs e)
@@ -2957,6 +2972,47 @@ namespace HoverExplorer
                 Controls.Add(sortFlow);
                 curY += 28;
 
+                // 收藏夹 chips（仅顶级面板）：点一下本面板直接跳到该文件夹，不用回桌面触发区。
+                // 取当前收藏分组的条目；宽度装不下就截断（tooltip 有完整路径）。无收藏不占高度
+                if (_level == 0 && Config.FavoriteGroups != null && Config.FavoriteCurGroup >= 0
+                    && Config.FavoriteCurGroup < Config.FavoriteGroups.Count)
+                {
+                    var favItems = Config.FavoriteGroups[Config.FavoriteCurGroup].Items;
+                    if (favItems != null && favItems.Count > 0)
+                    {
+                        var favFlow = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, WrapContents = false, AutoSize = false, Height = 24, Width = _panelW - 12, Location = new Point(6, curY), BackColor = Config.ListHdbg, Margin = Padding.Empty };
+                        int shown = 0;
+                        foreach (var fav in favItems)
+                        {
+                            if (shown >= 8 || !Directory.Exists(fav)) continue;
+                            var chip = new BorderLabel
+                            {
+                                Text = Path.GetFileName(fav.TrimEnd(Path.DirectorySeparatorChar)),
+                                Font = new Font(Config.FontName, 8f),
+                                Padding = new Padding(6, 2, 6, 2),
+                                AutoSize = true,
+                                BackColor = Config.BG,
+                                ForeColor = Config.ListFg,
+                                Cursor = Cursors.Hand,
+                                Margin = new Padding(0, 1, 3, 1),
+                            };
+                            string favPath = fav;
+                            chip.Click += (s2, e2) => { Program.DebugLog("[fav-chip] jump " + favPath); ShowPanel(favPath, Left, Top); };
+                            Tips.Set(chip, favPath);
+                            favFlow.Controls.Add(chip);
+                            shown++;
+                            // 宽度装不下就停（FlowLayoutPanel 不裁切溢出，会钻到边缘按钮下面）
+                            if (favFlow.PreferredSize.Width > _panelW - 24) { chip.Dispose(); favFlow.Controls.Remove(chip); break; }
+                        }
+                        if (favFlow.Controls.Count > 0)
+                        {
+                            Controls.Add(favFlow);
+                            curY += 26;
+                        }
+                        else favFlow.Dispose();
+                    }
+                }
+
                 _pinBtn = new Label
                 {
                     Size = new Size(20, 18),
@@ -3117,7 +3173,7 @@ namespace HoverExplorer
             // 内容层铺满 viewport，空白处右键同样弹菜单（否则被 content 挡住收不到）
             _listPanel.Content.MouseUp += blankMenu;
             Controls.Add(_listPanel);
-            bool dark = Config.Theme != "light";
+            bool dark = Config.IsDark;
             _listScrollBar = new SlimScrollBar
             {
                 // SlimScrollBar 构造里默认 Dock=Right；停靠会让滚动条铺满整个窗口高度（顶到标题栏/排序栏），
@@ -3840,9 +3896,8 @@ namespace HoverExplorer
             // 后续移入名称区由 OnRowMove 补调度（_wasInSide 跟踪区域切换）
             bool enterInSide = Config.RowSwapSides && row.PointToClient(Cursor.Position).X < _rowSideZone;
             if (Config.RowSwapSides) _wasInSide = enterInSide;
-            // Alt 临时禁用悬停：不调度新悬停（已调度者由计时器 tick 自查 Alt 取消）
-            bool altSuppress = Config.AltSuppressHover && (Control.ModifierKeys & Keys.Alt) == Keys.Alt;
-            if (enterInSide || altSuppress) return;
+            // 悬停抑制：面板内部只吃 Alt 临时禁用——门控只拦第一级，一级面板已过闸，行悬停免键
+            if (enterInSide || Config.HoverSuppressedInside(!row.IsDir)) return;
             if (row.IsDir)
             {
                 // 目录行：旧的文件预览先进入关闭调度（延迟里再判鼠标落点，鼠标移进预览则保持）。
@@ -3968,7 +4023,7 @@ namespace HoverExplorer
             _hoverPath = path;
             _hoverRowY = rowScreenY;
             _hoverTimer = new Timer { Interval = Config.SubHoverDelay };
-            _hoverTimer.Tick += (s, e) => { _hoverTimer.Stop(); _hoverTimer.Dispose(); _hoverTimer = null; if (Config.AltSuppressHover && (Control.ModifierKeys & Keys.Alt) == Keys.Alt) { Program.DebugLog("[panel] 悬停计时触发但 Alt 按住，取消 level=" + _level); return; } Program.DebugLog("[panel] 悬停计时触发 -> 请求打开子面板 level=" + _level + " path=" + _hoverPath); if (_hoverPath != null && _onOpenSub != null) _onOpenSub(this, _level, _hoverPath, _hoverRowY); };
+            _hoverTimer.Tick += (s, e) => { _hoverTimer.Stop(); _hoverTimer.Dispose(); _hoverTimer = null; if (Config.HoverSuppressedInside(false)) { Program.DebugLog("[panel] 悬停计时触发但悬停被抑制（Alt 按住），取消 level=" + _level); return; } Program.DebugLog("[panel] 悬停计时触发 -> 请求打开子面板 level=" + _level + " path=" + _hoverPath); if (_hoverPath != null && _onOpenSub != null) _onOpenSub(this, _level, _hoverPath, _hoverRowY); };
             _hoverTimer.Start();
         }
 
@@ -4022,7 +4077,7 @@ namespace HoverExplorer
             foreach (var e in Config.AudioExts)
                 if (row.Full.EndsWith(e, StringComparison.OrdinalIgnoreCase)) { previewDelay = Math.Min(previewDelay, 100); break; }
             _previewTimer = new Timer { Interval = previewDelay };
-            _previewTimer.Tick += (s, e) => { _previewTimer.Stop(); _previewTimer.Dispose(); _previewTimer = null; if (Config.AltSuppressHover && (Control.ModifierKeys & Keys.Alt) == Keys.Alt) { Program.DebugLog("[panel-preview] timer-fired 但 Alt 按住，取消 level=" + _level + " " + row.Full); return; } Program.DebugLog("[panel-preview] timer-fired level=" + _level + " " + row.Full); ShowPreview(row); };
+            _previewTimer.Tick += (s, e) => { _previewTimer.Stop(); _previewTimer.Dispose(); _previewTimer = null; if (Config.HoverSuppressedInside(true)) { Program.DebugLog("[panel-preview] timer-fired 但悬停被抑制（Alt 按住），取消 level=" + _level + " " + row.Full); return; } Program.DebugLog("[panel-preview] timer-fired level=" + _level + " " + row.Full); ShowPreview(row); };
             _previewTimer.Start();
         }
 
@@ -4098,6 +4153,12 @@ namespace HoverExplorer
         {
             string full = _previewPath;
             if (full == null || full != row.Full) { Program.DebugLog("[panel-preview] show-abort level=" + _level + " full=" + full + " row.Full=" + row.Full + " (path mismatch)"); return; }
+            ShowPreviewCore(full, row, null);
+        }
+
+        // 导航切换后保持原预览窗位置重建（keepBounds 非空时不用行锚定）
+        private void ShowPreviewCore(string full, RowLabel anchorRow, Rectangle? keepBounds)
+        {
             Program.DebugLog("[panel-preview] 开始生成 level=" + _level + " lang=" + I18n.Lang + " " + full);
             Task.Run(() =>
             {
@@ -4130,7 +4191,8 @@ namespace HoverExplorer
                         {
                             _previewForm = new PreviewForm(result.Text, result.Size);
                         }
-                        PositionPreview(row);
+                        if (keepBounds.HasValue) _previewForm.Bounds = keepBounds.Value;
+                        else PositionPreview(anchorRow);
                         _previewForm.FilePath = full;
                         ApplyHeader(_previewForm, full);
                         _previewForm.OnFileSwitched = p => HighlightPath(p);
@@ -4157,6 +4219,36 @@ namespace HoverExplorer
         public bool PreviewContainsPoint(int x, int y)
         {
             return _previewForm != null && _previewForm.ContainsPoint(x, y);
+        }
+
+        // 本面板是否有内嵌预览在显示
+        internal bool HasInnerPreview()
+        {
+            return _previewForm != null && !_previewForm.IsDisposed;
+        }
+
+        // 鼠标是否在任一悬停面板（本体）上——不含预览，切换语义判定用
+        internal static bool InAnyHoverPanel(int x, int y)
+        {
+            foreach (var p in Program.Panels)
+            {
+                if (p == null || p.IsDisposed) continue;
+                try { if (p.ContainsPoint(x, y)) return true; } catch { }
+            }
+            return false;
+        }
+
+        // 鼠标在任一面板本体或其内嵌预览上——卡片/入口列表的关闭轮询用：
+        // 鼠标停在面板弹出的预览窗口上不能判成"已离开"，否则未固定的
+        // 级联连同预览被误关（固定面板不在 CloseAll 范围所以不受影响）
+        internal static bool InAnyHoverPanelOrPreview(int x, int y)
+        {
+            foreach (var p in Program.Panels)
+            {
+                if (p == null || p.IsDisposed) continue;
+                try { if (p.ContainsPoint(x, y) || p.PreviewContainsPoint(x, y)) return true; } catch { }
+            }
+            return false;
         }
 
         // ===== 悬停文件直接预览（桌面/资源管理器，无面板打开时） =====
@@ -4195,37 +4287,6 @@ namespace HoverExplorer
         public static bool FilePreviewContainsPoint(int x, int y)
         {
             return _extPreviewForm != null && _extPreviewForm.ContainsPoint(x, y);
-        }
-
-
-        // 本面板是否有内嵌预览在显示
-        internal bool HasInnerPreview()
-        {
-            return _previewForm != null && !_previewForm.IsDisposed;
-        }
-
-        // 鼠标是否在任一悬停面板（本体）上——不含预览，切换语义判定用
-        internal static bool InAnyHoverPanel(int x, int y)
-        {
-            foreach (var p in Program.Panels)
-            {
-                if (p == null || p.IsDisposed) continue;
-                try { if (p.ContainsPoint(x, y)) return true; } catch { }
-            }
-            return false;
-        }
-
-        // 鼠标在任一面板本体或其内嵌预览上——卡片/入口列表的关闭轮询用：
-        // 鼠标停在面板弹出的预览窗口上不能判成"已离开"，否则未固定的
-        // 级联连同预览被误关（固定面板不在 CloseAll 范围所以不受影响）
-        internal static bool InAnyHoverPanelOrPreview(int x, int y)
-        {
-            foreach (var p in Program.Panels)
-            {
-                if (p == null || p.IsDisposed) continue;
-                try { if (p.ContainsPoint(x, y) || p.PreviewContainsPoint(x, y)) return true; } catch { }
-            }
-            return false;
         }
 
         // 预览显示期间保持 TOPMOST（不激活）：防止被前台窗口盖住。
@@ -4515,8 +4576,7 @@ namespace HoverExplorer
                     }
                     else if (_hoverTimer == null && _previewTimer == null && _previewForm == null)
                     {
-                        bool altSuppress = Config.AltSuppressHover && (Control.ModifierKeys & Keys.Alt) == Keys.Alt;
-                        if (!altSuppress)
+                        if (!Config.HoverSuppressedInside(!row.IsDir))
                         {
                             if (row.IsDir) ScheduleHover(row.Full, row.PointToScreen(Point.Empty).Y);
                             else if (Config.PreviewFiles && PreviewProvider.CanPreview(row.Full)) SchedulePreview(row);
@@ -4692,7 +4752,7 @@ namespace HoverExplorer
             int keepScroll = 0;
             if (_listPanel != null) keepScroll = ((SlimScrollPanel)_listPanel).ContentScrollPos;
             BackColor = Config.ListBg;
-            Win11.Apply(Handle, Config.Theme != "light", Config.Border);
+            Win11.Apply(Handle, Config.IsDark, Config.Border);
             // 切配色/主题后窗口已存在，WinForms 不会自动重发 WM_NCPAINT，主动重算并重画
             // 非客户区描边（圆角模式才有描边；直角模式无副作用），否则边框卡在旧色
             Win11.RefreshNc(Handle);
@@ -4750,7 +4810,7 @@ namespace HoverExplorer
             if (sel.Count > 1 && sel.Contains(row))
             {
                 var m = new ContextMenuStrip { BackColor = Config.BG, ForeColor = Config.FG, Font = new Font(Config.FontName, Config.FontSize) };
-                m.Renderer = new ToolStripProfessionalRenderer(new DarkColorTable());
+            m.Renderer = new ToolStripProfessionalRenderer(new DarkColorTable());
                 m.Items.Add(MI(I18n.T("delete_n", sel.Count), () => RecycleRows(sel)));
                 m.Items.Add(MI(I18n.T("copy_path_n", sel.Count), () => CopyText(string.Join("\n", sel.Select(r => r.Full)))));
                 m.Items.Add(MI(I18n.T("cancel_sel"), () => ClearSel()));
@@ -5199,27 +5259,10 @@ namespace HoverExplorer
         }
 
         // 级联层级色条：红橙黄绿青蓝紫循环，区分叠叠的面板
-        private static readonly Color[] _levelColors = {
-            Color.FromArgb(0xe5, 0x48, 0x4d), Color.FromArgb(0xf0, 0x7f, 0x1c), Color.FromArgb(0xf2, 0xa9, 0x00),
-            Color.FromArgb(0x2f, 0xae, 0x66), Color.FromArgb(0x14, 0xb8, 0xa6), Color.FromArgb(0x3b, 0x82, 0xf6),
-            Color.FromArgb(0x8b, 0x5c, 0xf6),
-        };
-        private static Color LevelColor(int level) { return _levelColors[level % _levelColors.Length]; }
+        // 面板底色：不做层级染色（v1.0.7 的红/橙/黄层级色在深色模式下是整片暗红/暗棕，
+        // 用户两轮反馈不可接受；层级关系由子面板的错位排布自明）
+        private static Color LevelBgColor(int level) { return Config.BG; }
 
-        // 整面板背景按 level 轻微着色：LevelColor 低透明叠加底色，level 越大越浅（父级深）
-        private static Color LevelBgColor(int level)
-        {
-            Color c = LevelColor(level), bg = Config.BG;
-            int a = Math.Max(8, 28 - level * 6);  // L0 28, L1 22, L2 16, L3 10, L4+ 8
-            return Color.FromArgb((c.R * a + bg.R * (255 - a)) / 255, (c.G * a + bg.G * (255 - a)) / 255, (c.B * a + bg.B * (255 - a)) / 255);
-        }
-        // 行悬停/展开高亮：比该级背景深一档
-        private static Color LevelHoverColor(int level)
-        {
-            Color c = LevelColor(level), bg = LevelBgColor(level);
-            int a = 48;
-            return Color.FromArgb((c.R * a + bg.R * (255 - a)) / 255, (c.G * a + bg.G * (255 - a)) / 255, (c.B * a + bg.B * (255 - a)) / 255);
-        }
     }
 
     internal class DarkColorTable : ProfessionalColorTable

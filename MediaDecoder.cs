@@ -26,6 +26,7 @@ namespace HoverExplorer
             if (!string.IsNullOrEmpty(Config.FfmpegPath)) cands.Add(Config.FfmpegPath);
             cands.Add(Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "ffmpeg.exe"));
             cands.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Mp3Fixer\ffmpeg.exe"));
+            cands.Add(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"HoverExplorer\ffmpeg.exe"));   // 设置里"下载"按钮的落点（程序目录不可写时）
             cands.Add(@"D:\portable\ffmpeg.exe");
             cands.Add(@"C:\portable\ffmpeg.exe");
             cands.Add(@"C:\Tools\ffmpeg.exe");
@@ -272,6 +273,7 @@ namespace HoverExplorer
         private readonly Button _btn;
         private readonly Label _lbl;
         private readonly Label _badge;
+        private readonly Label _spec;
         private readonly MediaPreview.SeekBar _prog;
         private readonly Timer _tick;
 
@@ -363,6 +365,20 @@ namespace HoverExplorer
                 Font = new Font("Microsoft YaHei", 8)
             };
             _prog = new MediaPreview.SeekBar { Dock = DockStyle.Fill };
+            // 左上角媒体规格角标：分辨率 · 帧率 · 时长 · 有无声轨（探测数据齐全，比 MediaElement 路径完整）。
+            // 探测在后台线程，文字更新统一放 _tick（UI 线程）——见字段区注释，跨线程改控件会死锁
+            _spec = new Label
+            {
+                AutoSize = true,
+                Location = new Point(4, 4),
+                Font = new Font("Microsoft YaHei", 8f),
+                ForeColor = Color.White,
+                BackColor = Color.FromArgb(160, 30, 30, 36),
+                Padding = new Padding(4, 2, 4, 2),
+                Visible = false,
+            };
+            Controls.Add(_spec);
+            _spec.BringToFront();   // 压在画面上层；不参与 Dock，不影响布局
             // 倍速刻度尺：改的是"消费帧率"，ffmpeg 进程不用重启
             var spdHint = MediaPreview.CreateSpeedHint(this, 4);
             var ruler = new MediaPreview.SpeedRuler { Dock = DockStyle.Bottom };
@@ -408,6 +424,7 @@ namespace HoverExplorer
                     if (_info != null && _info.Valid)
                     {
                         if (_info.Fps > 0) _sourceFps = _info.Fps;
+                        UpdateSpecBadge();
                         var hSize = VideoSizeKnown;
                         if (hSize != null) { try { hSize(_info.Width, _info.Height); } catch { } }
                     }
@@ -421,6 +438,19 @@ namespace HoverExplorer
             var worker = new Thread(Worker);
             worker.IsBackground = true;
             worker.Start();
+        }
+
+        // 填左上角规格角标（只在 UI 线程的 _tick 里调用）。帧率能整就整（25fps），
+        // 带小数保留（29.97fps）；无声轨显 🔇——ffmpeg 流本身 -an 没声音，但源文件有没有声轨探测是知道的
+        private void UpdateSpecBadge()
+        {
+            if (_spec == null || _spec.IsDisposed || _info == null || !_info.Valid) return;
+            string fps = _info.Fps > 0
+                ? (_info.Fps == Math.Floor(_info.Fps) ? ((int)_info.Fps).ToString() : _info.Fps.ToString("0.##")) + "fps · "
+                : "";
+            string dur = _info.DurationSec > 0 ? " · " + MediaPreview.Fmt(TimeSpan.FromSeconds(_info.DurationSec)) : "";
+            _spec.Text = _info.Width + "×" + _info.Height + " · " + fps + dur + " · " + (_info.HasAudio ? "🔊" : "🔇");
+            _spec.Visible = true;
         }
 
         // 后台：探测 → 起 ffmpeg → 等首帧

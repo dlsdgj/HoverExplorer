@@ -427,12 +427,41 @@ internal static class MediaPreview
             var lblTime = new Label { Width = 110, Dock = DockStyle.Right, Text = I18n.T("media_loading"), TextAlign = ContentAlignment.MiddleRight, ForeColor = Config.FgDir, BackColor = Config.BG, AutoEllipsis = true, Font = new Font("Microsoft YaHei", 8) };
             var prog = new SeekBar { Dock = DockStyle.Fill };
             var spdHint = CreateSpeedHint(panel, 4);
+            // 左上角媒体规格角标：分辨率 · 时长。MediaElement 拿不到帧率、也判不了有无声轨，
+            // 这两条只留给 ffmpeg 兜底路径（MediaDecoder.FfmpegVideoPanel）显示完整角标
+            var specBadge = new Label
+            {
+                AutoSize = true,
+                Location = new Point(4, 4),
+                Font = new Font("Microsoft YaHei", 8f),
+                ForeColor = Color.White,
+                BackColor = Color.FromArgb(160, 30, 30, 36),
+                Padding = new Padding(4, 2, 4, 2),
+                Visible = false,
+            };
+            panel.Controls.Add(specBadge);
+            specBadge.BringToFront();   // 压在画面上层；Label 挡不挡鼠标无所谓（悬停交互在 WPF 宿主里）
             var ruler = new SpeedRuler { Dock = DockStyle.Bottom };
             ruler.PreviewSpeed += delegate(double r) { try { session.SpeedRatio = r; } catch { } UpdateSpeedHint(spdHint, r); };
             ruler.CommitSpeed += delegate(double r) { try { session.SpeedRatio = r; } catch { } UpdateSpeedHint(spdHint, r); };
             ruler.RestoreSpeed += delegate { try { session.SpeedRatio = ruler.Committed; } catch { } UpdateSpeedHint(spdHint, ruler.Committed); };
             var cls = CloseButton(panel);
-            // bar：[播放][进度][时间][关闭]
+            // 静音键：默认静音开关（Config.PreviewMuted 时视频起始即为静音态）
+            bool startMuted = false;
+            try { startMuted = session.WpfMedia.IsMuted; } catch { }
+            var muteBtn = new Button { Text = startMuted ? "🔇" : "🔊", Width = 32, Dock = DockStyle.Left, FlatStyle = FlatStyle.Flat, ForeColor = Config.FG, BackColor = Config.BG, Font = new Font("Microsoft YaHei", 9) };
+            muteBtn.FlatAppearance.BorderSize = 0;
+            muteBtn.FlatAppearance.MouseOverBackColor = Config.BgHover;
+            muteBtn.FlatAppearance.MouseDownBackColor = Config.BgHover;
+            Tips.Set(muteBtn, I18n.T("mute_btn_tip"));
+            muteBtn.Click += delegate
+            {
+                bool m = false;
+                try { m = !session.WpfMedia.IsMuted; session.WpfMedia.IsMuted = m; } catch { }
+                muteBtn.Text = m ? "🔇" : "🔊";
+            };
+            // bar：[播放][静音][进度][时间][关闭]——muteBtn 最先 Add（Dock 逆序结算，落在播放键右侧）
+            bar.Controls.Add(muteBtn);
             bar.Controls.Add(prog);
             bar.Controls.Add(btn);
             bar.Controls.Add(lblTime);
@@ -469,6 +498,16 @@ internal static class MediaPreview
                     var owner = panel.FindForm();
                     if (owner != null && owner.IsHandleCreated)
                         PopupForm.EnsureWinTopmost(owner.Handle, "media-opened video");
+                }
+                catch { }
+                // 左上角规格角标：MediaOpened（Opened 之前）已填好宽高与时长，Opened 就在 UI 线程，直接写
+                try
+                {
+                    if (session.NaturalWidth > 0 && session.NaturalHeight > 0 && session.Duration > TimeSpan.Zero)
+                    {
+                        specBadge.Text = session.NaturalWidth + "×" + session.NaturalHeight + " · " + Fmt(session.Duration);
+                        specBadge.Visible = true;
+                    }
                 }
                 catch { }
                 // 视频拿到真实分辨率后按该宽高比调整预览窗（音频没有画面，不动）
@@ -719,7 +758,7 @@ internal static class MediaPreview
         internal static WinControl SvgBrowserPanel(string path)
         {
             EnsureBrowserEmulation();
-            bool dark = Config.Theme != "light";
+            bool dark = Config.IsDark;
             var imgBg = dark ? Color.White : Config.BG;
             var panel = new WinPanel { Size = new DrawingSize(320, 380), BackColor = Config.BG };
 
@@ -838,6 +877,8 @@ internal static class MediaPreview
                 Stretch = WpfStretch.Uniform
             };
             _host.Child = _me;
+            // 视频默认静音（Config.PreviewMuted，办公室友好）：控制条喇叭键恢复出声
+            if (isVideo && Config.PreviewMuted) { try { _me.IsMuted = true; } catch { } }
             _me.MediaOpened += delegate
             {
                 // 幽灵播放防护：DASH 容器等慢打开文件，用户可能已移开（Close 已调）——

@@ -27,8 +27,59 @@ namespace HoverExplorer
             }
         }
 
+        // 悬停抑制判定（唯一入口，Program/PopupForm 共用；Keys 参数版可脱离键盘做自检）：
+        // ① AltSuppressHover：按住 Alt 临时禁用——全局开关，一级触发与面板内部都生效；
+        //    若 Alt 同时是当前功能门控键则豁免（否则门控永不生效）
+        // ② 门控：按住任一所选修饰键才放行——只拦"从无到有"的第一级触发（桌面/资源管理器直接悬停）。
+        //    一级面板已通过门控，面板内部的子面板/行预览免键操作，走 HoverSuppressedInside
+        // 修饰键实时态：必须用 GetAsyncKeyState（全局实时，独立于线程消息队列）。
+        // Control.ModifierKeys(=GetKeyState) 是线程本地缓存——本进程不是前台时（悬停资源管理器的常态）
+        // 键盘消息进的是 Explorer 的队列，这里读到的是上次处理消息时的旧快照，UIA 探测越忙越滞后，
+        // 表现为"按住 Ctrl 门控时灵时不灵"。项目内其余按键判定（拖拽/热键/翻页）本就用 GetAsyncKeyState
+        internal static System.Windows.Forms.Keys RealModifiers()
+        {
+            var mk = System.Windows.Forms.Keys.None;
+            if ((HoverExplorer.NativeMethods.GetAsyncKeyState(0x11) & 0x8000) != 0) mk |= System.Windows.Forms.Keys.Control;
+            if ((HoverExplorer.NativeMethods.GetAsyncKeyState(0x10) & 0x8000) != 0) mk |= System.Windows.Forms.Keys.Shift;
+            if ((HoverExplorer.NativeMethods.GetAsyncKeyState(0x12) & 0x8000) != 0) mk |= System.Windows.Forms.Keys.Alt;
+            return mk;
+        }
+        internal static bool HoverSuppressed(bool forPreview) { return HoverSuppressed(RealModifiers(), forPreview, true); }
+        // 面板内部触发（子面板/行预览）：不做门控，只吃 Alt 临时禁用
+        internal static bool HoverSuppressedInside(bool forPreview) { return HoverSuppressed(RealModifiers(), forPreview, false); }
+        internal static bool HoverSuppressed(System.Windows.Forms.Keys mk, bool forPreview, bool applyGate)
+        {
+            int gateMods = forPreview ? PreviewGateMods : FolderGateMods;
+            bool gateOn = forPreview ? PreviewGateEnabled : FolderGateEnabled;
+            bool altIsGate = gateOn && (gateMods & 4) != 0;
+            if (AltSuppressHover && !altIsGate && (mk & System.Windows.Forms.Keys.Alt) == System.Windows.Forms.Keys.Alt) return true;
+            if (applyGate && gateOn)
+            {
+                bool gate = ((mk & System.Windows.Forms.Keys.Shift) != 0 && (gateMods & 1) != 0)
+                         || ((mk & System.Windows.Forms.Keys.Control) != 0 && (gateMods & 2) != 0)
+                         || ((mk & System.Windows.Forms.Keys.Alt) != 0 && (gateMods & 4) != 0);
+                if (!gate) return true;
+            }
+            return false;
+        }
+
+        // 修饰键掩码 → 显示文本（门控提示/设置用）
+        public static string ModsLabel(int m)
+        {
+            var parts = new List<string>();
+            if ((m & 2) != 0) parts.Add("Ctrl");
+            if ((m & 1) != 0) parts.Add("Shift");
+            if ((m & 4) != 0) parts.Add("Alt");
+            return string.Join("+", parts.ToArray());
+        }
+
         public static readonly HashSet<string> ImgExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        { ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp" };
+        { ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp",
+          // GDI+/WIC 解不了时走 ffmpeg 单帧兜底（GenImage 三级回落），专业格式全家桶
+          ".jfif", ".jpe", ".exr", ".dpx", ".cin", ".j2k", ".jp2", ".jpf",
+          ".pgm", ".ppm", ".pbm", ".pnm", ".tga", ".icb", ".vda", ".vst",
+          ".dds", ".xbm", ".xface", ".pcx", ".sgi", ".ras", ".pic", ".qoi",
+          ".hdr", ".wdp", ".hdp", ".jxr", ".avif", ".mpo" };
         public static readonly HashSet<string> IcoExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         { ".ico", ".tiff", ".tif" };
         public static readonly HashSet<string> OfficeExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -46,7 +97,15 @@ namespace HoverExplorer
         public static readonly HashSet<string> EpubExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         { ".epub" };
         public static readonly HashSet<string> AudioExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        { ".mp3", ".wav", ".wma", ".m4a", ".flac", ".aac", ".ogg", ".opus" };
+        { ".mp3", ".wav", ".wma", ".m4a", ".flac", ".aac", ".ogg", ".opus",
+          // 音频链自带 ffmpeg 兜底（FfmpegAudioSession 优先于 MF/MCI），装了 ffmpeg 全都能播
+          ".ac3", ".eac3", ".dts", ".dtshd", ".thd", ".mka", ".mpc", ".mpp",
+          ".ape", ".apl", ".mac", ".wv", ".tta", ".tak", ".shn", ".ofr", ".ofs",
+          ".aiff", ".aif", ".aifc", ".au", ".amr", ".gsm", ".spx", ".dsf", ".dff",
+          ".m4r", ".aa", ".aax", ".oma", ".aa3", ".adx", ".aix", ".acm", ".caf",
+          ".awb", ".g722", ".g729", ".g723_1", ".mlp", ".ast", ".ads", ".ss2",
+          ".adp", ".dtk", ".vag", ".svag", ".xvag", ".msf", ".sf", ".ircam",
+          ".pvf", ".sln", ".w64", ".voc", ".vox", ".ra", ".snd" };
         // 视频扩展名：.m4v 是 iTunes/索尼设备常用的 MP4 变体（品牌与 .mp4 完全一致，
         // 只是扩展名不同），此前未列入导致只出元数据不出画面。补齐移动端与广播常见容器。
         public static readonly HashSet<string> VideoExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -55,6 +114,12 @@ namespace HoverExplorer
           ".3gp", ".3g2", ".3gpp",                      // 手机
           ".flv", ".f4v", ".webm", ".ogv", ".ogm",      // 流媒体容器
           ".ts", ".m2ts", ".mts", ".m2t",               // 索尼/松下摄录机
+          ".mxf", ".gxf", ".wtv", ".dvr-ms", ".evo",         // 广播/机顶盒/录制容器
+          ".mod", ".tod", ".amv", ".nsv", ".swf", ".gvi", ".vivo", ".ty", ".nuv", ".mxg", ".lvf",
+          ".roq", ".bik", ".bk2", ".smk",                     // 游戏动画（ffmpeg 内置解码）
+          ".ivf", ".obu",                                     // VP8/9 / AV1 裸流
+          ".avc", ".h264", ".264", ".h265", ".265", ".hevc", ".h261",  // 裸基本流
+          ".mjpg", ".mjpeg", ".mpo", ".mj2", ".y4m",          // MJPEG / JPEG2000 / YUV4MPEG
           ".vob", ".mpg", ".mpeg", ".mpe", ".m1v", ".m2v", ".mp2", ".m2p",
           ".asf", ".rm", ".rmvb", ".divx", ".xvid", ".dv", ".f4v" };
         public static readonly HashSet<string> SvgExts = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
@@ -115,7 +180,7 @@ namespace HoverExplorer
         // 2=日期↑ 3=日期↓ 4=大小↑ 5=大小↓ 6=扩展名↑ 7=扩展名↓。ini 推测不准时由用户显式指定
         public static int TcSortMode = -1;
         public static bool PreviewFiles = true;
-        // ===== 预览分类开关（参考 QTTabBar 的"按类型预览"：逐类开关，不必整体禁用）=====
+        // ===== 预览分类开关（逐类开关，不必整体禁用）=====
         // 关掉某类后该类文件悬停不再弹预览窗（CanPreview 直接判否，不占延时也不弹空窗）
         public static bool PreviewImage = true;
         public static bool PreviewVideo = true;
@@ -165,6 +230,14 @@ namespace HoverExplorer
         public static int RowSplitX = 0;
         // 按住 Alt 临时禁用悬停（不弹新面板/预览，已调度取消；松开恢复）
         public static bool AltSuppressHover = true;
+        // 悬停门控：按住所选修饰键才触发，重命名/多选等操作不被弹窗干扰。
+        // 文件夹列表与文件预览两套，各自独立开关与键位；门控只拦第一级触发，面板内部免键
+        public static bool FolderGateEnabled = false;
+        public static int FolderGateMods = 2;   // 位掩码：1=Shift 2=Ctrl 4=Alt
+        public static bool PreviewGateEnabled = false;
+        public static int PreviewGateMods = 2;
+        // 视频预览默认静音（办公室友好）：悬停触发的视频先无声播放，点控制条喇叭键恢复
+        public static bool PreviewMuted = true;
         // 文件夹列表排列方式（全局）：name/size/date + 升降序，切换排序按钮时更新
         public static string SortMode = "name";
         public static bool SortDesc = false;
@@ -184,9 +257,30 @@ namespace HoverExplorer
             ApplyTheme();
         }
 
+        // 系统应用深浅色（Win10/11：注册表 Personalize\AppsUseLightTheme，0=深色）
+        public static bool SystemDark
+        {
+            get
+            {
+                try
+                {
+                    using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                        @"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"))
+                    {
+                        var v = k == null ? null : k.GetValue("AppsUseLightTheme");
+                        if (v is int) return (int)v == 0;
+                    }
+                }
+                catch { }
+                return false;
+            }
+        }
+        // Theme 三态："light" / "dark" / "auto"（跟随系统）。全项目深色判断一律走这里
+        public static bool IsDark { get { return Theme == "auto" ? SystemDark : Theme != "light"; } }
+
         public static void ApplyTheme()
         {
-            bool dark = Theme != "light";
+            bool dark = IsDark;
             if (dark)
             {
                 BG = ColorTranslator.FromHtml("#1e1e24");
@@ -243,7 +337,7 @@ namespace HoverExplorer
 
         public static void ApplyListPalette()
         {
-            bool dark = Theme != null && Theme != "light";
+            bool dark = IsDark;
             if (dark)
             {
                 ListBg = BG; ListZb = BG; ListFg = FG; ListMu = PlaceholderFg;
@@ -484,6 +578,11 @@ namespace HoverExplorer
                         case "RowSwapSides": RowSwapSides = Convert.ToBoolean(v); break;
                         case "RowSplitX": RowSplitX = Convert.ToInt32(v); break;
                         case "AltSuppressHover": AltSuppressHover = Convert.ToBoolean(v); break;
+                        case "FolderGateEnabled": FolderGateEnabled = Convert.ToBoolean(v); break;
+                        case "FolderGateMods": FolderGateMods = Convert.ToInt32(v); break;
+                        case "PreviewGateEnabled": PreviewGateEnabled = Convert.ToBoolean(v); break;
+                        case "PreviewGateMods": PreviewGateMods = Convert.ToInt32(v); break;
+                        case "PreviewMuted": PreviewMuted = Convert.ToBoolean(v); break;
                         case "ListPalette": ListPalette = Convert.ToString(v); break;
                         case "ListPalettesData": ListPalettesData = Convert.ToString(v); break;
                         case "CardPalettesData": CardPalettesData = Convert.ToString(v); break;
@@ -574,6 +673,11 @@ namespace HoverExplorer
                 data["RowSwapSides"] = RowSwapSides;
                 data["RowSplitX"] = RowSplitX;
                 data["AltSuppressHover"] = AltSuppressHover;
+                data["FolderGateEnabled"] = FolderGateEnabled;
+                data["FolderGateMods"] = FolderGateMods;
+                data["PreviewGateEnabled"] = PreviewGateEnabled;
+                data["PreviewGateMods"] = PreviewGateMods;
+                data["PreviewMuted"] = PreviewMuted;
                 data["ListPalette"] = ListPalette;
                 data["ListPalettesData"] = ListPalettesData;
                 data["SortMode"] = SortMode;

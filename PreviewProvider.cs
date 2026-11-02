@@ -41,7 +41,7 @@ namespace HoverExplorer
             if (Config.OfficeExts.Contains(ext) || Config.EpubExts.Contains(ext)) return Config.PreviewKind.Document;
             if (Config.FontExts.Contains(ext)) return Config.PreviewKind.Font;
             if (Config.ZipExts.Contains(ext) || Config.SevenZipExts.Contains(ext)) return Config.PreviewKind.Archive;
-            if (Config.TextExts.Contains(ext) || ext == ".csv") return Config.PreviewKind.Text;
+            if (Config.TextExts.Contains(ext) || ext == ".csv") return Config.PreviewKind.Text;  // .md/.markdown 在 Generate 里单独走渲染
             return Config.PreviewKind.Other;
         }
 
@@ -109,6 +109,36 @@ namespace HoverExplorer
         }
 
         // ===== 图片 / 图标 / TIFF =====
+        // ffmpeg 单帧兜底：解成 BMP 流交回 GDI+。ffmpeg 不存在/解不动返回 null（上层按无预览处理）
+        private static Image LoadViaFfmpeg(string full)
+        {
+            string ff = FfmpegTools.FindFfmpeg();
+            if (ff == null) return null;
+            try
+            {
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = ff,
+                    Arguments = "-v error -i \"" + full + "\" -frames:v 1 -f image2pipe -vcodec bmp -",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                };
+                using (var p = System.Diagnostics.Process.Start(psi))
+                {
+                    var ms = new MemoryStream();
+                    p.StandardOutput.BaseStream.CopyTo(ms);
+                    p.WaitForExit(8000);
+                    if (ms.Length == 0) return null;
+                    var bytes = ms.ToArray();          // 拷贝出定长缓冲：Image 生命周期内流必须保持存活
+                    var mem = new MemoryStream(bytes);
+                    return Image.FromStream(mem);
+                }
+            }
+            catch { return null; }
+        }
+
         private static PreviewResult GenImage(string full)
         {
             Image img;
@@ -132,6 +162,7 @@ namespace HoverExplorer
                 catch
                 {
                     img = LoadViaWic(full);
+                    if (img == null) img = LoadViaFfmpeg(full);   // WIC 也没有：EXR/DPX/TGA/QOI 等交给 ffmpeg
                     if (img == null) throw;
                 }
             }
@@ -259,8 +290,7 @@ namespace HoverExplorer
                     }
                     else if (ext == ".xlsx")
                     {
-                        var entry = za.GetEntry("xl/sharedStrings.xml");
-                        if (entry != null) ExtractXmlText(entry, sb, MaxChars, "t");
+                        GenXlsx(za, sb, MaxChars);
                     }
                     else if (ext == ".pptx")
                     {
@@ -279,6 +309,112 @@ namespace HoverExplorer
             catch { }
             if (sb.Length == 0) sb.AppendLine(I18n.T("office_no_text"));
             return new PreviewResult { Kind = PreviewResult.KindEnum.Text, Text = sb.ToString(), Size = new FileInfo(full).Length };
+        }
+
+        // ===== xlsx：按 工作表→行→单元格 流式解析。
+        // 旧实现只读 xl/sharedStrings.xml：数字/日期单元格全部丢失、内联字符串（WPS/导出工具
+        // 生成的表格）直接为空、顺序也是字符串池序而非表格序——用户看就是"预览不了"。
+        // 状态机用提交式：ReadElementContentAsString 会连同闭标签一起越过（EndElement c/row
+        // 不保证可见）→ 单元格在新 c/row 开始、循环收尾时提交
+        private static void GenXlsx(ZipArchive za, StringBuilder sb, int maxChars)
+        {
+            // 1. 共享字符串池（si 内可能有多段富文本 <r><t>，全量拼接）
+            var sst = new List<string>();
+            var sstEntry = za.GetEntry("xl/sharedStrings.xml");
+            if (sstEntry != null)
+                using (var rs = sstEntry.Open())
+                using (var r = XmlReader.Create(rs))
+                    while (r.Read())
+                        if (r.NodeType == XmlNodeType.Element && r.LocalName == "si")
+                        {
+                            var buf = new StringBuilder();
+                            using (var sub = r.ReadSubtree())
+                                while (sub.Read())
+                                    if (sub.NodeType == XmlNodeType.Element && sub.LocalName == "t")
+                                        buf.Append(sub.ReadElementContentAsString());
+                            sst.Add(buf.ToString());
+                        }
+
+            // 2. workbook.xml：表名 + 关系 Id（按 workbook 声明顺序）
+            var sheetNames = new List<string>();
+            var sheetRids = new List<string>();
+            var wbEntry = za.GetEntry("xl/workbook.xml");
+            if (wbEntry != null)
+                using (var rs = wbEntry.Open())
+                using (var r = XmlReader.Create(rs))
+                    while (r.Read())
+                        if (r.NodeType == XmlNodeType.Element && r.LocalName == "sheet")
+                        {
+                            sheetNames.Add(r.GetAttribute("name") ?? "");
+                            sheetRids.Add(r.GetAttribute("r:id") ?? r.GetAttribute("id") ?? "");
+                        }
+
+            // 3. 关系表：rId → parts 路径（相对路径补 xl/ 前缀，绝对路径去掉开头 /）
+            var rels = new Dictionary<string, string>();
+            var relEntry = za.GetEntry("xl/_rels/workbook.xml.rels");
+            if (relEntry != null)
+                using (var rs = relEntry.Open())
+                using (var r = XmlReader.Create(rs))
+                    while (r.Read())
+                        if (r.NodeType == XmlNodeType.Element && r.LocalName == "Relationship")
+                            rels[r.GetAttribute("Id")] = r.GetAttribute("Target");
+
+            // 4. 逐表逐行：t=s→共享串 / t=inlineStr→<is><t> / t=b→TRUE/FALSE / 其余按原值
+            for (int si = 0; si < sheetNames.Count && sb.Length < maxChars; si++)
+            {
+                string target;
+                if (!rels.TryGetValue(sheetRids[si], out target)) continue;
+                if (target.StartsWith("/")) target = target.TrimStart('/');
+                else if (!target.StartsWith("xl/")) target = "xl/" + target;
+                var entry = za.GetEntry(target);
+                if (entry == null) continue;
+                if (sb.Length > 0) sb.AppendLine();
+                sb.AppendLine("【" + (sheetNames[si].Length > 0 ? sheetNames[si] : target) + "】");
+                using (var rs = entry.Open())
+                using (var r = XmlReader.Create(rs))
+                {
+                    var row = new StringBuilder();
+                    string cellType = "n", val = null;
+                    bool inlineText = false, cellOpen = false;
+                    Action commitCell = delegate
+                    {
+                        if (!cellOpen) return;
+                        cellOpen = false;
+                        string text;
+                        if (inlineText) text = val ?? "";
+                        else if (cellType == "s" && val != null)
+                        {
+                            int ssi;
+                            text = int.TryParse(val, out ssi) && ssi >= 0 && ssi < sst.Count ? sst[ssi] : "";
+                        }
+                        else if (cellType == "b") text = val == "1" ? "TRUE" : "FALSE";
+                        else text = val ?? "";
+                        if (!string.IsNullOrEmpty(text)) { if (row.Length > 0) row.Append('	'); row.Append(text); }
+                    };
+                    Action commitRow = delegate
+                    {
+                        commitCell();
+                        if (row.Length > 0) { sb.AppendLine(row.ToString()); row.Length = 0; }
+                    };
+                    while (r.Read() && sb.Length < maxChars)
+                    {
+                        if (r.NodeType == XmlNodeType.Element && r.LocalName == "c")
+                        {
+                            commitCell();
+                            cellType = r.GetAttribute("t") ?? "n";
+                            val = null; inlineText = false; cellOpen = true;
+                        }
+                        else if (r.NodeType == XmlNodeType.Element && r.LocalName == "is") inlineText = true;
+                        else if (r.NodeType == XmlNodeType.Element && r.LocalName == "v")
+                            val = r.ReadElementContentAsString();
+                        else if (r.NodeType == XmlNodeType.Element && r.LocalName == "t" && inlineText)
+                            val = (val ?? "") + r.ReadElementContentAsString();
+                        else if (r.NodeType == XmlNodeType.Element && r.LocalName == "row")
+                            commitRow();
+                    }
+                    commitRow();
+                }
+            }
         }
 
         private static void ExtractXmlText(ZipArchiveEntry entry, StringBuilder sb, int maxChars, string textElementLocalName)

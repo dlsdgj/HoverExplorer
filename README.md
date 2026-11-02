@@ -39,6 +39,8 @@
 - **文件预览 / File preview**: 图片、文本、代码、压缩包(zip/7z/rar)、Office、字体、exe、epub、音视频、SVG 等 — Images, text, code, archives (zip/7z/rar), Office, fonts, exe, epub, audio/video, SVG, etc.
 - **播放器倍速与关闭 / Player speed & close**: 播放条上可切 0.5×–2× 倍速（点击循环），一键 ✕ 关闭预览窗；视频/音频均支持 — Playback speed 0.5×–2× on the control bar (click to cycle) plus a ✕ to close the preview; video and audio
 - **按类型开关预览 / Preview types on-off**: 逐类开关要预览的文件类型（图片/视频/音频/文档/文本/压缩包/字体/其他），关掉的类型不再弹预览窗 — Toggle previews per type (image/video/audio/document/text/archive/font/other); disabled types never open a preview
+- **悬停门控 / Modifier-gated hover**: 开启后必须按住所选修饰键（Ctrl/Shift/Alt 或组合）悬停才触发，文件夹列表与文件预览可分别设置，重命名、多选不再被弹窗打扰 —  hover only triggers while a chosen modifier key (Ctrl/Shift/Alt or a combo) is held; folder lists and file previews can be gated separately, so renaming and multi-select stay undisturbed
+- **视频预览默认静音 / Mute video previews by default**: 悬停触发的视频先静音，点击播放条 🔊 恢复声音；音频预览不受影响 — Hover-triggered videos start muted; click 🔊 on the control bar to unmute; audio previews unaffected
 - **m4v 等移动端容器 / m4v & mobile containers**: 补齐 `.m4v` `.m4b` `.3gp` `.mts` `.m2ts` `.webm` `.flv` 等扩展名，直接出画面而非只有元数据 — Adds `.m4v` `.m4b` `.3gp` `.mts` `.m2ts` `.webm` `.flv` so they preview instead of showing metadata only
 - **高规格视频兜底解码 / High-spec video fallback**: 系统解码器打不开时（ProRes / 10bit / 4:2:2 / HEVC）自动改用 ffmpeg 帧流播放 — When the system decoder fails (ProRes / 10-bit / 4:2:2 / HEVC), falls back to an ffmpeg frame-stream player
 - **音频波形播放器 / Audio waveform**: 迷你播放条，波形即进度，MF 后台解码峰值/RMS，点击/拖动 seek — Mini player bar, waveform = progress, MF background peak/RMS decode, click/drag to seek
@@ -47,12 +49,13 @@
 - **设置即改即生效 / Live settings**: 无确定/取消按钮，任何改动实时保存生效 — No OK/Cancel; all changes save and apply instantly
 - **快捷键切换 / Hotkey toggle**: 全局快捷键启用/禁用悬停（默认 `Ctrl+Alt+Q`，可自定义） — Global hotkey to enable/disable hover (default `Ctrl+Alt+Q`, customizable)
 - **悬停延时可调 / Adjustable hover delay**: 自定义触发延时，文件夹和文件统一生效 — Custom trigger delay, applies to folders and files
-- **深浅主题 / Light/Dark theme**: 深色/浅色两套配色（滚动条、进度条同步） — Dark/light schemes (scrollbar/progress synced)
+- **深浅主题 / Light/Dark theme**: 深色/浅色/跟随系统三选一；跟随系统时 Windows 切换深浅色（含 PowerToys 等自动切换）面板即时跟上 — Dark/light/follow-system; in follow-system mode panels switch instantly when Windows (incl. PowerToys schedulers) flips its app theme
 - **卡片配色（逐张独立）/ Per-card color scheme**: 11 套标签带方案；滚轮切换该卡片配色，实时高亮，~1s 消失 — 11 label-band schemes; scroll to cycle per-card, live highlight, ~1s fade
 - **拖拽弹簧式文件夹 / Drag-spring folders**: 拖文件悬停任意文件夹即弹内容，子文件夹逐层展开导航，松手放入 — Drag file over any folder to pop contents; navigate subfolders; drop at target level
 - **暂停触控区 / Pause zone**: 框选屏幕区域，驻留 0.3s 切换启用/暂停，与快捷键等效 — Screen region; dwell 0.3s to toggle pause, equivalent to hotkey
 - **MP3 秒开秒停 / MP3 instant play**: MCI 毫秒级打开，VBR 按 Xing 头校正时长；识别假 MP3 并超时保护 — MCI millisecond open; VBR corrected by Xing header; fake MP3 detection with timeout
 - **MP3 修复工具 / MP3 fixer**: `Mp3Fixer.exe` 批量把容器型假 MP3 转真 MP3，ffmpeg 自动探测/下载 — `Mp3Fixer.exe` batch-converts fake MP3 to real; ffmpeg auto-detect/download
+- **ffmpeg 一键下载 / One-click ffmpeg download**: 设置里可一键下载官方构建（gyan.dev），自动落到程序能探测到的位置，高规格视频兜底解码开箱即用 — One-click download of the official build (gyan.dev) from settings; lands where the app auto-detects it, so fallback decoding works out of the box
 - **面板高度自适应 / Auto panel height**: 条目多时自动长高（以工作区为限）；手动拖过后转记忆模式 — Auto-grow with items (workspace limit); manual drag switches to memory mode
 - **7 语言 / 7 languages**: 中文、English、日本語、한국어、Français、Русский、Español
 - **关闭系统提示 / Disable system tooltip**: 可选隐藏 Windows 原生 tooltip — Optional hide Windows native tooltip
