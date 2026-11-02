@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
 using System.Linq;
+using System.Runtime.InteropServices;
+
 using System.Windows.Forms;
 
 namespace HoverExplorer
@@ -32,6 +34,11 @@ namespace HoverExplorer
         private const int ListPadBottom = 6;
         private Timer _rowHoverTimer;     // 行悬停 400ms → 右侧弹子列表
         private string _rowHoverPath;
+        // 手动 resize：FormBorderStyle.None 下系统 HTBOTTOM sizing loop 会拖顶部，改手动保持 top/left 不变
+        private bool _manualResize;
+        private int _resizeMode;          // 1=底缘 2=右缘 3=右下角
+        private int _resizeStartX, _resizeStartY, _resizeStartW, _resizeStartH;
+
         private EntryRow _rowHoverRow;
         private Timer _dragSubTimer;      // 拖拽悬停文件夹 ~500ms → 弹簧式打开级联子列表
         private EntryRow _dragSubRow;
@@ -54,6 +61,7 @@ namespace HoverExplorer
             base.OnHandleCreated(e);
             // 与面板/预览一致：暗色标题区 + DWM 圆角（Win11）+ 投影
             Win11.Apply(Handle, Config.IsDark, Config.Border);
+            Win11.RemoveNcBorder(Handle);
         }
 
         public EntryListForm(Action<string, Point> onOpenFolder)
@@ -182,6 +190,12 @@ namespace HoverExplorer
             _rows.Clear();
             var grp = CurrentGroup();
             bool isHist = _curG < 0;
+
+            // 顶部标题色块：历史用 Accent，收藏用分组色；文字用对比色
+            Color headBg = isHist ? Config.Accent : ColorTranslator.FromHtml(grp.Color);
+            string headTxt = isHist ? "🕘 " + I18n.T("hist_bar") : grp.Name;
+            Color headFg = ContrastFg(headBg);
+
             List<string> items;
             if (isHist) items = Config.RecentFolders.Where(PathExists).ToList();
             else items = grp.Items.Where(PathExists).ToList();
@@ -297,16 +311,17 @@ namespace HoverExplorer
             if (_headPanel != null)
             {
                 _headPanel.Size = new Size(_listW - ListPadLr * 2, _headerH);
-                _headPanel.BackColor = Config.ListHdbg;
+                _headPanel.BackColor = headBg;
             }
             if (_titleLbl != null)
             {
                 _titleLbl.Width = _headPanel.Width - 58;
-                _titleLbl.BackColor = Config.ListHdbg;
-                _titleLbl.ForeColor = Config.ListFg;
+                _titleLbl.Text = headTxt;
+                _titleLbl.BackColor = headBg;
+                _titleLbl.ForeColor = headFg;
             }
-            if (_pinBtn != null) { _pinBtn.Location = new Point(_headPanel.Width - 46, 4); _pinBtn.BackColor = Config.ListHdbg; }
-            if (_foldBtn != null) { _foldBtn.Location = new Point(_headPanel.Width - 24, 4); _foldBtn.BackColor = Config.ListHdbg; }
+            if (_pinBtn != null) { _pinBtn.Location = new Point(_headPanel.Width - 46, 4); _pinBtn.BackColor = headBg; }
+            if (_foldBtn != null) { _foldBtn.Location = new Point(_headPanel.Width - 24, 4); _foldBtn.BackColor = headBg; }
             ClientSize = new Size(_listW, _fullH);
         }
 
@@ -1006,9 +1021,8 @@ namespace HoverExplorer
             try { Win11.RefreshNc(f.Handle); } catch { }
             try
             {
-                // 表头文本/提示随语言刷新；图标重取——主题切换 ClearUiIconCache 后
-                // 旧 Image 引用已 Dispose，不重赋按钮会变空白
-                f._titleLbl.Text = I18n.T("entry_title");
+                // 表头提示随语言刷新；图标重取——主题切换 ClearUiIconCache 后
+                // 旧 Image 引用已 Dispose，不重赋按钮会变空白（标题文本/颜色由 _fnBuildRows 按分组设置）
                 Tips.Set(f._titleLbl, I18n.T("entry_tip"));
                 f._pinBtn.Image = PreviewForm.PinIcon(f._pinned);
                 f._foldBtn.Image = PreviewForm.PinLaunchIcon(false);
@@ -1038,26 +1052,59 @@ namespace HoverExplorer
             if (Win11.WndNcBorder(Handle, ref m, () => BackColor)) return;
             if (m.Msg == 0x84)   // WM_NCHITTEST
             {
+                // 用屏幕坐标 + Bounds 做检测，避免 PointToClient/ClientSize 在圆角模式下的坐标偏移
                 var lp = m.LParam.ToInt64();
-                var cp = PointToClient(new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF)));
-                int cw = ClientSize.Width, ch = ClientSize.Height;
+                var sp = new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF));
+                var wb = Bounds;
+                const int grip = 6;
                 // 右下角
-                if (cp.X >= cw - 6 && cp.Y >= ch - 6) { m.Result = (IntPtr)17; return; }
+                if (sp.X >= wb.Right - grip && sp.Y >= wb.Bottom - grip) { m.Result = (IntPtr)17; return; }
                 // 右缘拖宽
-                if (cp.X >= cw - 6 && cp.Y >= 0 && cp.Y < ch) { m.Result = (IntPtr)11; return; }
+                if (sp.X >= wb.Right - grip && sp.Y >= wb.Top && sp.Y < wb.Bottom) { m.Result = (IntPtr)11; return; }
                 // 底缘拖高
-                if (cp.Y >= ch - 6 && cp.X >= 0 && cp.X < cw) { m.Result = (IntPtr)12; return; }
+                if (sp.Y >= wb.Bottom - grip && sp.X >= wb.Left && sp.X < wb.Right) { m.Result = (IntPtr)12; return; }
             }
-            else if (m.Msg == 0x232)   // WM_EXITSIZEMOVE
+            else if (m.Msg == 0xA1)   // WM_NCLBUTTONDOWN：拦截系统 sizing loop，手动 resize
             {
-                int w = ClientSize.Width, h = ClientSize.Height;
-                if (w != _listW || h != _fullH)
+                int ht = m.WParam.ToInt32();
+                if (ht == 12 || ht == 11 || ht == 17)
                 {
-                    Config.EntryListW = w;
-                    Config.EntryListH = h;
-                    _dirty = true;
-                    _fnBuildRows();
+                    _manualResize = true;
+                    _resizeMode = ht == 12 ? 1 : (ht == 11 ? 2 : 3);
+                    var lp = m.LParam.ToInt64();
+                    _resizeStartX = (short)(lp & 0xFFFF);
+                    _resizeStartY = (short)((lp >> 16) & 0xFFFF);
+                    _resizeStartW = Width;
+                    _resizeStartH = Height;
+                    Capture = true;
+                    return;
                 }
+            }
+            else if (_manualResize && m.Msg == 0x200)   // WM_MOUSEMOVE
+            {
+                var lp = m.LParam.ToInt64();
+                var sp = PointToScreen(new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF)));
+                if ((_resizeMode & 1) != 0)   // 底缘或右下角
+                {
+                    int newH = _resizeStartH + (sp.Y - _resizeStartY);
+                    Height = Math.Max(60, newH);
+                }
+                if ((_resizeMode & 2) != 0)   // 右缘或右下角
+                {
+                    int newW = _resizeStartW + (sp.X - _resizeStartX);
+                    Width = Math.Max(200, newW);
+                }
+                return;
+            }
+            else if (_manualResize && m.Msg == 0x202)   // WM_LBUTTONUP
+            {
+                _manualResize = false;
+                Capture = false;
+                Config.EntryListW = ClientSize.Width;
+                Config.EntryListH = ClientSize.Height;
+                _dirty = true;
+                _fnBuildRows();
+                return;
             }
             base.WndProc(ref m);
         }

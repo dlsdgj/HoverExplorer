@@ -13,7 +13,7 @@ namespace HoverExplorer
 {
     internal static class Program
     {
-        public const string Version = "1.0.9.9";
+        public const string Version = "1.1.0";
 
         private static string _desktopPath;
         private static IntPtr _listview = IntPtr.Zero;
@@ -520,6 +520,7 @@ namespace HoverExplorer
         private static NativeMethods.HookProc _mouseHookProc;
         private static IntPtr _kbHook;
         private static NativeMethods.HookProc _kbHookProc;
+
 
         private static void SyncMouseHook(bool want)
         {
@@ -1123,13 +1124,15 @@ namespace HoverExplorer
                     foreach (var p in _panels) p.EnsureTopmost();
                     foreach (var c in _pinCards) { if (!c.IsDisposed) PopupForm.EnsureWinTopmost(c.Handle, "pincard"); }
                     Tips.EnsureTopmost();
-                    return;
+                    // 长按模式：按住左键不动时继续走悬停检测（让长按计时生效），其余模式维持原短路
+                    if (!Config.LongPressFor(false) && !Config.LongPressFor(true)) return;
                 }
                 // 拖拽会话：关闭外部文件预览与面板内预览——拖拽源文件的预览窗会盖住拖拽目标
                 // （inExtPreview 门禁会拦掉后续检测），且拖拽中不需要预览。
                 // 但鼠标在预览窗内时不关：按住 ≥400ms+移动 10px 就满足拖拽会话判定，
                 // 用户在预览上按住微动（点波形/长按读取）不是拖文件，关掉就是“点击关闭预览”
-                if (!PopupForm.FilePreviewContainsPoint(mx, my))
+                // 长按模式：按住左键就是要触发预览，不取消在途的预览计时
+                if (!PopupForm.FilePreviewContainsPoint(mx, my) && !Config.LongPressFor(true))
                 {
                     PopupForm.CancelFilePreview();
                     _extHoverFile = null;
@@ -1176,10 +1179,13 @@ namespace HoverExplorer
                 return;
             }
 
-            // 悬停抑制：Alt 临时禁用 / 修饰键门控（按住才触发）。
+            // 悬停抑制：修饰键门控（按住才触发）。长按模式不抑制，由触发处用更长延时门控。
             // 文件夹面板与文件预览各自一套门控：只拦各自功能，未拦的一方继续检测
             bool folderSup = Config.HoverSuppressed(false);
             bool previewSup = Config.HoverSuppressed(true);
+            // 长按维持：已有面板/预览存活时不跳过悬停检测（需检测 hoverPath 判定是否仍在原目标）
+            bool lpKeepAlive = (Config.LongPressFor(false) && !_panels.All(p => p.Pinned))
+                            || (Config.LongPressFor(true) && _extHoverFile != null);
             // 门控状态翻转日志：诊断"时灵时不灵"——不灵的那一下看这里（放行/抑制）与 [hover] 目标
             bool gatePass = !(folderSup && previewSup);
             if (gatePass != _lastGatePass)
@@ -1190,8 +1196,9 @@ namespace HoverExplorer
             MaybeGateHint(mx, my);
             // 两套都拦住：跳过昂贵的悬停检测（hoverPath 保持 null），但不能提前 return——
             // 下方的关闭维护（预览 300ms 宽限关闭 + MaybeClose 面板衰减）必须照常跑，
-            // 否则按门控键打开的预览/面板在松键后永远不关
-            bool bothSup = folderSup && previewSup;
+            // 否则按门控键打开的预览/面板在松键后永远不关。
+            // 长按维持时需检测 hoverPath 判定是否仍在原目标，不跳过
+            bool bothSup = folderSup && previewSup && !lpKeepAlive;
 
             string hoverPath = null;
             bool hoverIsDir = false;
@@ -1263,7 +1270,17 @@ namespace HoverExplorer
 
             string hoverFolder = (hoverPath != null && hoverIsDir) ? hoverPath : null;
             // 无面板时悬停文件（图片/文本）直接预览，受"文件预览"开关控制
-            string hoverFile = (hoverPath != null && !hoverIsDir && !_dragSessionActive && _panels.All(p => p.Pinned)) ? hoverPath : null;
+            // 长按模式：按住左键就是要预览，不受拖拽会话抑制
+            bool lpPreview = Config.LongPressFor(true);
+            string hoverFile = (hoverPath != null && !hoverIsDir && (lpPreview || !_dragSessionActive) && _panels.All(p => p.Pinned)) ? hoverPath : null;
+            // 长按维持：鼠标仍在原长按目标上 → 不抑制（面板/预览存活）；移到新目标 → 抑制（需新长按）
+            if (folderSup && Config.LongPressFor(false))
+            {
+                var curPanel = _panels.FirstOrDefault(p => !p.Pinned);
+                if (curPanel != null && hoverPath == curPanel.CurrentPath) folderSup = false;
+            }
+            if (previewSup && Config.LongPressFor(true) && _extHoverFile != null && hoverPath == _extHoverFile)
+                previewSup = false;
             // 门控只拦各自功能：文件夹被拦不弹面板，预览被拦不弹预览（未拦的一方正常走）
             if (folderSup) hoverFolder = null;
             if (previewSup) hoverFile = null;
@@ -1278,8 +1295,10 @@ namespace HoverExplorer
                 _extNullSince = DateTime.MinValue;
                 if (hoverFile != _extHoverFile)
                 {
-                    // 指针没动却换了目标（切标签页、列表刷新）不是用户主动悬停，先不预览
-                    if (!mouseMoved)
+                    // 指针没动却换了目标（切标签页、列表刷新）不是用户主动悬停，先不预览。
+                    // 长按模式按住左键除外：按左键是用户主动操作
+                    bool lpActive = Config.LongPressFor(true) && Config.IsLeftDown();
+                    if (!mouseMoved && !lpActive)
                         DebugLog("[preview] target changed w/o mouse move, hold: " + hoverFile);
                     else
                     {
@@ -1310,7 +1329,9 @@ namespace HoverExplorer
             _closeStart = DateTime.MinValue;
             if (hoverFolder != _hoverFolder)
             {
-                if (!mouseMoved)
+                // 长按模式按住左键属于用户主动操作，即使指针静止也允许触发
+                bool lpActive = Config.LongPressFor(false) && Config.IsLeftDown();
+                if (!mouseMoved && !lpActive)
                 {
                     // 指针静止而坐标下的目标变了（切换 Explorer 标签页/目录、列表刷新），
                     // 这不是"用户把指针移上来"，不触发；一直顺延计时，鼠标动一下才重新判定
@@ -1326,7 +1347,7 @@ namespace HoverExplorer
                 }
             }
 
-            if ((DateTime.UtcNow - _hoverStart).TotalSeconds >= Config.HoverDelay)
+            if ((DateTime.UtcNow - _hoverStart).TotalMilliseconds >= (Config.LongPressFor(false) ? Config.LongPressDelayMs : Config.HoverDelayMs))
             {
                 var nonPinned = _panels.Where(p => !p.Pinned).ToList();
                 if (nonPinned.Count == 0 || nonPinned[0].CurrentPath != hoverFolder)
@@ -1340,6 +1361,7 @@ namespace HoverExplorer
                         ShowHighlight(hoverRect);
                         _panels.Add(p2);
                         p2.Show();
+
                         NativeMethods.SetWindowPos(p2.Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
                             NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
                         DebugLog("[panel] OPENED at " + p2.Left + "," + p2.Top + " size " + p2.Width + "x" + p2.Height
@@ -1473,7 +1495,8 @@ namespace HoverExplorer
             if (string.IsNullOrEmpty(p)) return;
             _gateHintAt = now;
             int mods = Config.FolderGateEnabled ? Config.FolderGateMods : Config.PreviewGateMods;
-            Tips.Flash(string.Format(I18n.T("gate_hint"), Config.ModsLabel(mods)), 1400);
+            string hint = (mods & 8) != 0 ? I18n.T("gate_hint_long") : string.Format(I18n.T("gate_hint"), Config.ModsLabel(mods));
+            Tips.Flash(hint, 1400);
             DebugLog("[gate] hint shown @ " + mx + "," + my + " target=" + p);
         }
 
@@ -1555,6 +1578,7 @@ namespace HoverExplorer
             {
                 if (p.IsDisposed || !p.IsHandleCreated) continue;
                 Win11.Apply(p.Handle, Config.IsDark, Config.Border);
+                Win11.RemoveNcBorder(p.Handle);
                 Win11.RefreshNc(p.Handle);   // 重跑 NCCALCSIZE（描边环增减）并整帧重画
                 p.Invalidate(true);
             }
@@ -1942,30 +1966,11 @@ namespace HoverExplorer
         {
             try
             {
-                var bmp = new Bitmap(32, 32);
-                using (var g = Graphics.FromImage(bmp))
-                {
-                    g.Clear(Color.Transparent);
-                    var folderColor = ColorTranslator.FromHtml("#2d3a5f");
-                    var outline = ColorTranslator.FromHtml("#9cdcfe");
-                    var dot = ColorTranslator.FromHtml("#2d7a3d");
-                    using (var b = new SolidBrush(folderColor))
-                    {
-                        g.FillRectangle(b, 3, 5, 13, 6);
-                        g.FillRectangle(b, 3, 9, 26, 18);
-                    }
-                    using (var p = new Pen(outline, 2))
-                        g.DrawRectangle(p, 3, 9, 26, 18);
-                    using (var b = new SolidBrush(dot))
-                        g.FillEllipse(b, 21, 14, 6, 6);
-                }
-                var hicon = bmp.GetHicon();
-                var icon = Icon.FromHandle(hicon);
-                bmp.Dispose();
-                _trayHicon = hicon;
-                return icon;
+                var ic = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
+                if (ic != null) return ic;
             }
-            catch { return SystemIcons.Application; }
+            catch { }
+            return SystemIcons.Application;
         }
     }
 

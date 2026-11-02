@@ -28,10 +28,9 @@ namespace HoverExplorer
         }
 
         // 悬停抑制判定（唯一入口，Program/PopupForm 共用；Keys 参数版可脱离键盘做自检）：
-        // ① AltSuppressHover：按住 Alt 临时禁用——全局开关，一级触发与面板内部都生效；
-        //    若 Alt 同时是当前功能门控键则豁免（否则门控永不生效）
-        // ② 门控：按住任一所选修饰键才放行——只拦"从无到有"的第一级触发（桌面/资源管理器直接悬停）。
-        //    一级面板已通过门控，面板内部的子面板/行预览免键操作，走 HoverSuppressedInside
+        // 门控：按住任一所选修饰键才放行——只拦"从无到有"的第一级触发（桌面/资源管理器直接悬停）。
+        //   一级面板已通过门控，面板内部的子面板/行预览免键操作，走 HoverSuppressedInside
+        // 长按模式（gateMods 位 8）：不抑制悬停检测，由触发处用 LongPressDelayMs 替代 HoverDelay 计时
         // 修饰键实时态：必须用 GetAsyncKeyState（全局实时，独立于线程消息队列）。
         // Control.ModifierKeys(=GetKeyState) 是线程本地缓存——本进程不是前台时（悬停资源管理器的常态）
         // 键盘消息进的是 Explorer 的队列，这里读到的是上次处理消息时的旧快照，UIA 探测越忙越滞后，
@@ -44,15 +43,21 @@ namespace HoverExplorer
             if ((HoverExplorer.NativeMethods.GetAsyncKeyState(0x12) & 0x8000) != 0) mk |= System.Windows.Forms.Keys.Alt;
             return mk;
         }
-        internal static bool HoverSuppressed(bool forPreview) { return HoverSuppressed(RealModifiers(), forPreview, true); }
-        // 面板内部触发（子面板/行预览）：不做门控，只吃 Alt 临时禁用
-        internal static bool HoverSuppressedInside(bool forPreview) { return HoverSuppressed(RealModifiers(), forPreview, false); }
-        internal static bool HoverSuppressed(System.Windows.Forms.Keys mk, bool forPreview, bool applyGate)
+        internal static bool HoverSuppressed(bool forPreview) { return HoverSuppressed(RealModifiers(), forPreview, true, IsLeftDown()); }
+        // 面板内部触发（子面板/行预览）：不做门控
+        internal static bool HoverSuppressedInside(bool forPreview) { return HoverSuppressed(RealModifiers(), forPreview, false, IsLeftDown()); }
+        // 鼠标左键实时按下态（长按门控用，与 RealModifiers 同源 GetAsyncKeyState）
+        internal static bool IsLeftDown() { return (HoverExplorer.NativeMethods.GetAsyncKeyState(0x01) & 0x8000) != 0; }
+        internal static bool HoverSuppressed(System.Windows.Forms.Keys mk, bool forPreview, bool applyGate, bool leftDown = false)
         {
             int gateMods = forPreview ? PreviewGateMods : FolderGateMods;
             bool gateOn = forPreview ? PreviewGateEnabled : FolderGateEnabled;
-            bool altIsGate = gateOn && (gateMods & 4) != 0;
-            if (AltSuppressHover && !altIsGate && (mk & System.Windows.Forms.Keys.Alt) == System.Windows.Forms.Keys.Alt) return true;
+            bool longPress = gateOn && (gateMods & 8) != 0;
+            if (longPress)
+            {
+                if (!applyGate) return false;     // 面板内部免键
+                return !leftDown;                 // 一级触发：按住左键才放行，由触发处用 LongPressDelayMs 计时
+            }
             if (applyGate && gateOn)
             {
                 bool gate = ((mk & System.Windows.Forms.Keys.Shift) != 0 && (gateMods & 1) != 0)
@@ -61,6 +66,12 @@ namespace HoverExplorer
                 if (!gate) return true;
             }
             return false;
+        }
+        // 长按模式判定：该功能是否启用长按门控（触发处据此用 LongPressDelayMs 替代 HoverDelay）
+        internal static bool LongPressFor(bool forPreview)
+        {
+            if (forPreview) return PreviewGateEnabled && (PreviewGateMods & 8) != 0;
+            return FolderGateEnabled && (FolderGateMods & 8) != 0;
         }
 
         // 修饰键掩码 → 显示文本（门控提示/设置用）
@@ -191,6 +202,8 @@ namespace HoverExplorer
         public static bool PreviewFont = true;
         public static bool PreviewOther = true;
         public static bool SpeedToggle = true;
+        public static bool WaveformEnabled = true;   // 音频波形图开关（解码占 CPU）
+        public static bool SpectrumEnabled = false;  // 频谱显示（波形图关闭时可选）
         // ffmpeg 可执行文件路径（留空=自动探测）：用于解码 Media Foundation 解不了的
         // 高规格视频（10bit 4:2:2 / HEVC / 超高码率），以及作为解码兜底
         public static string FfmpegPath = "";
@@ -228,14 +241,14 @@ namespace HoverExplorer
         public static bool RowSwapSides = false;
         // 互换布局的分栏分隔线位置（行内 X 像素）；0=自动（按钮组+大小列宽度），拖动后持久化
         public static int RowSplitX = 0;
-        // 按住 Alt 临时禁用悬停（不弹新面板/预览，已调度取消；松开恢复）
-        public static bool AltSuppressHover = true;
         // 悬停门控：按住所选修饰键才触发，重命名/多选等操作不被弹窗干扰。
         // 文件夹列表与文件预览两套，各自独立开关与键位；门控只拦第一级触发，面板内部免键
         public static bool FolderGateEnabled = false;
-        public static int FolderGateMods = 2;   // 位掩码：1=Shift 2=Ctrl 4=Alt
+        public static int FolderGateMods = 2;   // 位掩码：1=Shift 2=Ctrl 4=Alt 8=长按
         public static bool PreviewGateEnabled = false;
         public static int PreviewGateMods = 2;
+        // 长按触发阈值（毫秒）：长按模式下悬停超过此时长才弹面板/预览
+        public static int LongPressDelayMs = 1500;
         // 视频预览默认静音（办公室友好）：悬停触发的视频先无声播放，点控制条喇叭键恢复
         public static bool PreviewMuted = true;
         // 文件夹列表排列方式（全局）：name/size/date + 升降序，切换排序按钮时更新
@@ -245,6 +258,7 @@ namespace HoverExplorer
         public static string Theme = "light";
         // 桌面卡片配色索引（独立于 Theme：面板主题不影响卡片；卡片上滚轮可循环切换）
         public static int CardPaletteIndex = 0;
+        public static int LastSettingsPage = 0;
         public static string CardPalettesData = "";
         public static List<PinnedItem> PinnedItems = new List<PinnedItem>();
         public static readonly string FontName = "Microsoft YaHei UI";
@@ -508,6 +522,8 @@ namespace HoverExplorer
                         case "PreviewFont": PreviewFont = Convert.ToBoolean(v); break;
                         case "PreviewOther": PreviewOther = Convert.ToBoolean(v); break;
                         case "SpeedToggle": SpeedToggle = Convert.ToBoolean(v); break;
+                        case "WaveformEnabled": WaveformEnabled = Convert.ToBoolean(v); break;
+                        case "SpectrumEnabled": SpectrumEnabled = Convert.ToBoolean(v); break;
                         case "FfmpegPath": FfmpegPath = Convert.ToString(v); break;
                         case "DebugLog": DebugLog = Convert.ToBoolean(v); break;
                         case "HideTooltip": HideTooltip = Convert.ToBoolean(v); break;
@@ -519,6 +535,7 @@ namespace HoverExplorer
                         case "Language": Language = Convert.ToString(v); break;
                         case "Theme": Theme = Convert.ToString(v); break;
                         case "CardPaletteIndex": CardPaletteIndex = Convert.ToInt32(v); break;
+                        case "LastSettingsPage": LastSettingsPage = Convert.ToInt32(v); break;
                         case "PinnedItems":
                             PinnedItems = new List<PinnedItem>();
                             foreach (var item in (System.Collections.ArrayList)v)
@@ -577,11 +594,11 @@ namespace HoverExplorer
                         case "KeepOnLeave": KeepOnLeave = Convert.ToBoolean(v); break;
                         case "RowSwapSides": RowSwapSides = Convert.ToBoolean(v); break;
                         case "RowSplitX": RowSplitX = Convert.ToInt32(v); break;
-                        case "AltSuppressHover": AltSuppressHover = Convert.ToBoolean(v); break;
                         case "FolderGateEnabled": FolderGateEnabled = Convert.ToBoolean(v); break;
                         case "FolderGateMods": FolderGateMods = Convert.ToInt32(v); break;
                         case "PreviewGateEnabled": PreviewGateEnabled = Convert.ToBoolean(v); break;
                         case "PreviewGateMods": PreviewGateMods = Convert.ToInt32(v); break;
+                        case "LongPressDelayMs": LongPressDelayMs = Convert.ToInt32(v); break;
                         case "PreviewMuted": PreviewMuted = Convert.ToBoolean(v); break;
                         case "ListPalette": ListPalette = Convert.ToString(v); break;
                         case "ListPalettesData": ListPalettesData = Convert.ToString(v); break;
@@ -637,6 +654,8 @@ namespace HoverExplorer
                 data["PreviewFont"] = PreviewFont;
                 data["PreviewOther"] = PreviewOther;
                 data["SpeedToggle"] = SpeedToggle;
+                data["WaveformEnabled"] = WaveformEnabled;
+                data["SpectrumEnabled"] = SpectrumEnabled;
                 data["FfmpegPath"] = FfmpegPath;
                 data["DebugLog"] = DebugLog;
                 data["HideTooltip"] = HideTooltip;
@@ -672,11 +691,11 @@ namespace HoverExplorer
                 data["KeepOnLeave"] = KeepOnLeave;
                 data["RowSwapSides"] = RowSwapSides;
                 data["RowSplitX"] = RowSplitX;
-                data["AltSuppressHover"] = AltSuppressHover;
                 data["FolderGateEnabled"] = FolderGateEnabled;
                 data["FolderGateMods"] = FolderGateMods;
                 data["PreviewGateEnabled"] = PreviewGateEnabled;
                 data["PreviewGateMods"] = PreviewGateMods;
+                data["LongPressDelayMs"] = LongPressDelayMs;
                 data["PreviewMuted"] = PreviewMuted;
                 data["ListPalette"] = ListPalette;
                 data["ListPalettesData"] = ListPalettesData;
@@ -685,6 +704,7 @@ namespace HoverExplorer
                 data["Language"] = Language;
                 data["Theme"] = Theme;
                 data["CardPaletteIndex"] = CardPaletteIndex;
+                data["LastSettingsPage"] = LastSettingsPage;
                 data["CardPalettesData"] = CardPalettesData;
                 data["HoverDelay"] = HoverDelay;
                 data["CloseDelay"] = CloseDelay;

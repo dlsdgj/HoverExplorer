@@ -1474,4 +1474,135 @@ internal static class MediaPreview
             _down = false;
         }
     }
+
+    // 频谱条：WaveDecoder 流式 FFT 得到 32 对数频带能量，显示为垂直能量条 + 底部进度条。
+    // 交互同 WaveView（点击=seek，任意方向拖动>3px=移动窗口）。
+    internal sealed class SpectrumView : WinControl
+    {
+        private const int Bands = 32;
+
+        private static readonly float[] Empty = new float[0];
+        private float[] _spec = Empty;
+        private double _pos;
+        private bool _down, _winMoved;
+        private Point _downPt;
+        public event Action<double> Seek;
+        public event Action MoveWindow;
+
+        internal SpectrumView()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            BackColor = Config.BG;
+            Cursor = Cursors.Hand;
+        }
+
+        internal void SetData(float[] spectrum, double posRatio)
+        {
+            _spec = spectrum ?? Empty;
+            _pos = posRatio < 0 ? 0 : (posRatio > 1 ? 1 : posRatio);
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.Clear(BackColor);
+            int pw = (int)Math.Round(Width * _pos);
+            int bw = Width / Bands;
+            if (bw < 1) bw = 1;
+            using (var played = new SolidBrush(Color.FromArgb(225, Config.Accent)))
+            using (var rest = new SolidBrush(Color.FromArgb(80, Config.PlaceholderFg)))
+            {
+                for (int b = 0; b < Bands; b++)
+                {
+                    float v = b < _spec.Length ? _spec[b] : 0f;
+                    if (v < 0f) v = 0f; else if (v > 1f) v = 1f;
+                    int bh = Math.Max(1, (int)Math.Round(v * (Height - 2)));
+                    int bx = b * bw;
+                    g.FillRectangle(bx < pw ? played : rest, bx + 1, Height - 1 - bh, bw - 2, bh);
+                }
+            }
+
+        }
+
+        private void SeekAt(int x)
+        {
+            if (Width <= 0) return;
+            double r = (double)x / Width;
+            if (r < 0) r = 0; else if (r > 1) r = 1;
+            if (Seek != null) Seek(r);
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button != MouseButtons.Left) return;
+            _down = true; _winMoved = false;
+            _downPt = e.Location;
+        }
+
+        protected override void OnMouseMove(MouseEventArgs e)
+        {
+            base.OnMouseMove(e);
+            if (!_down || _winMoved) return;
+            int dx = e.X - _downPt.X, dy = e.Y - _downPt.Y;
+            if (Math.Abs(dx) > 3 || Math.Abs(dy) > 3)
+            {
+                _winMoved = true;
+                if (MoveWindow != null) MoveWindow();
+            }
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (_down && !_winMoved) SeekAt(e.X);
+            _down = false;
+        }
+    }
+
+    // 独立进度条：波形图和频谱都关闭时显示，点击 seek
+    internal sealed class AudioProgress : WinControl
+    {
+        private double _pos;
+        public event Action<double> Seek;
+
+        internal AudioProgress()
+        {
+            SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
+                | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
+            BackColor = Config.BG;
+            Cursor = Cursors.Hand;
+        }
+
+        internal void SetPos(double posRatio)
+        {
+            _pos = posRatio < 0 ? 0 : (posRatio > 1 ? 1 : posRatio);
+            Invalidate();
+        }
+
+        protected override void OnPaint(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.Clear(BackColor);
+            int pw = (int)Math.Round(Width * _pos);
+            int y = (Height - 3) / 2;
+            using (var bg = new SolidBrush(Color.FromArgb(60, Config.PlaceholderFg)))
+            using (var fg = new SolidBrush(Config.Accent))
+            {
+                g.FillRectangle(bg, 0, y, Width, 3);
+                if (pw > 0) g.FillRectangle(fg, 0, y, pw, 3);
+            }
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (e.Button != MouseButtons.Left || Width <= 0) return;
+            double r = (double)e.X / Width;
+            if (r < 0) r = 0; else if (r > 1) r = 1;
+            if (Seek != null) Seek(r);
+        }
+    }
 }

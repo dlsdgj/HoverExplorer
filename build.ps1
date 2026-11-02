@@ -25,7 +25,7 @@ foreach ($g in $gacRefs) {
 if (Test-Path $out) { Set-ItemProperty $out -Name IsReadOnly -Value $false }
 $srcFiles = @('AssemblyInfo.cs','CardPalette.cs','Config.cs','EntryListForm.cs','IMediaSession.cs','MciAudioSession.cs','FfmpegAudioSession.cs','FfmpegDownload.cs','ExplorerSupport.cs','ExplorerUia.cs','I18n.cs','Ingest.cs','MediaDecoder.cs','MediaPreview.cs','NativeMethods.cs','PaletteListForm.cs','PerchSupport.cs','PinCardForm.cs','PopupForm.cs','PreviewProvider.cs','Program.cs','RemoteReader.cs','SettingsForm.cs','ShellContextMenu.cs','SlimScrollBar.cs','TcSupport.cs','Win11.cs','WaveDecoder.cs') | ForEach-Object { "$src\$_" }
 
-& 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe' /nologo /target:winexe /out:$out /resource:"$src\donate_qr.png",HoverExplorer.donate_qr.png ($refs | ForEach-Object { "/r:$_" }) $srcFiles
+& 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe' /nologo /target:winexe /win32icon:"$src\app.ico" /out:$out /resource:"$src\donate_qr.png",HoverExplorer.donate_qr.png ($refs | ForEach-Object { "/r:$_" }) $srcFiles
 if ($LASTEXITCODE -eq 0) { Write-Output "BUILD OK" } else { Write-Output "BUILD FAIL" }
 
 $fixerOut = "$src\Mp3Fixer.exe"

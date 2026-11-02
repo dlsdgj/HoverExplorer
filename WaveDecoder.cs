@@ -19,6 +19,7 @@ namespace HoverExplorer
         private readonly double _dur100ns;   // 总时长（100ns 单位）
         private volatile bool _done, _failed, _cancel;
 
+
         internal string Path { get; private set; }
         internal bool Done { get { return _done; } }
         internal bool Failed { get { return _failed; } }
@@ -74,6 +75,7 @@ namespace HoverExplorer
                 cur.GetUint32(MtRate, out rate);
                 if (ch < 1) ch = 1;
                 if (rate < 8000) rate = 44100;   // 拿不到采样率时按常用值兜底（只影响桶内插值精度）
+
                 Guid sub;
                 cur.GetGuid(MtSubtype, out sub);
                 bool isFloat = sub == AudioFloat;
@@ -136,6 +138,7 @@ namespace HoverExplorer
                     for (int c = 0; c < ch; c++) s += buf[i * ch + c];
                     s /= ch;
                     Put(ts100ns + i * frame100ns, k, s);
+
                 }
             }
             else
@@ -148,6 +151,7 @@ namespace HoverExplorer
                     for (int c = 0; c < ch; c++) s += buf[i * ch + c];
                     s = s / ch / 32768f;
                     Put(ts100ns + i * frame100ns, k, s);
+
                 }
             }
         }
@@ -167,6 +171,7 @@ namespace HoverExplorer
         {
             for (int i = 0; i < Buckets; i++)
                 Rms[i] = _cnt[i] > 0 ? (float)Math.Sqrt(_sq[i] / _cnt[i]) : 0f;
+
         }
 
         private const int AllStreams = -2;    // MF_SOURCE_READER_ALL_STREAMS (0xFFFFFFFE)
