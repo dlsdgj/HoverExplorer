@@ -49,6 +49,16 @@ namespace HoverExplorer
         private static bool _hitIsDir;
         private static DateTime _hitAt = DateTime.MinValue;
 
+        // 静止指针缓存：指针不动时坐标下的结果一般也不变。同一窗口同一像素点 250ms 内
+        // 直接复用上次检测结果（含 null），静止 tick 不再全量跑 UIA（全量 ~100ms 级）。
+        // TTL 到期重检一次，切标签/列表刷新最迟 250ms 后被感知；指针一动坐标就变，缓存自然失效
+        private static IntPtr _stillHwnd;
+        private static int _stillX = int.MinValue, _stillY;
+        private static string _stillPath;
+        private static System.Drawing.Rectangle _stillRect;
+        private static bool _stillIsDir;
+        private static DateTime _stillAt = DateTime.MinValue;
+
         public static string DetectHoverItem(int mx, int my, out System.Drawing.Rectangle rect, out bool isDir)
         {
             rect = System.Drawing.Rectangle.Empty;
@@ -67,6 +77,13 @@ namespace HoverExplorer
             }
             if (explorerHwnd == IntPtr.Zero) return null;
 
+            if (_stillHwnd == explorerHwnd && mx == _stillX && my == _stillY
+                && (DateTime.UtcNow - _stillAt).TotalMilliseconds < 250)
+            {
+                rect = _stillRect; isDir = _stillIsDir;
+                return _stillPath;
+            }
+
             if (_hitHwnd == explorerHwnd && (DateTime.UtcNow - _hitAt).TotalMilliseconds < 600)
             {
                 var hitZone = System.Drawing.Rectangle.Inflate(_hitRect, 8, 4);
@@ -78,22 +95,33 @@ namespace HoverExplorer
                 }
             }
 
+            string result = null;
+            rect = System.Drawing.Rectangle.Empty;
+            isDir = false;
             string name = ExplorerUia.DetectHoverItemCore(mx, my, explorerHwnd, out rect);
             if (name == null)
             {
                 string navPath = DetectNavPaneFolder(explorerHwnd, mx, my);
-                if (navPath != null) { isDir = true; return navPath; }
-                return null;
+                if (navPath != null) { result = navPath; isDir = true; }
             }
-
-            string dirPath = GetExplorerPath(explorerHwnd, name);
-            if (dirPath == null) return null;
-
-            string fullPath = Path.Combine(dirPath, name);
-            isDir = Directory.Exists(fullPath);
-            _hitHwnd = explorerHwnd; _hitPath = fullPath; _hitIsDir = isDir;
-            _hitRect = rect; _outRect = rect; _hitAt = DateTime.UtcNow;
-            return fullPath;
+            else
+            {
+                string dirPath = GetExplorerPath(explorerHwnd, name);
+                if (dirPath != null)
+                {
+                    string fullPath = Path.Combine(dirPath, name);
+                    isDir = Directory.Exists(fullPath);
+                    _hitHwnd = explorerHwnd; _hitPath = fullPath; _hitIsDir = isDir;
+                    _hitRect = rect; _outRect = rect; _hitAt = DateTime.UtcNow;
+                    result = fullPath;
+                }
+                else { rect = System.Drawing.Rectangle.Empty; isDir = false; }
+            }
+            _stillHwnd = explorerHwnd; _stillX = mx; _stillY = my;
+            _stillPath = result; _stillRect = result != null ? rect : System.Drawing.Rectangle.Empty;
+            _stillIsDir = result != null && isDir;
+            _stillAt = DateTime.UtcNow;
+            return result;
         }
 
         private static string DetectNavPaneFolder(IntPtr explorerHwnd, int mx, int my)
