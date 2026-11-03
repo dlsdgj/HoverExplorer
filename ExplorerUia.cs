@@ -427,6 +427,8 @@ namespace HoverExplorer
             if (item == null)
             {
                 LogDetect("step:m2-start", null);
+                AutomationElement bestItem = null;
+                int bestDist = int.MaxValue;
                 try
                 {
                     var root = AutomationElement.FromHandle(explorerHwnd);
@@ -446,6 +448,9 @@ namespace HoverExplorer
                                 LogDetect("step:m2-container", items.Count + " items");
                             }
                         }
+                        // 图标/缩略图 tile 之间的留白用精确矩形必 miss（no-item），
+                        // 对近方形 tile 给 8px 容差取最近命中；宽行（详细视图）保持精确，
+                        // 避免吃到滚动条/右侧空白
                         for (int i = 0; i < items.Count; i++)
                         {
                             var it = items[i];
@@ -454,10 +459,23 @@ namespace HoverExplorer
                                 var r = it.Current.BoundingRectangle;
                                 double top = r.Y;
                                 if (r.Height < 32) top = r.Y - 48;
-                                if (mx >= r.X && mx <= r.Right && my >= top && my <= r.Bottom)
-                                { item = it; LogDetect("m2-hit", it.Current.ControlType.ProgrammaticName); break; }
+                                int tol = (r.Width <= (r.Bottom - r.Y) * 3 && (r.Bottom - r.Y) <= r.Width * 3) ? 8 : 0;
+                                int dx = mx < r.X ? (int)(r.X - mx) : (mx > r.Right ? (int)(mx - r.Right) : 0);
+                                int dy = Math.Max(my < top ? (int)(top - my) : 0, my > r.Bottom ? (int)(my - r.Bottom) : 0);
+                                if (dx <= tol && dy <= tol && dx + dy < bestDist)
+                                {
+                                    bestDist = dx + dy;
+                                    bestItem = it;
+                                    if (dx == 0 && dy == 0) break;   // 精确命中优先，立即返回
+                                }
                             }
                             catch { }
+                        }
+                        if (bestItem != null)
+                        {
+                            item = bestItem;
+                            LogDetect("m2-hit", item.Current.ControlType.ProgrammaticName
+                                + (bestDist > 0 ? " (gap-tol " + bestDist + ")" : ""));
                         }
                     }
                 }
@@ -567,7 +585,10 @@ namespace HoverExplorer
                     nameTop = full.Y; nameHeight = full.Height;
                 }
             }
-            if (mx < nameLeft || mx > nameRight || my < nameTop || my > nameTop + nameHeight)
+            // 区域拒绝只对 tile 内的点生效：容差命中（留白里的点在 tile 矩形外）直接放行，
+            // 高亮/预览仍用 nameArea 矩形
+            bool inFull = mx >= full.X && mx <= full.Right && my >= full.Y && my <= full.Bottom;
+            if (inFull && (mx < nameLeft || mx > nameRight || my < nameTop || my > nameTop + nameHeight))
             {
                 LogDetect("rejected-region", string.Format("mouse={0},{1} nameArea=({2:F0},{3:F0})-({4:F0},{5:F0}) row=({6:F0},{7:F0})-({8:F0},{9:F0})",
                     mx, my, nameLeft, nameTop, nameRight, nameTop + nameHeight, full.X, full.Y, full.Right, full.Bottom));
