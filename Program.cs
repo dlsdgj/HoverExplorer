@@ -53,6 +53,12 @@ namespace HoverExplorer
         private static string _hoverFolder;
         private static string _extHoverFile;
         private static string _lastHoverPath;
+        // 指针静止时的候选目标 + 稳定起点：目标被连续检测到满 HoverDelay 也算真实悬停
+        // （缩略图视图下检测会抖，"mouseMoved + 目标稳定"的 tick 可能永不对齐，见上游 issue #4）
+        private static string _extCandidate;
+        private static DateTime _extCandidateStart = DateTime.MinValue;
+        private static string _dirCandidate;
+        private static DateTime _dirCandidateStart = DateTime.MinValue;
         // 上一 Tick 的指针位置：用于判断"指针是否真的移动过"
         // （悬停的正确语义是"指针移上来"，光看"坐标下的目标变了"会被切换标签页/列表刷新骗到）
         private static int _lastTickX = int.MinValue, _lastTickY = int.MinValue;
@@ -940,6 +946,8 @@ namespace HoverExplorer
                 CloseAll();
                 _hoverFolder = null;
                 _extHoverFile = null;
+                _dirCandidate = null;
+                _extCandidate = null;
                 PopupForm.ScheduleExtPreviewClose(0, 0);
             }
             try { _notifyIcon.ShowBalloonTip(800, "HoverExplorer", _hoverEnabled ? I18n.T("hover_enabled") : I18n.T("hover_disabled"), ToolTipIcon.Info); } catch { }
@@ -1115,7 +1123,9 @@ namespace HoverExplorer
                             && !_pinCards.Any(c => !c.IsDisposed && c.IsHandleCreated && c.RectangleToScreen(c.ClientRectangle).Contains(mx, my)))
                         {
                             _extHoverFile = null;
+                            _extCandidate = null;
                             _hoverFolder = null;
+                            _dirCandidate = null;
                             CloseAll();
                         }
                     }
@@ -1136,6 +1146,7 @@ namespace HoverExplorer
                 {
                     PopupForm.CancelFilePreview();
                     _extHoverFile = null;
+                    _extCandidate = null;
                 }
                 if (!_panels.Any(p2 => p2.PreviewContainsPoint(mx, my)))
                     foreach (var p in _panels) p.ClosePreviewIfAny();
@@ -1173,7 +1184,9 @@ namespace HoverExplorer
             {
                 PopupForm.CancelFilePreview();
                 _extHoverFile = null;
+                _extCandidate = null;
                 _hoverFolder = null;
+                _dirCandidate = null;
                 foreach (var p in _panels) { if (!p.IsDisposed && !p.Pinned) p.ClosePanel(); }
                 _panels.RemoveAll(p => p.IsDisposed);
                 return;
@@ -1296,14 +1309,23 @@ namespace HoverExplorer
                 if (hoverFile != _extHoverFile)
                 {
                     // 指针没动却换了目标（切标签页、列表刷新）不是用户主动悬停，先不预览。
-                    // 长按模式按住左键除外：按左键是用户主动操作
+                    // 长按模式按住左键除外：按左键是用户主动操作。
+                    // 目标持续稳定满 HoverDelay 也提交——缩略图视图下检测抖动时没有
+                    // "mouseMoved + 目标稳定"对齐的 tick，纯按 mouseMoved 会永久 hold（issue #4）。
+                    // 刷新/切标签式的目标乱跳会不断重置稳定起点，不会误触发
                     bool lpActive = Config.LongPressFor(true) && Config.IsLeftDown();
-                    if (!mouseMoved && !lpActive)
-                        DebugLog("[preview] target changed w/o mouse move, hold: " + hoverFile);
-                    else
+                    bool stable = _extCandidate == hoverFile
+                        && (DateTime.UtcNow - _extCandidateStart).TotalMilliseconds >= Config.HoverDelayMs;
+                    if (mouseMoved || lpActive || stable)
                     {
                         _extHoverFile = hoverFile;
+                        _extCandidate = null;
                         PopupForm.ScheduleFilePreview(hoverFile, new Point(mx, my));
+                    }
+                    else
+                    {
+                        if (_extCandidate != hoverFile) { _extCandidate = hoverFile; _extCandidateStart = DateTime.UtcNow; }
+                        DebugLog("[preview] target changed w/o mouse move, hold: " + hoverFile);
                     }
                 }
             }
@@ -1315,6 +1337,7 @@ namespace HoverExplorer
                 else if ((DateTime.UtcNow - _extNullSince).TotalMilliseconds > 300)
                 {
                     _extHoverFile = null;
+                    _extCandidate = null;
                     _extNullSince = DateTime.MinValue;
                     PopupForm.ScheduleExtPreviewClose(mx, my);
                 }
@@ -1334,14 +1357,30 @@ namespace HoverExplorer
                 if (!mouseMoved && !lpActive)
                 {
                     // 指针静止而坐标下的目标变了（切换 Explorer 标签页/目录、列表刷新），
-                    // 这不是"用户把指针移上来"，不触发；一直顺延计时，鼠标动一下才重新判定
-                    DebugLog("[hover-dir] target changed w/o mouse move, hold: " + hoverFolder);
-                    _hoverStart = DateTime.UtcNow;
+                    // 这不是"用户把指针移上来"，不触发；但目标持续稳定满 HoverDelay 也提交
+                    // （检测抖动时纯按 mouseMoved 会永久 hold，同文件预览分支，issue #4）
+                    bool dirStable = _dirCandidate == hoverFolder
+                        && (DateTime.UtcNow - _dirCandidateStart).TotalMilliseconds >= Config.HoverDelayMs;
+                    if (dirStable)
+                    {
+                        _hoverFolder = hoverFolder;
+                        _dirCandidate = null;
+                        // 稳定计时已满 HoverDelay，回拨计时起点避免再等一轮
+                        _hoverStart = DateTime.UtcNow - TimeSpan.FromMilliseconds(Config.HoverDelayMs);
+                        DebugLog("[hover-dir] new target via stable hold " + hoverFolder);
+                    }
+                    else
+                    {
+                        if (_dirCandidate != hoverFolder) { _dirCandidate = hoverFolder; _dirCandidateStart = DateTime.UtcNow; }
+                        DebugLog("[hover-dir] target changed w/o mouse move, hold: " + hoverFolder);
+                        _hoverStart = DateTime.UtcNow;
+                    }
                 }
                 else
                 {
                     DebugLog("[hover-dir] new target " + hoverFolder);
                     _hoverFolder = hoverFolder;
+                    _dirCandidate = null;
                     _hoverStart = DateTime.UtcNow;
                     return;
                 }
@@ -1446,6 +1485,7 @@ namespace HoverExplorer
                 CloseAll();
                 _closeStart = DateTime.MinValue;
                 _hoverFolder = null;
+                _dirCandidate = null;
             }
         }
 
