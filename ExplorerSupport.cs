@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace HoverExplorer
 {
@@ -110,6 +111,14 @@ namespace HoverExplorer
                 if (dirPath != null)
                 {
                     string fullPath = Path.Combine(dirPath, name);
+                    if (!File.Exists(fullPath) && !Directory.Exists(fullPath))
+                    {
+                        // UIA 返回的是 shell 显示名；desktop.ini 本地化过的条目（如"保存的图片"实际是
+                        // Saved Pictures、"屏幕截图"是 Screenshots）拼出的路径不存在 → 还原真实名，
+                        // 否则文件夹被误判成文件、路径无效，长按/悬停全部哑火
+                        string real = ResolveLocalizedName(dirPath, name);
+                        if (real != null) fullPath = real;
+                    }
                     isDir = Directory.Exists(fullPath);
                     _hitHwnd = explorerHwnd; _hitPath = fullPath; _hitIsDir = isDir;
                     _hitRect = rect; _outRect = rect; _hitAt = DateTime.UtcNow;
@@ -122,6 +131,69 @@ namespace HoverExplorer
             _stillIsDir = result != null && isDir;
             _stillAt = DateTime.UtcNow;
             return result;
+        }
+
+        // desktop.ini 显示名 → 真实文件系统路径 的还原缓存（失败的显示名也缓存，免得每次 tick 重扫）
+        private static readonly System.Collections.Generic.Dictionary<string, string> _locNameCache =
+            new System.Collections.Generic.Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        [DllImport("shlwapi.dll", CharSet = CharSet.Unicode)]
+        private static extern int SHLoadIndirectString(string pszSource, StringBuilder pszOut, int cch, IntPtr ppvReserved);
+
+        // 还原 dirPath 下以 shell 显示名呈现的条目。
+        // ponytail: 只覆盖 desktop.ini 本地化（已知文件夹的现实机制）；极少数走其他来源的
+        // 显示名（如云占位符）不覆盖，需换 IShellFolder 枚举才能兜住
+        internal static string ResolveLocalizedName(string dirPath, string displayName)
+        {
+            if (string.IsNullOrEmpty(dirPath) || string.IsNullOrEmpty(displayName)) return null;
+            string key = dirPath + "|" + displayName;
+            string hit;
+            if (_locNameCache.TryGetValue(key, out hit)) return hit == "" ? null : hit;
+            string resolved = null;
+            try
+            {
+                foreach (string d in Directory.GetDirectories(dirPath))
+                {
+                    string fsName = Path.GetFileName(d);
+                    if (fsName.Equals(displayName, StringComparison.OrdinalIgnoreCase)) break;
+                    string loc = ReadLocalizedIni(d);
+                    if (loc != null && loc.Equals(displayName, StringComparison.OrdinalIgnoreCase))
+                    {
+                        resolved = d;
+                        break;
+                    }
+                }
+            }
+            catch { }
+            if (_locNameCache.Count > 256) _locNameCache.Clear();
+            _locNameCache[key] = resolved ?? "";
+            return resolved;
+        }
+
+        // 读目录 desktop.ini 的 LocalizedName/LocalizedResourceName，经 SHLoadIndirectString
+        // 解析 "@%SystemRoot%\system32\windows.storage.dll,-21823" 这类间接串为当前语言显示名
+        private static string ReadLocalizedIni(string dir)
+        {
+            try
+            {
+                string ini = Path.Combine(dir, "desktop.ini");
+                if (!File.Exists(ini)) return null;
+                foreach (string line in File.ReadAllLines(ini))
+                {
+                    int eq = line.IndexOf('=');
+                    if (eq <= 0) continue;
+                    string key = line.Substring(0, eq).Trim();
+                    if (!key.Equals("LocalizedResourceName", StringComparison.OrdinalIgnoreCase)
+                        && !key.Equals("LocalizedName", StringComparison.OrdinalIgnoreCase)) continue;
+                    string val = line.Substring(eq + 1).Trim().Trim('"');
+                    if (val.Length == 0) continue;
+                    var sb = new StringBuilder(520);
+                    if (SHLoadIndirectString(Environment.ExpandEnvironmentVariables(val), sb, sb.Capacity, IntPtr.Zero) == 0 && sb.Length > 0)
+                        return sb.ToString();
+                }
+            }
+            catch { }
+            return null;
         }
 
         private static string DetectNavPaneFolder(IntPtr explorerHwnd, int mx, int my)
