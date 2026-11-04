@@ -13,7 +13,7 @@ namespace HoverExplorer
 {
     internal static class Program
     {
-        public const string Version = "1.1.0";
+        public const string Version = "1.1.1";
 
         private static string _desktopPath;
         private static IntPtr _listview = IntPtr.Zero;
@@ -70,8 +70,11 @@ namespace HoverExplorer
         private static System.Windows.Forms.Timer _subCloseTimer;
         private static int _subCloseLevel;
         private static System.Windows.Forms.Timer _timer;
+        private static System.Windows.Forms.Timer _updateTimer;   // 更新检查：启动延迟首查 + 每 24 小时重查
         private static NotifyIcon _notifyIcon;
         private static IntPtr _trayHicon = IntPtr.Zero;
+        private static IntPtr _trayOrigWndProc = IntPtr.Zero;
+        private static NativeMethods.WndProc _trayWndProc;
         internal static ContextMenuStrip TrayMenu;
         private static HotkeyWindow _hotkey;
         private static bool _hoverEnabled = true;
@@ -82,7 +85,7 @@ namespace HoverExplorer
         // 开机自启：写 HKCU Run 键，无需安装
         private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
         private const string RunValueName = "HoverExplorer";
-        private static bool IsAutoStart()
+        internal static bool IsAutoStart()
         {
             try
             {
@@ -94,7 +97,7 @@ namespace HoverExplorer
             }
             catch { return false; }
         }
-        private static void SetAutoStart(bool enable)
+        internal static void SetAutoStart(bool enable)
         {
             try
             {
@@ -212,196 +215,14 @@ namespace HoverExplorer
 
             _notifyIcon = new NotifyIcon
             {
-                Icon = CreateTrayIcon(),
+                Icon = LoadTrayIcon(),
                 Visible = !Config.HideTrayIcon,
                 Text = "HoverExplorer",
             };
-            var trayMenu = new ContextMenuStrip();
-            // 深浅主题：DarkColorTable 的各属性实时读 Config.BG/Fg —— 主题切换后菜单自动跟上。
-            // 此前托盘菜单没挂渲染器，系统浅色下菜单白底，与整套深色 UI 割裂
-            trayMenu.ForeColor = Config.FG;
-            trayMenu.Renderer = new ToolStripProfessionalRenderer(new DarkColorTable());
-            var explorerItem = new ToolStripMenuItem(I18n.T("explorer_hover"));
-            _trayExplorerItem = explorerItem;
-            explorerItem.CheckOnClick = true;
-            explorerItem.Checked = Config.ExplorerEnabled;
-            explorerItem.CheckedChanged += (s, e) =>
-            {
-                Config.ExplorerEnabled = explorerItem.Checked;
-                Config.Save();
-                if (_settingsForm != null && !_settingsForm.IsDisposed) _settingsForm.SyncFromTray();
-            };
-            trayMenu.Items.Add(explorerItem);
-            var previewItem = new ToolStripMenuItem(I18n.T("file_preview"));
-            _trayPreviewItem = previewItem;
-            previewItem.CheckOnClick = true;
-            previewItem.Checked = Config.PreviewFiles;
-            previewItem.CheckedChanged += (s, e) =>
-            {
-                Config.PreviewFiles = previewItem.Checked;
-                Config.Save();
-                if (_settingsForm != null && !_settingsForm.IsDisposed) _settingsForm.SyncFromTray();
-            };
-            trayMenu.Items.Add(previewItem);
-            var origItem = new ToolStripMenuItem(I18n.T("preview_orig"));
-            origItem.CheckOnClick = true;
-            origItem.Checked = Config.PreviewOriginalSize;
-            origItem.CheckedChanged += (s, e) =>
-            {
-                Config.PreviewOriginalSize = origItem.Checked;
-                Config.Save();
-            };
-            trayMenu.Items.Add(origItem);
-            var debugItem = new ToolStripMenuItem(I18n.T("debug_log"));
-            debugItem.CheckOnClick = true;
-            debugItem.Checked = Config.DebugLog;
-            debugItem.CheckedChanged += (s, e) => { Config.DebugLog = debugItem.Checked; Config.Save(); if (Config.DebugLog) LogBootInfo(); };
-            trayMenu.Items.Add(debugItem);
-            var tooltipItem = new ToolStripMenuItem(I18n.T("hide_tooltip"));
-            tooltipItem.CheckOnClick = true;
-            tooltipItem.Checked = Config.HideTooltip;
-            tooltipItem.CheckedChanged += (s, e) => { Config.HideTooltip = tooltipItem.Checked; Config.Save(); };
-            trayMenu.Items.Add(tooltipItem);
-            var tipsItem = new ToolStripMenuItem(I18n.T("button_tips"));
-            tipsItem.CheckOnClick = true;
-            tipsItem.Checked = Config.ShowTips;
-            tipsItem.CheckedChanged += (s, e) =>
-            {
-                Config.ShowTips = tipsItem.Checked;
-                Config.Save();
-                Tips.ApplyConfig();
-                // 提示在控件创建时挂上，已打开的面板重建一次即可生效（预览窗下次打开生效）
-                foreach (var p in _panels) { if (!p.IsDisposed) p.RefreshPanel(); }
-            };
-            trayMenu.Items.Add(tipsItem);
-            var autostartItem = new ToolStripMenuItem(I18n.T("autostart"));
-            autostartItem.CheckOnClick = true;
-            autostartItem.Checked = IsAutoStart();
-            autostartItem.CheckedChanged += (s, e) => SetAutoStart(autostartItem.Checked);
-            trayMenu.Items.Add(autostartItem);
-            var hideTrayItem = new ToolStripMenuItem(I18n.T("hide_tray"));
-            hideTrayItem.CheckOnClick = true;
-            hideTrayItem.Checked = Config.HideTrayIcon;
-            hideTrayItem.CheckedChanged += (s, e) =>
-            {
-                Config.HideTrayIcon = hideTrayItem.Checked;
-                Config.Save();
-                _notifyIcon.Visible = !Config.HideTrayIcon;
-            };
-            trayMenu.Items.Add(hideTrayItem);
-            trayMenu.Items.Add(new ToolStripSeparator());
-            var exitItem = new ToolStripMenuItem(I18n.T("exit"));
-            // 重启：退出后拉起新实例（无单实例互斥，Restart 先启新进程再退出，清理逻辑仍走 ApplicationExit）
-            var restartItem = new ToolStripMenuItem(I18n.T("restart"));
-            restartItem.Click += (s, e) => Application.Restart();
-
-            Action refreshExitText = () =>
-            {
-                exitItem.Text = I18n.T("exit");
-            };
-            exitItem.Click += (s, e) => Application.Exit();
-            refreshExitText();
-
-            var themeItem = new ToolStripMenuItem(I18n.T("theme"));
-            var themeAuto = new ToolStripMenuItem(I18n.T("theme_auto")) { Checked = (Config.Theme == "auto") };
-            var themeDark = new ToolStripMenuItem(I18n.T("theme_dark")) { Checked = (Config.Theme == "dark") };
-            var themeLight = new ToolStripMenuItem(I18n.T("theme_light")) { Checked = (Config.Theme == "light") };
-            Action refreshThemeMenus = () => { themeAuto.Checked = Config.Theme == "auto"; themeDark.Checked = Config.Theme == "dark"; themeLight.Checked = Config.Theme == "light"; };
-            themeAuto.Click += (s, e) => { Config.Theme = "auto"; ApplyThemeChange(); refreshThemeMenus(); };
-            themeDark.Click += (s, e) => { Config.Theme = "dark"; ApplyThemeChange(); refreshThemeMenus(); };
-            themeLight.Click += (s, e) => { Config.Theme = "light"; ApplyThemeChange(); refreshThemeMenus(); };
-            themeItem.DropDownItems.Add(themeAuto);
-            themeItem.DropDownItems.Add(themeDark);
-            themeItem.DropDownItems.Add(themeLight);
-
-            var settingsItem = new ToolStripMenuItem(I18n.T("settings"), null, (EventHandler)((s, e) =>
-            {
-                if (_settingsOpen && _settingsForm != null && !_settingsForm.IsDisposed)
-                {
-                    // 已打开：置顶激活（从托盘再次进入时把已有设置窗拉到前台）
-                    if (_settingsForm.WindowState == FormWindowState.Minimized) _settingsForm.WindowState = FormWindowState.Normal;
-                    _settingsForm.Show();
-                    _settingsForm.BringToFront();
-                    _settingsForm.Activate();
-                    return;
-                }
-                _settingsOpen = true;
-                _settingsForm = new SettingsForm();
-                _settingsForm.FormClosed += (s2, e2) =>
-                {
-                    // 设置即改即生效：改动已随事件实时写入并保存，关闭无需提交
-                    _settingsOpen = false;
-                    _settingsForm = null;
-                };
-                // 非模态：设置窗开着时仍可悬停操作列表/预览（Tick 不再被 _settingsOpen 短路）
-                _settingsForm.Show();
-            }));
-
-            int curLang = Array.IndexOf(I18n.LangCodes, Config.Language);
-            var langItem = new ToolStripMenuItem("Language" + (curLang >= 0 ? "  " + I18n.LangCodes[curLang] : ""));
-            var addCardItem = new ToolStripMenuItem(I18n.T("card_from_clip"), null, (EventHandler)((s, e) => AddCardFromClipboard()));
-
-            for (int i = 0; i < I18n.LangCodes.Length; i++)
-            {
-                var code = I18n.LangCodes[i];
-                var name = I18n.LangNames[i];
-                var sub = new ToolStripMenuItem(code + "  " + name) { Checked = (code == Config.Language) };
-                sub.Click += (s, e) =>
-                {
-                    Config.Language = code;
-                    I18n.Lang = code;
-                    Config.RefreshSortLabels();
-                    Config.Save();
-                    foreach (ToolStripMenuItem si in langItem.DropDownItems) si.Checked = false;
-                    sub.Checked = true;
-                    langItem.Text = "Language  " + code;
-                    explorerItem.Text = I18n.T("explorer_hover");
-                    previewItem.Text = I18n.T("file_preview");
-                    origItem.Text = I18n.T("preview_orig");
-                    debugItem.Text = I18n.T("debug_log");
-                    tooltipItem.Text = I18n.T("hide_tooltip");
-                    tipsItem.Text = I18n.T("button_tips");
-                    autostartItem.Text = I18n.T("autostart");
-                    hideTrayItem.Text = I18n.T("hide_tray");
-
-                    langItem.Text = "Language  " + code;
-                    themeItem.Text = I18n.T("theme");
-                    themeDark.Text = I18n.T("theme_dark");
-                    themeLight.Text = I18n.T("theme_light");
-                    settingsItem.Text = I18n.T("settings");
-                    restartItem.Text = I18n.T("restart");
-                    addCardItem.Text = I18n.T("card_from_clip");
-                    EntryListForm.NotifyChanged();   // 开着的收藏·历史列表文本/按钮提示换语言
-                    if (_entryCardForm != null && !_entryCardForm.IsDisposed) _entryCardForm.Relayout();   // 重测宽度（长语言自适应）+ 重绘换语言
-                    if (_settingsOpen && _settingsForm != null && !_settingsForm.IsDisposed)
-                    {
-                        var sLoc = _settingsForm.Location;
-                        _settingsForm.Close();
-                        _settingsOpen = true;
-                        _settingsForm = new SettingsForm();
-                        _settingsForm.FormClosed += (s3, e3) => { _settingsOpen = false; _settingsForm = null; };
-                        try { _settingsForm.Location = sLoc; } catch { }
-                        _settingsForm.Show();
-                    }
-                    refreshExitText();
-                };
-                langItem.DropDownItems.Add(sub);
-            }
-            trayMenu.Items.Add(langItem);
-            trayMenu.Items.Add(themeItem);
-
-            trayMenu.Items.Add(addCardItem);
-            trayMenu.Items.Add(settingsItem);
-            trayMenu.Items.Add(new ToolStripSeparator());
-
-            trayMenu.Items.Add(restartItem);
-            trayMenu.Items.Add(exitItem);
-
-            TrayMenu = trayMenu;
-            ThemeStripRecursive(trayMenu);
-            // 选项菜单关闭后解除所有面板的菜单打开标记（避免面板被悬停丢失逻辑关闭后标记残留）
-            trayMenu.Closed += (s, e) => { foreach (var p in _panels) p.MenuOpen = false; };
-            _notifyIcon.ContextMenuStrip = trayMenu;
+            BuildTrayMenu();
+            SubclassTrayIcon();
+            StartTrayMiddlePoll();
+            StartUpdateMonitor();
 
             _hotkey = new HotkeyWindow();
             _hotkey.HotkeyPressed += () => ToggleHoverEnabled();
@@ -430,6 +251,7 @@ namespace HoverExplorer
             Application.ApplicationExit += (s, e) =>
             {
                 _timer.Stop();
+                if (_updateTimer != null) { _updateTimer.Stop(); _updateTimer.Dispose(); _updateTimer = null; }
                 if (_notifyIcon != null) { _notifyIcon.Visible = false; _notifyIcon.Dispose(); }
                 if (_trayHicon != IntPtr.Zero) { try { NativeMethods.DestroyIcon(_trayHicon); } catch { } _trayHicon = IntPtr.Zero; }
                 if (_hotkey != null) _hotkey.Unregister();
@@ -2011,6 +1833,502 @@ namespace HoverExplorer
             }
             catch { }
             return SystemIcons.Application;
+        }
+
+        private static Icon LoadTrayIcon()
+        {
+            if (!string.IsNullOrEmpty(Config.TrayIconPath) && File.Exists(Config.TrayIconPath))
+            {
+                try { return new Icon(Config.TrayIconPath); } catch { }
+            }
+            return CreateTrayIcon();
+        }
+
+        internal static void ApplyTrayIcon()
+        {
+            if (_notifyIcon == null) return;
+            try
+            {
+                var old = _notifyIcon.Icon;
+                _notifyIcon.Icon = TrayIconWithBadge();
+                if (old != null) old.Dispose();
+                RefreshTrayTip();
+            }
+            catch { }
+        }
+
+        // ---- 托盘更新提示：有新版本时原图标右上角叠加小绿点，tooltip 提示到 Releases 更新 ----
+
+        // 当前应显示的托盘图标：有新版本时叠加绿点角标，否则用原图标
+        private static Icon TrayIconWithBadge()
+        {
+            var baseIcon = LoadTrayIcon();
+            if (UpdateChecker.HasNewer)
+            {
+                var badge = OverlayUpdateIcon(baseIcon);
+                if (badge != null) { try { baseIcon.Dispose(); } catch { } return badge; }
+            }
+            return baseIcon;
+        }
+
+        // 原图标右上角画一枚小绿点（约 2-3px 半径，深色描边防止浅色托盘上看不见）
+        private static Icon OverlayUpdateIcon(Icon baseIcon)
+        {
+            try
+            {
+                using (var bmp = baseIcon.ToBitmap())
+                using (var g = Graphics.FromImage(bmp))
+                {
+                    int d = bmp.Width >= 32 ? 8 : 6;   // 点直径：16px 图标约 3px 半径，32px 放大一点
+                    var rect = new Rectangle(bmp.Width - d - 1, 1, d, d);
+                    g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                    using (var fill = new SolidBrush(Color.FromArgb(0x2E, 0xC5, 0x3F)))
+                        g.FillEllipse(fill, rect);
+                    using (var pen = new Pen(Color.FromArgb(0x1B, 0x3A, 0x1B), Math.Max(1f, d / 5f)))
+                        g.DrawEllipse(pen, new Rectangle(rect.X - 1, rect.Y - 1, rect.Width + 2, rect.Height + 2));
+                    IntPtr h = bmp.GetHicon();
+                    try
+                    {
+                        using (var tmp = Icon.FromHandle(h))
+                            return (Icon)tmp.Clone();   // 克隆持有独立句柄，原 hicon 立即销毁
+                    }
+                    finally { NativeMethods.DestroyIcon(h); }
+                }
+            }
+            catch { return null; }
+        }
+
+        // 托盘 tooltip：有新版本时提示到 Releases 更新；无更新恢复默认文案
+        internal static void RefreshTrayTip()
+        {
+            if (_notifyIcon == null) return;
+            try
+            {
+                string tip = "HoverExplorer";
+                if (UpdateChecker.HasNewer)
+                {
+                    string s = string.Format(I18n.T("tray_update_tip"), UpdateChecker.Latest);
+                    if (s.Length > 63) s = s.Substring(0, 63);   // NotifyIcon.Text 上限 63 字符
+                    tip = s;
+                }
+                _notifyIcon.Text = tip;
+            }
+            catch { }
+        }
+
+        // 启动 3 秒后首查一次（等消息循环与 UI 同步上下文就绪），之后每 24 小时重查；失败静默
+        private static void StartUpdateMonitor()
+        {
+            _updateTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+            _updateTimer.Tick += (s, e) =>
+            {
+                _updateTimer.Interval = 24 * 60 * 60 * 1000;   // 首查后改为 24 小时周期
+                UpdateChecker.Check(_ => ApplyTrayIcon());
+            };
+            _updateTimer.Start();
+        }
+
+        internal static void OpenSettings()
+        {
+            if (_settingsOpen && _settingsForm != null && !_settingsForm.IsDisposed)
+            {
+                if (_settingsForm.WindowState == FormWindowState.Minimized) _settingsForm.WindowState = FormWindowState.Normal;
+                _settingsForm.Show();
+                _settingsForm.BringToFront();
+                _settingsForm.Activate();
+                return;
+            }
+            _settingsOpen = true;
+            _settingsForm = new SettingsForm();
+            _settingsForm.FormClosed += (s2, e2) =>
+            {
+                _settingsOpen = false;
+                _settingsForm = null;
+            };
+            _settingsForm.Show();
+        }
+
+        internal static void RebuildTrayMenu()
+        {
+            if (_notifyIcon == null) return;
+            BuildTrayMenu();
+        }
+
+        internal static void ApplyHideTrayIcon()
+        {
+            if (_notifyIcon != null)
+            {
+                _notifyIcon.Visible = !Config.HideTrayIcon;
+                if (_notifyIcon.Visible && _trayOrigWndProc == IntPtr.Zero) SubclassTrayIcon();
+            }
+        }
+
+        private static void SubclassTrayIcon()
+        {
+            if (_notifyIcon == null || _trayOrigWndProc != IntPtr.Zero) return;
+            try
+            {
+                NativeWindow nativeWin = null;
+                var fields = typeof(NotifyIcon).GetFields(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+                foreach (var fi in fields)
+                {
+                    if (fi.FieldType == typeof(NativeWindow) || fi.FieldType.IsSubclassOf(typeof(NativeWindow)))
+                    {
+                        nativeWin = fi.GetValue(_notifyIcon) as NativeWindow;
+                        if (nativeWin != null) break;
+                    }
+                }
+                if (nativeWin == null) { DebugLog("[tray] no NativeWindow field found in NotifyIcon"); return; }
+                IntPtr hwnd = nativeWin.Handle;
+                if (hwnd == IntPtr.Zero)
+                {
+                    bool wasVisible = _notifyIcon.Visible;
+                    _notifyIcon.Visible = true;
+                    hwnd = nativeWin.Handle;
+                    _notifyIcon.Visible = wasVisible;
+                    if (hwnd == IntPtr.Zero) { DebugLog("[tray] taskbarIcon handle is zero"); return; }
+                }
+                _trayWndProc = TrayWndProc;
+                _trayOrigWndProc = NativeMethods.SetWindowLongPtr(hwnd, NativeMethods.GWL_WNDPROC, Marshal.GetFunctionPointerForDelegate(_trayWndProc));
+                DebugLog("[tray] subclassed hwnd=" + hwnd + " origWndProc=" + _trayOrigWndProc);
+            }
+            catch (Exception ex) { DebugLog("[tray] subclass failed: " + ex.Message); }
+        }
+
+        private static uint _trayCbMsg;
+
+        // .NET NotifyIcon 的托盘回调消息是内部常量 WM_TRAYMOUSEMESSAGE（WM_USER+1024=0x800），
+        // 之前误写为 WM_USER(0x400)，中键消息永远匹配不上导致设置项无反应；反射读取常量，读不到按 0x800 兜底
+        private static uint TrayCallbackMessage()
+        {
+            if (_trayCbMsg != 0) return _trayCbMsg;
+            try
+            {
+                var fi = typeof(NotifyIcon).GetField("WM_TRAYMOUSEMESSAGE", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static);
+                if (fi != null) _trayCbMsg = Convert.ToUInt32(fi.GetValue(null));
+            }
+            catch { }
+            if (_trayCbMsg == 0) _trayCbMsg = 0x800;
+            return _trayCbMsg;
+        }
+
+        private static IntPtr TrayWndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
+        {
+            // 兜底：正常路径走 StartTrayMiddlePoll 轮询（Win11 Shell 不转发托盘中键，见轮询处注释）
+            if (msg == TrayCallbackMessage() && ((int)((long)lParam & 0xFFFF)) == NativeMethods.WM_MBUTTONUP)
+            {
+                DoTrayMiddleAction();
+            }
+            return NativeMethods.CallWindowProc(_trayOrigWndProc, hWnd, msg, wParam, lParam);
+        }
+
+        private static void DoTrayMiddleAction()
+        {
+            switch (Config.TrayMiddleAction)
+            {
+                case 1: OpenSettings(); break;
+                case 2: Application.Restart(); break;
+                case 3: Application.Exit(); break;
+            }
+        }
+
+        // ---- 托盘中键轮询检测 ----
+        // 实测（见 [tray] 日志）：Win11 Shell 把托盘图标的移动/左键事件经回调消息转发给应用，
+        // 中键事件则被 Shell 直接吞掉、永远不转发，回调拦截方案对中键无效。
+        // 改用 40ms 轮询 VK_MBUTTON：中键按下瞬间光标落在托盘角(TrayNotifyWnd)/溢出窗
+        // (NotifyIconOverflowWindow)内，抬起时触发中键动作。托盘角上系统中键本无任何行为，无需吞键。
+        private static System.Windows.Forms.Timer _trayMidTimer;
+        private static bool _trayMidWasDown;
+        private static bool _trayMidDownInTray;
+
+        private static void StartTrayMiddlePoll()
+        {
+            if (_trayMidTimer != null) return;
+            _trayMidTimer = new System.Windows.Forms.Timer { Interval = 40 };
+            _trayMidTimer.Tick += (s, e) =>
+            {
+                bool down = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_MBUTTON) & 0x8000) != 0;
+                if (down && !_trayMidWasDown)
+                    _trayMidDownInTray = CursorInTrayArea();
+                else if (!down && _trayMidWasDown && _trayMidDownInTray)
+                {
+                    _trayMidDownInTray = false;
+                    DebugLog("[tray] middle click in tray area, action=" + Config.TrayMiddleAction);
+                    DoTrayMiddleAction();
+                }
+                _trayMidWasDown = down;
+            };
+            _trayMidTimer.Start();
+        }
+
+        // 光标是否落在任一任务栏的托盘角或托盘溢出窗内
+        private static bool CursorInTrayArea()
+        {
+            NativeMethods.POINT p;
+            NativeMethods.GetCursorPos(out p);
+            IntPtr tray = IntPtr.Zero;
+            while ((tray = NativeMethods.FindWindowEx(IntPtr.Zero, tray, "Shell_TrayWnd", null)) != IntPtr.Zero)
+                if (PointInRect(NativeMethods.FindWindowEx(tray, IntPtr.Zero, "TrayNotifyWnd", null), p)) return true;
+            IntPtr sec = IntPtr.Zero;
+            while ((sec = NativeMethods.FindWindowEx(IntPtr.Zero, sec, "Shell_SecondaryTrayWnd", null)) != IntPtr.Zero)
+                if (PointInRect(NativeMethods.FindWindowEx(sec, IntPtr.Zero, "TrayNotifyWnd", null), p)) return true;
+            if (PointInRect(NativeMethods.FindWindow("NotifyIconOverflowWindow", null), p)) return true;
+            return false;
+        }
+
+        private static bool PointInRect(IntPtr hwnd, NativeMethods.POINT p)
+        {
+            if (hwnd == IntPtr.Zero) return false;
+            NativeMethods.RECT r;
+            if (!NativeMethods.GetWindowRect(hwnd, out r)) return false;
+            return p.X >= r.Left && p.X < r.Right && p.Y >= r.Top && p.Y < r.Bottom;
+        }
+
+        private static void BuildTrayMenu()
+        {
+            var trayMenu = new ContextMenuStrip();
+            trayMenu.ForeColor = Config.FG;
+            trayMenu.Renderer = new ToolStripProfessionalRenderer(new DarkColorTable());
+            var explorerItem = new ToolStripMenuItem(I18n.T("explorer_hover"));
+            _trayExplorerItem = explorerItem;
+            explorerItem.CheckOnClick = true;
+            explorerItem.Checked = Config.ExplorerEnabled;
+            explorerItem.CheckedChanged += (s, e) =>
+            {
+                Config.ExplorerEnabled = explorerItem.Checked;
+                Config.Save();
+                if (_settingsForm != null && !_settingsForm.IsDisposed) _settingsForm.SyncFromTray();
+            };
+            if (Config.TrayShowExplorer) trayMenu.Items.Add(explorerItem);
+            var previewItem = new ToolStripMenuItem(I18n.T("file_preview"));
+            _trayPreviewItem = previewItem;
+            previewItem.CheckOnClick = true;
+            previewItem.Checked = Config.PreviewFiles;
+            previewItem.CheckedChanged += (s, e) =>
+            {
+                Config.PreviewFiles = previewItem.Checked;
+                Config.Save();
+                if (_settingsForm != null && !_settingsForm.IsDisposed) _settingsForm.SyncFromTray();
+            };
+            if (Config.TrayShowPreview) trayMenu.Items.Add(previewItem);
+            var origItem = new ToolStripMenuItem(I18n.T("preview_orig"));
+            origItem.CheckOnClick = true;
+            origItem.Checked = Config.PreviewOriginalSize;
+            origItem.CheckedChanged += (s, e) =>
+            {
+                Config.PreviewOriginalSize = origItem.Checked;
+                Config.Save();
+            };
+            if (Config.TrayShowOrigSize) trayMenu.Items.Add(origItem);
+            var debugItem = new ToolStripMenuItem(I18n.T("debug_log"));
+            debugItem.CheckOnClick = true;
+            debugItem.Checked = Config.DebugLog;
+            debugItem.CheckedChanged += (s, e) => { Config.DebugLog = debugItem.Checked; Config.Save(); if (Config.DebugLog) LogBootInfo(); };
+            if (Config.TrayShowDebugLog) trayMenu.Items.Add(debugItem);
+            var tooltipItem = new ToolStripMenuItem(I18n.T("hide_tooltip"));
+            tooltipItem.CheckOnClick = true;
+            tooltipItem.Checked = Config.HideTooltip;
+            tooltipItem.CheckedChanged += (s, e) => { Config.HideTooltip = tooltipItem.Checked; Config.Save(); };
+            if (Config.TrayShowHideTooltip) trayMenu.Items.Add(tooltipItem);
+            var tipsItem = new ToolStripMenuItem(I18n.T("button_tips"));
+            tipsItem.CheckOnClick = true;
+            tipsItem.Checked = Config.ShowTips;
+            tipsItem.CheckedChanged += (s, e) =>
+            {
+                Config.ShowTips = tipsItem.Checked;
+                Config.Save();
+                Tips.ApplyConfig();
+                foreach (var p in _panels) { if (!p.IsDisposed) p.RefreshPanel(); }
+            };
+            if (Config.TrayShowButtonTips) trayMenu.Items.Add(tipsItem);
+            var autostartItem = new ToolStripMenuItem(I18n.T("autostart"));
+            autostartItem.CheckOnClick = true;
+            autostartItem.Checked = IsAutoStart();
+            autostartItem.CheckedChanged += (s, e) => SetAutoStart(autostartItem.Checked);
+            if (Config.TrayShowAutostart) trayMenu.Items.Add(autostartItem);
+            var hideTrayItem = new ToolStripMenuItem(I18n.T("hide_tray"));
+            hideTrayItem.CheckOnClick = true;
+            hideTrayItem.Checked = Config.HideTrayIcon;
+            hideTrayItem.CheckedChanged += (s, e) =>
+            {
+                Config.HideTrayIcon = hideTrayItem.Checked;
+                Config.Save();
+                _notifyIcon.Visible = !Config.HideTrayIcon;
+            };
+            if (Config.TrayShowHideTray) trayMenu.Items.Add(hideTrayItem);
+            trayMenu.Items.Add(new ToolStripSeparator());
+            var exitItem = new ToolStripMenuItem(I18n.T("exit"));
+            var restartItem = new ToolStripMenuItem(I18n.T("restart"));
+            restartItem.Click += (s, e) => Application.Restart();
+
+            Action refreshExitText = () =>
+            {
+                exitItem.Text = I18n.T("exit");
+            };
+            exitItem.Click += (s, e) => Application.Exit();
+            refreshExitText();
+
+            var themeItem = new ToolStripMenuItem(I18n.T("theme"));
+            var themeAuto = new ToolStripMenuItem(I18n.T("theme_auto")) { Checked = (Config.Theme == "auto") };
+            var themeDark = new ToolStripMenuItem(I18n.T("theme_dark")) { Checked = (Config.Theme == "dark") };
+            var themeLight = new ToolStripMenuItem(I18n.T("theme_light")) { Checked = (Config.Theme == "light") };
+            Action refreshThemeMenus = () => { themeAuto.Checked = Config.Theme == "auto"; themeDark.Checked = Config.Theme == "dark"; themeLight.Checked = Config.Theme == "light"; };
+            themeAuto.Click += (s, e) => { Config.Theme = "auto"; ApplyThemeChange(); refreshThemeMenus(); };
+            themeDark.Click += (s, e) => { Config.Theme = "dark"; ApplyThemeChange(); refreshThemeMenus(); };
+            themeLight.Click += (s, e) => { Config.Theme = "light"; ApplyThemeChange(); refreshThemeMenus(); };
+            themeItem.DropDownItems.Add(themeAuto);
+            themeItem.DropDownItems.Add(themeDark);
+            themeItem.DropDownItems.Add(themeLight);
+
+            var settingsItem = new ToolStripMenuItem(I18n.T("settings"), null, (EventHandler)((s, e) => OpenSettings()));
+
+            int curLang = Array.IndexOf(I18n.LangCodes, Config.Language);
+            var langItem = new ToolStripMenuItem("Language" + (curLang >= 0 ? "  " + I18n.LangCodes[curLang] : ""));
+            var addCardItem = new ToolStripMenuItem(I18n.T("card_from_clip"), null, (EventHandler)((s, e) => AddCardFromClipboard()));
+
+            for (int i = 0; i < I18n.LangCodes.Length; i++)
+            {
+                var code = I18n.LangCodes[i];
+                var name = I18n.LangNames[i];
+                var sub = new ToolStripMenuItem(code + "  " + name) { Checked = (code == Config.Language) };
+                sub.Click += (s, e) =>
+                {
+                    Config.Language = code;
+                    I18n.Lang = code;
+                    Config.RefreshSortLabels();
+                    Config.Save();
+                    foreach (ToolStripMenuItem si in langItem.DropDownItems) si.Checked = false;
+                    sub.Checked = true;
+                    langItem.Text = "Language  " + code;
+                    explorerItem.Text = I18n.T("explorer_hover");
+                    previewItem.Text = I18n.T("file_preview");
+                    origItem.Text = I18n.T("preview_orig");
+                    debugItem.Text = I18n.T("debug_log");
+                    tooltipItem.Text = I18n.T("hide_tooltip");
+                    tipsItem.Text = I18n.T("button_tips");
+                    autostartItem.Text = I18n.T("autostart");
+                    hideTrayItem.Text = I18n.T("hide_tray");
+
+                    langItem.Text = "Language  " + code;
+                    themeItem.Text = I18n.T("theme");
+                    themeDark.Text = I18n.T("theme_dark");
+                    themeLight.Text = I18n.T("theme_light");
+                    settingsItem.Text = I18n.T("settings");
+                    restartItem.Text = I18n.T("restart");
+                    addCardItem.Text = I18n.T("card_from_clip");
+                    EntryListForm.NotifyChanged();
+                    ApplyTrayIcon();   // 语言切换后刷新托盘 tooltip（含更新提示文案）
+                    if (_entryCardForm != null && !_entryCardForm.IsDisposed) _entryCardForm.Relayout();
+                    if (_settingsOpen && _settingsForm != null && !_settingsForm.IsDisposed)
+                    {
+                        var sLoc = _settingsForm.Location;
+                        _settingsForm.Close();
+                        _settingsOpen = true;
+                        _settingsForm = new SettingsForm();
+                        _settingsForm.FormClosed += (s3, e3) => { _settingsOpen = false; _settingsForm = null; };
+                        try { _settingsForm.Location = sLoc; } catch { }
+                        _settingsForm.Show();
+                    }
+                    refreshExitText();
+                };
+                langItem.DropDownItems.Add(sub);
+            }
+            trayMenu.Items.Add(langItem);
+            trayMenu.Items.Add(themeItem);
+
+            if (Config.TrayShowAddCard) trayMenu.Items.Add(addCardItem);
+            trayMenu.Items.Add(settingsItem);
+            trayMenu.Items.Add(new ToolStripSeparator());
+
+            trayMenu.Items.Add(restartItem);
+            trayMenu.Items.Add(exitItem);
+
+            TrayMenu = trayMenu;
+            ThemeStripRecursive(trayMenu);
+            trayMenu.Closed += (s, e) => { foreach (var p in _panels) p.MenuOpen = false; };
+            _notifyIcon.ContextMenuStrip = trayMenu;
+        }
+    }
+
+    // ---- GitHub 最新版本检测（托盘绿点与设置窗红点共用同一份结果，全局只发一次请求）----
+    internal static class UpdateChecker
+    {
+        private static string _latest;      // null=尚未完成；""=检测失败；"x.y.z"=远端最新版
+        private static bool _started;
+        private static readonly object _lock = new object();
+        private static readonly List<Action<string>> _waiters = new List<Action<string>>();
+
+        internal static string Latest { get { return _latest; } }
+
+        internal static bool HasNewer
+        {
+            get { return !string.IsNullOrEmpty(_latest) && Newer(_latest); }
+        }
+
+        // 语义版本逐段比较：latest 是否比当前 Program.Version 新
+        internal static bool Newer(string latest)
+        {
+            try
+            {
+                string[] a = latest.Split('.');
+                string[] b = Program.Version.Split('.');
+                int n = Math.Max(a.Length, b.Length);
+                for (int i = 0; i < n; i++)
+                {
+                    int x = i < a.Length ? int.Parse(a[i]) : 0;
+                    int y = i < b.Length ? int.Parse(b[i]) : 0;
+                    if (x != y) return x > y;
+                }
+            }
+            catch { }
+            return false;
+        }
+
+        // 异步拉取 latest release；结果缓存后依次回调等待者（回调在 UI 线程执行）
+        internal static void Check(Action<string> done)
+        {
+            lock (_lock)
+            {
+                if (_latest != null)
+                {
+                    if (done != null) done(_latest);
+                    return;
+                }
+                if (done != null) _waiters.Add(done);
+                if (_started) return;
+                _started = true;
+            }
+            try
+            {
+                var ctx = System.Threading.SynchronizationContext.Current;   // UI 线程上下文，完成后回投
+                var wc = new System.Net.WebClient();
+                wc.Headers.Add(System.Net.HttpRequestHeader.UserAgent, "HoverExplorer/" + Program.Version);
+                wc.DownloadStringCompleted += (s, e) =>
+                {
+                    string res = "";
+                    try
+                    {
+                        if (e.Error == null && !string.IsNullOrEmpty(e.Result))
+                        {
+                            var m = System.Text.RegularExpressions.Regex.Match(e.Result, "\"tag_name\"\\s*:\\s*\"v?([\\d.]+)\"");
+                            if (m.Success) res = m.Groups[1].Value;
+                        }
+                    }
+                    catch { }
+                    try { wc.Dispose(); } catch { }
+                    Action<string>[] snapshot;
+                    lock (_lock) { _latest = res; snapshot = _waiters.ToArray(); _waiters.Clear(); }
+                    if (ctx != null) ctx.Post(_ => { foreach (var cb in snapshot) { try { cb(res); } catch { } } }, null);
+                    else foreach (var cb in snapshot) { try { cb(res); } catch { } }
+                };
+                wc.DownloadStringAsync(new Uri("https://api.github.com/repos/dlsdgj/HoverExplorer/releases/latest"));
+            }
+            catch
+            {
+                Action<string>[] snapshot;
+                lock (_lock) { _latest = ""; snapshot = _waiters.ToArray(); _waiters.Clear(); }
+                foreach (var cb in snapshot) { try { cb(""); } catch { } }
+            }
         }
     }
 

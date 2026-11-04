@@ -319,6 +319,7 @@ namespace HoverExplorer
         public Color OrigFg;
         public Image Icon;
         public string SizeText;
+        public Font SizeFont;          // 大小/子项数文本字体（MetaFont）；null=跟随行字体
         public int OriginalTop;        // 搜索过滤收拢前的原 Y
         public bool OriginalTopSet;   // false=未在过滤态（int 默认 0 无法区分原位 0）
         // 互换布局：分栏分隔线在行内的 X 坐标（左侧安全区右界），拖线时由面板实时更新
@@ -416,9 +417,10 @@ namespace HoverExplorer
                 if (!string.IsNullOrEmpty(SizeText))
                 {
                     // GDI+ 绘制（与名称同路径同垂直居中公式），TextRenderer(GDI) 笔画粗粝显锯齿
-                    float lhS = Font.GetHeight(g);
+                    var fS = SizeFont ?? Font;
+                    float lhS = fS.GetHeight(g);
                     using (var b = new SolidBrush(Config.ListMu))
-                        g.DrawString(SizeText, Font, b, PadEdge, (Height - lhS) / 2, StringFormat.GenericTypographic);
+                        g.DrawString(SizeText, fS, b, PadEdge, (Height - lhS) / 2, StringFormat.GenericTypographic);
                 }
                 if (!string.IsNullOrEmpty(Name))
                 {
@@ -456,10 +458,11 @@ namespace HoverExplorer
             if (!string.IsNullOrEmpty(SizeText))
             {
                 // GDI+ 右对齐：与名称同一渲染路径/垂直居中公式（TextRenderer(GDI) 笔画粗粝显锯齿）
-                float lhS = Font.GetHeight(e.Graphics);
-                float wS = e.Graphics.MeasureString(SizeText, Font, PointF.Empty, StringFormat.GenericTypographic).Width;
+                var fS = SizeFont ?? Font;
+                float lhS = fS.GetHeight(e.Graphics);
+                float wS = e.Graphics.MeasureString(SizeText, fS, PointF.Empty, StringFormat.GenericTypographic).Width;
                 using (var b = new SolidBrush(Config.ListMu))
-                    e.Graphics.DrawString(SizeText, Font, b, Width - PadEdge - wS, (Height - lhS) / 2, StringFormat.GenericTypographic);
+                    e.Graphics.DrawString(SizeText, fS, b, Width - PadEdge - wS, (Height - lhS) / 2, StringFormat.GenericTypographic);
             }
             // 名称单行显示、过长时中间省略（Label 文本会换行，故走自绘）
             if (!string.IsNullOrEmpty(Name))
@@ -486,8 +489,19 @@ namespace HoverExplorer
         protected override void OnPaint(PaintEventArgs e)
         {
             base.OnPaint(e);
+            // 圆角描边（与设置窗预览按钮一致）
+            e.Graphics.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             using (var pen = new Pen(BorderColor, 1))
-                e.Graphics.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+            using (var p = new System.Drawing.Drawing2D.GraphicsPath())
+            {
+                int r = 3, w = Width - 1, h = Height - 1;
+                p.AddArc(0, 0, r * 2, r * 2, 180, 90);
+                p.AddArc(w - r * 2, 0, r * 2, r * 2, 270, 90);
+                p.AddArc(w - r * 2, h - r * 2, r * 2, r * 2, 0, 90);
+                p.AddArc(0, h - r * 2, r * 2, r * 2, 90, 90);
+                p.CloseFigure();
+                e.Graphics.DrawPath(pen, p);
+            }
             if (SortArrow > 0)
             {
                 int cx = Width - 8, cy = Height / 2;
@@ -1750,9 +1764,9 @@ namespace HoverExplorer
                 {
                     _pvResize = true;
                     _pvResizeMode = ht == 12 ? 1 : (ht == 11 ? 2 : 3);
-                    var lp = m.LParam.ToInt64();
-                    _pvResizeSX = (short)(lp & 0xFFFF);
-                    _pvResizeSY = (short)((lp >> 16) & 0xFFFF);
+                    var sp0 = Cursor.Position;
+                    _pvResizeSX = sp0.X;
+                    _pvResizeSY = sp0.Y;
                     _pvResizeSW = Width;
                     _pvResizeSH = Height;
                     Capture = true;
@@ -1761,8 +1775,7 @@ namespace HoverExplorer
             }
             else if (_pvResize && m.Msg == 0x200)   // WM_MOUSEMOVE
             {
-                var lp = m.LParam.ToInt64();
-                var sp = PointToScreen(new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF)));
+                var sp = Cursor.Position;
                 if ((_pvResizeMode & 1) != 0) Height = Math.Max(60, _pvResizeSH + (sp.Y - _pvResizeSY));
                 if ((_pvResizeMode & 2) != 0) Width = Math.Max(120, _pvResizeSW + (sp.X - _pvResizeSX));
                 return;
@@ -2671,9 +2684,13 @@ namespace HoverExplorer
         private readonly Dictionary<string, BorderLabel> _sortBtns = new Dictionary<string, BorderLabel>();
         private TextBox _searchBox;
         private Panel _searchBorder;
+        private Label _statusLbl;
+        private Point _statusDownPos;
+        private bool _statusDragging;
         // 顶部名称行：当前文件夹名 + 编辑图标（点击就地改名）
         private Panel _nameRow;
         private SmoothLabel _titleLbl;
+        private SmoothLabel _countLbl;  // 名称行右侧的条目计数小字（格式标签多行时会盖住状态栏文字，故移到顶部）
         private Label _editBtn;
         private TextBox _nameEdit;
         private FlowLayoutPanel _sortFlow;
@@ -2731,6 +2748,10 @@ namespace HoverExplorer
         private Label _rowRenameBtn; // 行悬停时显示的"重命名"按钮（复制按钮左侧）
         private TextBox _rowEdit;   // 行内重命名编辑框（激活期间存在）
         private RowLabel _rowEditRow; // 正被行内重命名的行（Esc 取消时恢复显示）
+        private readonly HashSet<string> _filterSelected = new HashSet<string>();
+        private readonly HashSet<string> _filterExcluded = new HashSet<string>();
+        private readonly List<Label> _filterBtns = new List<Label>();
+        private int _statusCountW; // 状态栏左侧计数文字宽度（格式标签从其后排布）
 
         public bool Pinned { get { return _pinned; } }
 
@@ -2994,6 +3015,38 @@ namespace HoverExplorer
             return (bytes / 1024.0 / 1024.0 / 1024.0).ToString("F2") + " GB";
         }
 
+        // 名称行布局：✎ 重命名按钮固定在最左，标题从其右侧起；计数紧跟标题文字；
+        // 右侧留出 ⧉/📌 固定按钮区，名称过长时在省略号处截断
+        private void LayoutTitleCount()
+        {
+            if (_titleLbl == null || _countLbl == null || _nameRow == null || _editBtn == null) return;
+            int titleLeft = _editBtn.Right + 2;
+            int rightEdge = _nameRow.Width - 46;   // 42px 固定按钮区 + 4px 间隙
+            int cw = 0;
+            if (_countLbl.Visible && _countLbl.Text.Length > 0)
+            {
+                using (var g = _countLbl.CreateGraphics())
+                    cw = (int)Math.Ceiling(g.MeasureString(_countLbl.Text, _countLbl.Font).Width) + 6;
+                _countLbl.Width = cw;
+            }
+            _titleLbl.Width = Math.Max(40, rightEdge - titleLeft - 4 - cw);
+            if (cw > 0)
+            {
+                int textW;
+                using (var g = _titleLbl.CreateGraphics())
+                    textW = (int)Math.Ceiling(g.MeasureString(_titleLbl.Text, _titleLbl.Font).Width);
+                _countLbl.Left = Math.Min(titleLeft + textW + 6, rightEdge - 2 - cw);
+            }
+            // 标题宽度收缩为文字实际宽度：右侧留出"真空白"（可拖动移动面板）。
+            // 标签背景与行底同色时拉满宽会让整行看似空白实则都在标题上，拖动/右键全部失效
+            int maxW = _titleLbl.Width, tW;
+            using (var g = _titleLbl.CreateGraphics())
+                tW = (int)Math.Ceiling(g.MeasureString(_titleLbl.Text, _titleLbl.Font).Width);
+            _titleLbl.Width = Math.Min(maxW, tW + 2);
+            // 计数加在标题之后（z 序更靠后），名称短时整体落在标题标签范围内，必须提到最上层否则被不透明标题盖住
+            _countLbl.BringToFront();
+        }
+
         // 顶部控件与行宽度按面板宽度同步：拖动手柄改宽后必须刷新，
         // 否则排序行/名称行停在旧宽度、固定按钮位置不对
         private void SyncWidth(int w)
@@ -3010,15 +3063,16 @@ namespace HoverExplorer
                 if (_nameRow != null)
                 {
                     _nameRow.Width = w - 12;
-                    if (_titleLbl != null) _titleLbl.Width = Math.Max(40, w - 12 - 24);
-                    if (_editBtn != null) _editBtn.Left = w - 12 - 18;
+                    LayoutTitleCount();   // 计数紧跟名称文字、标题宽度避开计数（✎ 在左侧，宽度由 LayoutTitleCount 统一算）
                     if (_nameEdit != null) _nameEdit.Width = Math.Max(60, w - 12 - 24);
                 }
             }
             // 表头三件套所有层级都同步（子面板排序栏/固定按钮同样跟随宽度）
             if (_sortFlow != null) _sortFlow.Width = w - 12;
-            if (_pinBtn != null) _pinBtn.Location = new Point(w - 26, 7);
-            if (_pinCardBtn != null) _pinCardBtn.Location = new Point(w - 26 - 22, 7);
+            // 固定按钮 y 跟随所在带：一级面板名称行在顶部（按钮 y=2），子面板在排序栏带内（y=7）
+            int pinY = _level == 0 ? 2 : 7;
+            if (_pinBtn != null) _pinBtn.Location = new Point(w - 26, pinY);
+            if (_pinCardBtn != null) _pinCardBtn.Location = new Point(w - 26 - 22, pinY);
             if (_listPanel != null)
             {
                 var lp = (SlimScrollPanel)_listPanel;
@@ -3027,6 +3081,7 @@ namespace HoverExplorer
                 foreach (var r in _rows) r.Width = w - ListPadLr * 2 - sw;
                 _fnSyncListScroll();
             }
+            LayoutFilterBtns();
         }
 
         // 自绘滚动条与列表范围/位置同步（行重建、面板缩放后调用）
@@ -3111,17 +3166,19 @@ namespace HoverExplorer
 
             // 右侧留 48px 给 _pinCardBtn/_pinBtn：FlowLayoutPanel 不裁切溢出子控件，
             // 占满宽度时 ⧉ 会钻到按钮下面被覆盖；收窄后行尾空白也是拖拽入口
-            var sortFlow = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Location = new Point(6, curY), AutoSize = false, Height = 26, Width = _panelW - 60, BackColor = Config.ListHdbg };
+            var sortFlow = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, WrapContents = false, Location = new Point(6, curY), AutoSize = false, Height = 26, Width = _panelW - 60, BackColor = Config.ListBg };
                 _sortFlow = sortFlow;
                 foreach (var kv in Config.SortLabels)
                 {
                 var btn = new BorderLabel
                 {
                     Text = kv.Value,
-                    Font = new Font(Config.FontName, Config.FontSize),
+                    Font = Config.ListHeaderFont(),
                     Padding = new Padding(5, 1, 13, 1),
                     AutoSize = true,
-                    BackColor = Config.BG,
+                    // 同设置窗实时预览样式：ListBg 底 + ListBd 描边（排序条底色同为 ListBg，视觉上仅剩描边）
+                    BackColor = Config.ListBg,
+                    BorderColor = Config.ListBd,
                     ForeColor = Config.FG,
                     Cursor = Cursors.Hand,
                     Margin = new Padding(0, 0, 2, 0),
@@ -3137,28 +3194,46 @@ namespace HoverExplorer
                 _refreshBtn = new Label
                 {
                     Text = "↻",
-                    Font = new Font(Config.FontName, Config.FontSize),
+                    Font = Config.ListHeaderFont(),
                     AutoSize = true,
-                    BackColor = Config.ListHdbg,
+                    BackColor = Config.ListBg,
                     ForeColor = Config.ListFg,
                     Cursor = Cursors.Hand,
                     Margin = new Padding(0, 0, 2, 0),
                     Padding = new Padding(5, 1, 5, 1),
+                    TextAlign = ContentAlignment.MiddleCenter,
                     Visible = _pinned,
                 };
                 _refreshBtn.Click += (s, e) => RefreshPanel();
                 Tips.Set(_refreshBtn, I18n.T("refresh"));
                 sortFlow.Controls.Add(_refreshBtn);
+                // 表头带高度随字体自适应：取最高子项 + 6px，各按钮（含 ↻）在带内纵向居中，
+                // 调大表头字号时文字仍在背景条中央而不是贴顶被裁
+                int bandH = 26;
+                foreach (Control c in sortFlow.Controls)
+                {
+                    int ph = c.GetPreferredSize(Size.Empty).Height;
+                    if (ph + 6 > bandH) bandH = ph + 6;
+                }
+                sortFlow.Height = bandH;
+                foreach (Control c in sortFlow.Controls)
+                {
+                    int ph = c.GetPreferredSize(Size.Empty).Height;
+                    c.Margin = new Padding(c.Margin.Left, Math.Max(0, (bandH - ph) / 2), c.Margin.Right, 0);
+                }
                 Controls.Add(sortFlow);
-                curY += 28;
+                curY += bandH + 2;
 
 
+                // 固定按钮：一级面板名称行在最顶部 → 叠在名称行右端（底色随名称行 ListBg）；
+                // 子面板排序栏在最顶部 → 叠在排序栏带内（ListHdbg）。必须 BringToFront，否则被后加的名称行盖住
+                int pinY = _level == 0 ? 2 : 7;
                 _pinBtn = new Label
                 {
                     Size = new Size(20, 18),
                     AutoSize = false,
-                    Location = new Point(_panelW - 26, 7),
-                    BackColor = Config.ListHdbg,
+                    Location = new Point(_panelW - 26, pinY),
+                    BackColor = Config.ListBg,
                     Image = PreviewForm.PinIcon(_pinned, Config.ListFg),
                     Cursor = Cursors.Hand,
                 };
@@ -3170,14 +3245,16 @@ namespace HoverExplorer
                 {
                     Size = new Size(20, 18),
                     AutoSize = false,
-                    Location = new Point(_panelW - 26 - 22, 7),
-                    BackColor = Config.ListHdbg,
+                    Location = new Point(_panelW - 26 - 22, pinY),
+                    BackColor = Config.ListBg,
                     Image = PreviewForm.PinLaunchIcon(false, Config.ListFg),
                     Cursor = Cursors.Hand,
                 };
                 Tips.Set(_pinCardBtn, I18n.T("tip_pin_card"));
                 _pinCardBtn.Click += (s, e) => { if (!string.IsNullOrEmpty(_path)) Program.TogglePin(_path); };
                 Controls.Add(_pinCardBtn);
+                _pinCardBtn.BringToFront();
+                _pinBtn.BringToFront();
                 // 表头公共交互：拖动固定 + 空白右键菜单（子面板同样可用）
                 sortFlow.MouseDown += drag;
                 sortFlow.MouseUp += blankMenu;
@@ -3187,19 +3264,40 @@ namespace HoverExplorer
                 // 名称行：当前文件夹名（过长省略，悬停 tooltip 显示完整路径）+ 编辑图标（点击就地改名）
                 // 底色不参与层级着色（Tag=noTint）：否则名称条上下 2px 内边距会露出 LevelBgColor 的彩色描边，
                 // 在浅色主题下呈粉红一圈，与面板割裂
-                _nameRow = new Panel { BackColor = Config.ListBg, Tag = "noTint", Location = new Point(6, curY), Size = new Size(_panelW - 12, 22) };
+                // 名称行高度随标题字体自适应：调大字号时文字仍在条内纵向居中不被裁
+                int nameRowH = Math.Max(22, TextRenderer.MeasureText("Ag", Config.ListTitleFont()).Height + 6);
+                _nameRow = new Panel { BackColor = Config.ListBg, Tag = "noTint", Location = new Point(6, curY), Size = new Size(_panelW - 12, nameRowH) };
+                // 条目计数小字：紧跟文件夹名文字之后显示，高度与名称/编辑按钮对齐（18px，同 y）
+                int editX = _panelW - 12 - 18;
+                string countText = originalCount > 0 ? I18n.T("panel_status_count", originalCount) : "";
+                var countFont = Config.ListMetaFont();
+                int countW = countText.Length > 0 ? TextRenderer.MeasureText(countText, countFont).Width + 6 : 0;
+                _countLbl = new SmoothLabel
+                {
+                    Text = countText,
+                    Font = countFont,
+                    ForeColor = Config.ListMu,
+                    BackColor = Config.ListBg,   // 与名称行底色一致：标题行不再有独立背景条
+                    AutoSize = false,
+                    UseCompatibleTextRendering = true,
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    Cursor = DefaultCursor,
+                    Location = new Point(0, 2),
+                    Size = new Size(countW, nameRowH - 4),
+                    Visible = countText.Length > 0,
+                };
                 _titleLbl = new SmoothLabel
                 {
                     Text = ShowName(path),
-                    Font = new Font(Config.FontName, Config.FontSize, FontStyle.Bold),
+                    Font = Config.ListTitleFont(),
                     ForeColor = Config.ListFg,
-                    BackColor = Config.ListHdbg,
+                    BackColor = Config.ListBg,   // 移除标题背景条：与名称行底色一致
                     AutoEllipsis = true,
                     UseCompatibleTextRendering = true,
                     TextAlign = ContentAlignment.MiddleLeft,
                     Cursor = Cursors.Hand,
-                    Location = new Point(0, 2),
-                    Size = new Size(Math.Max(40, _panelW - 12 - 24), 18),
+                    Location = new Point(20, 2),   // ✎ 移到名称行最左侧（18px + 2px 间隙），标题从其右侧起
+                    Size = new Size(Math.Max(40, editX - 4 - countW), nameRowH - 4),
                 };
                 var titleDown = new Point(int.MinValue, int.MinValue);
                 bool titleDbl = false;   // 手动双击已触发：随后的抬起不再走单击复制路径
@@ -3214,7 +3312,7 @@ namespace HoverExplorer
                         _fnOpenInExplorer();
                     }
                 };
-                // 点击粗体文件夹名 = 复制路径（拖动面板后不误触发）；重命名走右侧 ✎ 按钮
+                // 点击粗体文件夹名 = 复制路径（拖动面板后不误触发）；重命名走左侧 ✎ 按钮
                 _titleLbl.MouseUp += (s, e) =>
                 {
                     if (e.Button != MouseButtons.Left) return;
@@ -3238,23 +3336,23 @@ namespace HoverExplorer
                 Tips.Set(_titleLbl, path + "\n" + I18n.T("copy_path"));
                 _editBtn = new Label
                 {
-                    BackColor = Config.ListHdbg,
+                    BackColor = Config.ListBg,   // 移除按钮底色：与名称行底色一致，悬停时才提亮
                     Image = PreviewForm.EditIcon(Config.ListFg),
                     Size = new Size(18, 18),
                     AutoSize = false,
                     Cursor = Cursors.Hand,
-                    // 右缘与名称行右缘齐平（= 顶部 ⧉/📌 按钮的右缘），不留多余缩进
-                    Location = new Point(_panelW - 12 - 18, 2),
+                    // 重命名按钮固定在名称行最左侧（标题/计数依次排其后）
+                    Location = new Point(0, (nameRowH - 18) / 2),
                     TextAlign = ContentAlignment.MiddleCenter,
                 };
                 // 悬停提亮一档，与列表行内按钮组保持一致的反馈
                 _editBtn.MouseEnter += (s, e) => _editBtn.BackColor = Config.ListBtnHv;
-                _editBtn.MouseLeave += (s, e) => _editBtn.BackColor = Config.ListHdbg;
+                _editBtn.MouseLeave += (s, e) => _editBtn.BackColor = Config.ListBg;
                 Tips.Set(_editBtn, I18n.T("tip_rename_dir"));
                 _editBtn.Click += (s, e) => BeginTitleRename();
                 _nameEdit = new TextBox
                 {
-                    Font = new Font(Config.FontName, Config.FontSize),
+                    Font = Config.ListTitleFontReg(),
                     // 顶栏改名框跟随列表配色（noTint 防止 tint 用主题基调改写）
                     BackColor = Config.ListBg,
                     ForeColor = Config.ListFg,
@@ -3271,16 +3369,27 @@ namespace HoverExplorer
                 };
                 // 点别处 = 提交（与资源管理器重命名一致）
                 _nameEdit.LostFocus += (s, e) => { if (_nameEdit.Visible) EndTitleRename(true); };
+                // 名称行与表头排序栏调换位置后，面板顶部空白在名称行：空白处同样可拖动移动/右键选项菜单
+                _nameRow.MouseDown += drag;
+                _nameRow.MouseUp += blankMenu;
+                _countLbl.MouseDown += drag;    // 计数小字无自身点击行为，同样作为拖拽入口
+                _countLbl.MouseUp += blankMenu;
                 _nameRow.Controls.Add(_titleLbl);
+                _nameRow.Controls.Add(_countLbl);
                 _nameRow.Controls.Add(_editBtn);
                 _nameRow.Controls.Add(_nameEdit);
+                LayoutTitleCount();   // ✎ 在左、计数紧跟名称文字、右侧避开固定按钮（改宽/刷新后同样走这里）
                 Controls.Add(_nameRow);
-                curY += 22 + 2;
+                // 名称行与表头排序栏调换位置：名称行提到面板最顶部，排序栏移到其下方（两带总高不变，curY 不受影响）
+                int sortBandTop = sortFlow.Top;
+                _nameRow.Top = sortBandTop;
+                sortFlow.Top = sortBandTop + nameRowH + 2;
+                curY += nameRowH + 2;
 
                 // 搜索框：默认隐藏，Ctrl+F 才展开（常驻输入框会带来假焦点/IME 遮挡问题）
                 // 搜索框跟随列表配色（ListBg/ListMu/ListFg/ListHdbg）：主题色经 tint 只换
                 // 浅色基调，深色方案下背景/边框会残留浅色；Tag=noTint 防止 tint 再改写
-                _searchBorder = new Panel { BackColor = Config.ListHdbg, Tag = "noTint", Location = new Point(6, curY), Size = new Size(_panelW - 12, 22), Visible = false };
+                _searchBorder = new Panel { BackColor = Config.ListHdbg, Tag = "noTint", Location = new Point(6, 0), Size = new Size(_panelW - 12, 22), Visible = false };
                 _searchBox = new TextBox
                 {
                     Text = I18n.T("search"),
@@ -3450,7 +3559,8 @@ namespace HoverExplorer
                 btn.MouseLeave += (s, e) => btn.BackColor = Config.ListHv;
             }
 
-            var font = new Font(Config.FontName, Config.FontSize);
+            var font = Config.ListItemFont();
+            var metaFont = Config.ListMetaFont();   // 行内大小/子项数小字
             int maxW = 200;
             var sizeTexts = new string[entries.Length];
             var dirFlags = new bool[entries.Length];
@@ -3489,7 +3599,7 @@ namespace HoverExplorer
                     catch { }
                     if (sizeTexts[i] != null)
                     {
-                        sizeWs[i] = g.MeasureString(sizeTexts[i], font).Width;
+                        sizeWs[i] = g.MeasureString(sizeTexts[i], metaFont).Width;
                         if (sizeWs[i] > maxSizeW) maxSizeW = sizeWs[i];
                     }
                 }
@@ -3548,6 +3658,7 @@ namespace HoverExplorer
                     Size = new Size(_panelW - ListPadLr * 2, rowHeights[i]),
                     Icon = GetIcon(full, isDir),
                     SizeText = sizeTexts[i],
+                    SizeFont = metaFont,
                     SplitX = _rowSideZone,
                     RowIndex = i,
                     SizeColW = maxSizeW,
@@ -3620,30 +3731,101 @@ namespace HoverExplorer
             if (((SlimScrollPanel)_listPanel).CanScroll)
                 foreach (var r in _rows) r.Width = _panelW - ListPadLr * 2 - SlimBarW;
             _fnSyncListScroll();
-            // 底部状态栏：占位防止 grip 挡住最后一行删除按钮，并显示限高/计数提示
-            int statusH = 18;
-            // 底部留白：状态栏下方再留一段，与顶部 curY=5 的上边距呼应
+            // 底部状态栏：占位防止 grip 挡住最后一行删除按钮；左侧计数，右侧实际格式（扩展名）筛选标签
+            int statusRowH = 18;
+            _filterBtns.Clear();
+            var btnFont = Config.ListChipFont();
+            var statusFont = Config.ListChipFont();
+            // 统计列表内实际出现的格式：文件夹单独一类，文件按实际扩展名
+            // （设置关闭"列表底部格式筛选"时不统计：不创建格式标签，状态栏只留一行作拖动/搜索入口）
+            var extCount = new Dictionary<string, int>();
+            if (Config.StatusFilter)
+            {
+                foreach (var row in _rows)
+                {
+                    string ext = RowExtKey(row);
+                    if (ext == null) continue;
+                    if (!extCount.ContainsKey(ext)) extCount[ext] = 0;
+                    extCount[ext]++;
+                }
+            }
+            // 出现次数多的排前面，同数按名称排序
+            var kindList = extCount.OrderByDescending(p => p.Value).ThenBy(p => p.Key).Select(p => p.Key).ToList();
+            int btnH = 16, btnGap = 4;
+            int availW = _panelW - 12;
+            // 条目计数已移到顶部名称行右侧（_countLbl）：状态栏整体让给格式标签，从左端排布
+            _statusCountW = 0;
+            // 标签在状态栏内流式排布，放不下换行，状态栏高度随之增加
+            int statusRows = 1;
+            int flowX = 6;
+            foreach (var kind in kindList)
+            {
+                int bw = TextRenderer.MeasureText(ChipText(kind), btnFont).Width + 8;
+                if (flowX + bw > 6 + availW && flowX > 6) { flowX = 6; statusRows++; }
+                flowX += bw + btnGap;
+            }
+            int statusH = statusRows * statusRowH;
             ClientSize = new Size(_panelW, needH + statusH + ListPadBottom);
-            string statusText = originalCount > 0 ? I18n.T("panel_status_count", originalCount) : "";
-            var statusLbl = new Label
+            // 圆角描边模式下 ClientSize 写入口会做内缩补偿，实际宽度与 _panelW 有偏差：
+            // 不校正的话首弹时名称行右端的计数/重命名按钮会被裁掉一半（拖宽后 SyncWidth 才修正）
+            if (ClientSize.Width != _panelW) SyncWidth(ClientSize.Width);
+            Program.DebugLog("[filter-btn] needH=" + needH + " statusH=" + statusH + " kindList=" + string.Join(",", kindList) + " rows=" + _rows.Count);
+            _statusLbl = new Label
             {
                 Location = new Point(6, needH),
-                Size = new Size(_panelW - 12, statusH),
-                Text = statusText,
-                Font = new Font(Config.FontName, Math.Max(7f, Config.FontSize - 1)),
+                Size = new Size(availW, statusH),
+                Text = "",
+                Font = statusFont,
                 ForeColor = Config.ListMu,
-                BackColor = Config.ListHdbg,
+                BackColor = Config.ListBg,   // 状态栏不再显示深色条，与列表画布同色
                 TextAlign = ContentAlignment.MiddleLeft,
             };
-            Controls.Add(statusLbl);
-            // 状态栏全宽可拖动固定：宽度收窄时顶部可拖区域被按钮挤占，底部是稳定拖拽入口
-            statusLbl.MouseDown += (s, e) =>
+            Controls.Add(_statusLbl);
+            _statusLbl.MouseDown += (s, e) =>
             {
                 if (e.Button != MouseButtons.Left) return;
-                var before = Location;
-                NativeMethods.ReleaseCapture(); NativeMethods.SendMessage(Handle, 0xA1, 0x2, 0);
-                if (Location != before && !_pinned) TogglePinPopup();
+                _statusDownPos = e.Location;
+                _statusDragging = false;
             };
+            _statusLbl.MouseMove += (s, e) =>
+            {
+                if (e.Button != MouseButtons.Left || _statusDragging) return;
+                if (Math.Abs(e.X - _statusDownPos.X) > 3 || Math.Abs(e.Y - _statusDownPos.Y) > 3)
+                {
+                    _statusDragging = true;
+                    var before = Location;
+                    NativeMethods.ReleaseCapture(); NativeMethods.SendMessage(Handle, 0xA1, 0x2, 0);
+                    if (Location != before && !_pinned) TogglePinPopup();
+                }
+            };
+            _statusLbl.Click += (s, e) => { if (!_statusDragging) ToggleSearch(); };
+
+            foreach (var kind in kindList)
+            {
+                // 紧凑宽度：文字 + 左右各 4px 对称内边距（居中对齐）
+                int bw = TextRenderer.MeasureText(ChipText(kind), btnFont).Width + 8;
+                var btn = new BorderLabel
+                {
+                    Text = ChipText(kind),
+                    Font = btnFont,
+                    AutoSize = false,
+                    Size = new Size(bw, btnH),
+                    BackColor = Config.ListBg,
+                    BorderColor = Config.ListBd,   // 圆角描边样式（BorderLabel 自绘）
+                    ForeColor = Config.ListFg,
+                    TextAlign = ContentAlignment.MiddleCenter,
+                    Cursor = Cursors.Hand,
+                    Tag = kind,
+                };
+                btn.MouseDown += FilterBtnMouseDown;
+                btn.Click += FilterBtnClick;
+                Controls.Add(btn);
+                _filterBtns.Add(btn);
+                btn.BringToFront(); // 后于状态栏添加，必须提到最上层，否则被不透明的状态栏盖住不可见
+            }
+            LayoutFilterBtns();
+            UpdateFilterBtnAppearance();
+            if (_filterBtns.Count > 0) Program.DebugLog("[filter-btn] btn0 loc=" + _filterBtns[0].Location + " size=" + _filterBtns[0].Size + " statusY=" + _statusLbl.Top);
 
             ResumeLayout(false);
             PerformLayout();
@@ -3657,7 +3839,7 @@ namespace HoverExplorer
             {
                 Color lbg = LevelBgColor(_level);
                 Action<Control> tint = null;
-                tint = (ctl) => { if ((ctl.Tag as string) != "noTint" && ctl.BackColor == Config.BG) ctl.BackColor = lbg; foreach (Control cc in ctl.Controls) tint(cc); };
+                tint = (ctl) => { if ((ctl.Tag as string) != "noTint" && ctl.BackColor == Config.BG && !_filterBtns.Contains(ctl)) ctl.BackColor = lbg; foreach (Control cc in ctl.Controls) tint(cc); };
                 tint(this);
             }
 
@@ -3678,6 +3860,8 @@ namespace HoverExplorer
 
             // 不自动聚焦搜索框：后台进程在 Timer 里 Focus 只会得到"假焦点"
             // （光标闪但键盘消息仍归真正的前台窗口），需要点一下搜索框才能真正输入
+            if (_filterSelected.Count > 0 || _filterExcluded.Count > 0)
+                FilterRows(_searchBox != null ? _searchBox.Text : "");
             return true;
         }
 
@@ -3696,16 +3880,18 @@ namespace HoverExplorer
         // Ctrl+F：展开/收起搜索框（默认隐藏，避免常驻输入框带来的假焦点与 IME 遮挡）
         public void ToggleSearch()
         {
-            if (_searchBorder == null || _searchBox == null || _listPanel == null) return;
+            if (_searchBorder == null || _searchBox == null || _listPanel == null || _statusLbl == null) return;
             bool on = !_searchBorder.Visible;
-            _searchBorder.Visible = on;
             int dh = 24;
-            _listPanel.Top += on ? dh : -dh;
-            _listPanel.Height -= on ? dh : -dh;
-            _headH += on ? dh : -dh;
+            int listBottom = _listPanel.Top + _listPanel.Height;
+            _searchBorder.Width = _panelW - 12;
+            _searchBox.Width = _panelW - 14;
+            _searchBorder.Location = new Point(6, listBottom);
+            _statusLbl.Location = new Point(6, listBottom + (on ? dh : 0));
+            LayoutFilterBtns();
+            _searchBorder.Visible = on;
             ClientSize = new Size(_panelW, ClientSize.Height + (on ? dh : -dh));
             if (_pinned) _pinnedH = ClientSize.Height;
-            _fnSyncListScroll();
             int lx = Left, ly = Top; ClampPos(ref lx, ref ly); Location = new Point(lx, ly);
             if (on)
             {
@@ -3727,6 +3913,8 @@ namespace HoverExplorer
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
             if (keyData == (Keys.Control | Keys.F)) { ToggleSearch(); return true; }
+            if (keyData == (Keys.Control | Keys.S)) { ToggleSearch(); return true; }
+            if (keyData == Keys.Escape && SearchActive) { ToggleSearch(); return true; }
             return base.ProcessCmdKey(ref msg, keyData);
         }
 
@@ -3886,8 +4074,9 @@ namespace HoverExplorer
                 bool on = kv.Key == SortMode;
                 kv.Value.Text = Config.SortLabels[kv.Key];
                 kv.Value.SortArrow = on ? (SortDesc ? 2 : 1) : 0;
-                kv.Value.BackColor = on ? Config.ListAc : Config.ListHdbg;
-                kv.Value.ForeColor = on ? Config.ListAcFg : Config.ListFg;
+                // 激活态不用背景/变色：三角形箭头已指示当前排序，所有按钮统一 ListBg 底 + ListFg 文字
+                kv.Value.BackColor = Config.ListBg;
+                kv.Value.ForeColor = Config.ListFg;
                 kv.Value.Invalidate();
             }
         }
@@ -3915,6 +4104,84 @@ namespace HoverExplorer
             get { return _searchBorder != null && _searchBorder.Visible; }
         }
 
+        // 筛选用实际格式键：文件夹固定 "dir"，文件取小写扩展名；无扩展名返回 null（不参与筛选）
+        private static string RowExtKey(RowLabel row)
+        {
+            if (row.IsDir) return "dir";
+            string ext = Path.GetExtension(row.Full);
+            if (string.IsNullOrEmpty(ext)) return null;
+            return ext.Substring(1).ToLowerInvariant();
+        }
+
+        // 筛选标签显示文字：文件夹统一显示 "DIR"，文件直接显示实际格式（扩展名大写）
+        private static string ChipText(string kind)
+        {
+            return kind == "dir" ? "DIR" : kind.ToUpperInvariant();
+        }
+
+        // 筛选标签排布在状态栏内部：首行让出左侧计数文字，放不下换行
+        private void LayoutFilterBtns()
+        {
+            if (_filterBtns.Count == 0 || _statusLbl == null) return;
+            int btnRowH = 18, btnGap = 4;
+            int availW = ClientSize.Width - 12;
+            int fx = 6 + _statusCountW;
+            int fy = _statusLbl.Top + 1;
+            foreach (var btn in _filterBtns)
+            {
+                if (fx + btn.Width > 6 + availW) { fx = 6; fy += btnRowH; }
+                btn.Location = new Point(fx, fy);
+                fx += btn.Width + btnGap;
+            }
+        }
+
+        private void UpdateFilterBtnAppearance()
+        {
+            foreach (var btn in _filterBtns)
+            {
+                string kind = btn.Tag as string;
+                if (kind == null) continue;
+                if (_filterSelected.Contains(kind))
+                {
+                    btn.BackColor = Config.ListHdbg;   // 激活 = 加深底色（不用蓝色强调）
+                    btn.ForeColor = Config.ListFg;
+                }
+                else if (_filterExcluded.Contains(kind))
+                {
+                    btn.BackColor = Config.ListBg;
+                    btn.ForeColor = Color.Gray;
+                }
+                else
+                {
+                    btn.BackColor = Config.ListBg;
+                    btn.ForeColor = Config.ListFg;
+                }
+            }
+        }
+
+        private void FilterBtnMouseDown(object s, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Middle) return;
+            var btn = s as Label;
+            string kind = btn != null ? btn.Tag as string : null;
+            if (kind == null) return;
+            if (_filterExcluded.Contains(kind)) _filterExcluded.Remove(kind);
+            else _filterExcluded.Add(kind);
+            UpdateFilterBtnAppearance();
+            FilterRows(_searchBox != null ? _searchBox.Text : "");
+        }
+
+        private void FilterBtnClick(object s, EventArgs e)
+        {
+            var btn = s as Label;
+            string kind = btn != null ? btn.Tag as string : null;
+            if (kind == null) return;
+            if (_filterSelected.Contains(kind)) _filterSelected.Remove(kind);
+            else _filterSelected.Add(kind);
+            UpdateFilterBtnAppearance();
+            FilterRows(_searchBox != null ? _searchBox.Text : "");
+        }
+
         private void FilterRows(string q)
         {
             string raw = q;
@@ -3925,15 +4192,24 @@ namespace HoverExplorer
             if (q == I18n.T("search")) q = "";
             q = q.ToLowerInvariant();
             bool filtering = !string.IsNullOrEmpty(q);
+            bool kindFiltering = _filterSelected.Count > 0 || _filterExcluded.Count > 0;
+            bool anyFilter = filtering || kindFiltering;
             int hidden = 0;
             int visY = 0;                 // 收拢游标：可见行紧贴上移，不留隐藏行空洞
             RowLabel firstVis = null;
             foreach (var row in _rows)
             {
-                bool vis = !filtering || row.Name.ToLowerInvariant().Contains(q);
+                bool nameVis = !filtering || row.Name.ToLowerInvariant().Contains(q);
+                bool kindVis = true;
+                string kind = RowExtKey(row);
+                if (_filterSelected.Count > 0)
+                    kindVis = kind != null && _filterSelected.Contains(kind);
+                else if (_filterExcluded.Count > 0)
+                    kindVis = kind == null || !_filterExcluded.Contains(kind);
+                bool vis = nameVis && kindVis;
                 row.Visible = vis;
                 if (!vis) hidden++;
-                if (filtering)
+                if (anyFilter)
                 {
                     if (!row.OriginalTopSet) { row.OriginalTop = row.Top; row.OriginalTopSet = true; }   // 首次过滤记原位
                     if (vis)
@@ -4002,6 +4278,8 @@ namespace HoverExplorer
                 if (_rowPinBtn != null) _rowPinBtn.Visible = false;
                 if (_rowRenameBtn != null) _rowRenameBtn.Visible = false;
                 _fnClearRowIndex();
+                if (!row.IsDir && Config.PreviewFiles && PreviewProvider.CanPreview(row.Full)) SchedulePreview(row);
+                else SchedulePreviewClose();
                 return;
             }
             // 序号叠加：与行内操作按钮同生共死——只显示当前悬停行的行号，先清掉残留行
@@ -4883,7 +5161,10 @@ namespace HoverExplorer
 
         private void OnMoveDone()
         {
-            try { System.Media.SystemSounds.Beep.Play(); RefreshPanel(); } catch { }
+            // 修复：多选拖放时每个文件"叮"一声——根因是这里对每次复制/移动完成都播一声系统提示音，
+            // 多选时 DoCopy/DoMove 按文件逐个回调本方法，故一声接一声。删除提示音，
+            // 仅保留刷新面板；拖放的复制/移动行为与指针反馈均不变。
+            try { RefreshPanel(); } catch { }
         }
 
         internal static string UniqueDest(string src, string dstDir)

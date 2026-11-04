@@ -41,12 +41,16 @@
 - **按类型开关预览 / Preview types on-off**: 逐类开关要预览的文件类型（图片/视频/音频/文档/文本/压缩包/字体/其他），关掉的类型不再弹预览窗 — Toggle previews per type (image/video/audio/document/text/archive/font/other); disabled types never open a preview
 - **悬停门控 / Modifier-gated hover**: 开启后必须按住所选修饰键（Ctrl/Shift/Alt 或组合）悬停才触发，文件夹列表与文件预览可分别设置，重命名、多选不再被弹窗打扰 —  hover only triggers while a chosen modifier key (Ctrl/Shift/Alt or a combo) is held; folder lists and file previews can be gated separately, so renaming and multi-select stay undisturbed
 - **视频预览默认静音 / Mute video previews by default**: 悬停触发的视频先静音，点击播放条 🔊 恢复声音；音频预览不受影响 — Hover-triggered videos start muted; click 🔊 on the control bar to unmute; audio previews unaffected
+- **进度条悬停时间 / Seek-bar hover time**: 视频进度条上悬停显示圆角时间气泡，跟随指针指示该处进度 — Rounded time bubble follows the pointer above the video seek bar
+- **格式筛选 / Format filter**: 列表底部按实际格式显示标签（文件夹显示 DIR），点击只看该格式、中键排除；可在设置中关闭 — Bottom chips show actual formats (folders as DIR); click to filter, middle-click to exclude; toggleable in settings
 - **m4v 等移动端容器 / m4v & mobile containers**: 补齐 `.m4v` `.m4b` `.3gp` `.mts` `.m2ts` `.webm` `.flv` 等扩展名，直接出画面而非只有元数据 — Adds `.m4v` `.m4b` `.3gp` `.mts` `.m2ts` `.webm` `.flv` so they preview instead of showing metadata only
 - **高规格视频兜底解码 / High-spec video fallback**: 系统解码器打不开时（ProRes / 10bit / 4:2:2 / HEVC）自动改用 ffmpeg 帧流播放 — When the system decoder fails (ProRes / 10-bit / 4:2:2 / HEVC), falls back to an ffmpeg frame-stream player
 - **音频波形播放器 / Audio waveform**: 迷你播放条，波形即进度，MF 后台解码峰值/RMS，点击/拖动 seek — Mini player bar, waveform = progress, MF background peak/RMS decode, click/drag to seek
 - **收藏·历史列表 / Favorites · History**: 自定义触发区域或热键弹出常用文件夹；星标收藏；行悬停操作按钮；宽度可拖拽记忆 — Custom trigger area or hotkey; star to favorite; row hover action buttons; draggable width with memory
 - **关闭延迟可调 / Adjustable close delay**: 50–2000ms 统一控制列表/预览/收藏离开后关闭速度 — 50–2000ms unified close speed for list/preview/favorites after mouse leaves
 - **设置即改即生效 / Live settings**: 无确定/取消按钮，任何改动实时保存生效 — No OK/Cancel; all changes save and apply instantly
+- **外观自定义 / Appearance**: 列表 5 分区字体/字号（表头/名称/列表/格式标签/数量·大小）+ 实时预览；列表与卡片配色方案下拉框滚轮直接切换、改动实时预览 — Per-zone fonts & sizes with live preview; scroll to cycle list/card color schemes, all previewed live
+- **设置窗口可调 / Resizable settings**: 拖边缘调整设置面板尺寸，记忆恢复 — Drag edges to resize the settings panel; size remembered
 - **快捷键切换 / Hotkey toggle**: 全局快捷键启用/禁用悬停（默认 `Ctrl+Alt+Q`，可自定义） — Global hotkey to enable/disable hover (default `Ctrl+Alt+Q`, customizable)
 - **悬停延时可调 / Adjustable hover delay**: 自定义触发延时，文件夹和文件统一生效 — Custom trigger delay, applies to folders and files
 - **深浅主题 / Light/Dark theme**: 深色/浅色/跟随系统三选一；跟随系统时 Windows 切换深浅色（含 PowerToys 等自动切换）面板即时跟上 — Dark/light/follow-system; in follow-system mode panels switch instantly when Windows (incl. PowerToys schedulers) flips its app theme
@@ -61,6 +65,8 @@
 - **关闭系统提示 / Disable system tooltip**: 可选隐藏 Windows 原生 tooltip — Optional hide Windows native tooltip
 - **开机自启 / Autostart**: 可选写入注册表 Run 键，免安装 — Optional registry Run key, portable
 - **隐藏托盘图标 / Hide tray icon**: 隐藏后右键面板空白处呼出菜单 — Right-click panel blank area for menu when hidden
+- **托盘中键动作 / Tray middle-click**: 中键点击托盘图标可设为打开设置/重启/退出（可能与鼠标手势软件冲突） — Middle-click tray icon opens settings/restarts/exits (may conflict with mouse-gesture apps)
+- **更新提示 / Update badge**: 后台检查 GitHub Releases，有新版时托盘图标显示绿点、悬停提示版本 — Background release check; green dot on tray icon with tooltip when a new version exists
 - **固定文件卡片 / Pin file card**: 预览窗图钉固定为桌面卡片，▶ 执行，中键关闭，右键原生菜单 — Pin preview as desktop card; ▶ to run; middle-click close; right-click native menu
 - **文件列表右键菜单 / List context menu**: 打开/编辑/新窗口/重命名/删除/复制路径·名称/原生菜单 — Open/edit/new window/rename/delete/copy path·name/native menu
 - **预览窗复制菜单 / Preview copy menu**: 复制选中文本/全文/文件/路径，移开自动收起 — Copy selected/all/file/path; auto-dismiss on leave

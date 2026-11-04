@@ -212,6 +212,17 @@ namespace HoverExplorer
         // 列表/预览窗口的按钮提示（tooltip），可在托盘菜单关闭
         public static bool ShowTips = true;
         public static bool HideTrayIcon = false;
+        public static string TrayIconPath = "";
+        public static bool TrayShowExplorer = true;
+        public static bool TrayShowPreview = true;
+        public static bool TrayShowOrigSize = false;
+        public static bool TrayShowDebugLog = false;
+        public static bool TrayShowHideTooltip = false;
+        public static bool TrayShowButtonTips = true;
+        public static bool TrayShowAutostart = true;
+        public static bool TrayShowHideTray = true;
+        public static bool TrayShowAddCard = true;
+        public static int TrayMiddleAction = 1;
         public static bool HotkeyEnabled = true;
         public static int HotkeyModifiers = 0x2 | 0x1; // Ctrl+Alt
         public static int HotkeyKey = 81; // Q
@@ -239,6 +250,8 @@ namespace HoverExplorer
         public static bool KeepOnLeave = false;
         // 行布局互换：名称靠右，大小/子项数与行内按钮靠左（左侧移动不触发悬停调度）
         public static bool RowSwapSides = false;
+        // 列表底部格式筛选：关闭后 PopupForm 底部状态栏不显示格式标签（保留拖动/点击展开搜索入口）
+        public static bool StatusFilter = true;
         // 互换布局的分栏分隔线位置（行内 X 像素）；0=自动（按钮组+大小列宽度），拖动后持久化
         public static int RowSplitX = 0;
         // 悬停门控：按住所选修饰键才触发，重命名/多选等操作不被弹窗干扰。
@@ -259,10 +272,48 @@ namespace HoverExplorer
         // 桌面卡片配色索引（独立于 Theme：面板主题不影响卡片；卡片上滚轮可循环切换）
         public static int CardPaletteIndex = 0;
         public static int LastSettingsPage = 0;
+        public static int SettingsW = 0;          // 设置窗持久化宽度（0=默认）
+        public static int SettingsH = 0;          // 设置窗持久化高度（0=默认）
         public static string CardPalettesData = "";
         public static List<PinnedItem> PinnedItems = new List<PinnedItem>();
         public static readonly string FontName = "Microsoft YaHei UI";
         public static readonly float FontSize = 10f;
+        // ===== 列表面板分区字体：表头/标题/行文本/格式标签/数量·大小信息 =====
+        // 默认回退全局 FontName/FontSize；字号默认=各区域现状（见 PopupForm）
+        public static string ListHeaderFontName = FontName;
+        public static float ListHeaderFontSize = FontSize;                       // 表头排序栏：现状 FontSize
+        public static string ListTitleFontName = FontName;
+        public static float ListTitleFontSize = FontSize;                        // 标题行文件夹名：现状 FontSize
+        public static string ListItemFontName = FontName;
+        public static float ListItemFontSize = FontSize;                         // 列表行文本：现状 FontSize
+        public static string ListChipFontName = FontName;
+        public static float ListChipFontSize = Math.Max(7f, FontSize - 1);       // 状态栏格式标签：现状 FontSize-1
+        public static string ListMetaFontName = FontName;
+        public static float ListMetaFontSize = Math.Max(6.5f, FontSize - 2);     // 大小/计数小字：现状 FontSize-2
+
+        // 生成分区字体：保存的字体名未安装（或创建失败）时回退全局 FontName。
+        // 注意：必须每次返回新实例，不能缓存共享——设置窗预览等调用方会用 using 释放，
+        // 共享实例一旦被释放，后续弹出面板 set_Font 时 GetHeight 会抛"参数无效"导致列表无法显示
+        private static Font ListFont(string name, float size, FontStyle style)
+        {
+            float sz = (size > 0 && !float.IsNaN(size)) ? size : FontSize;
+            string fam = FontName;
+            try
+            {
+                using (var ifc = new System.Drawing.Text.InstalledFontCollection())
+                    foreach (var ff in ifc.Families)
+                        if (string.Equals(ff.Name, name, StringComparison.OrdinalIgnoreCase)) { fam = ff.Name; break; }
+            }
+            catch { }
+            try { return new Font(fam, sz, style); }
+            catch { return new Font(FontName, sz, style); }
+        }
+        public static Font ListHeaderFont() { return ListFont(ListHeaderFontName, ListHeaderFontSize, FontStyle.Regular); }
+        public static Font ListTitleFont() { return ListFont(ListTitleFontName, ListTitleFontSize, FontStyle.Bold); }
+        public static Font ListTitleFontReg() { return ListFont(ListTitleFontName, ListTitleFontSize, FontStyle.Regular); }
+        public static Font ListItemFont() { return ListFont(ListItemFontName, ListItemFontSize, FontStyle.Regular); }
+        public static Font ListChipFont() { return ListFont(ListChipFontName, ListChipFontSize, FontStyle.Regular); }
+        public static Font ListMetaFont() { return ListFont(ListMetaFontName, ListMetaFontSize, FontStyle.Regular); }
         public static Color BG, FG, BgHover, BgDir, FgDir, DropHighlight, BgSel, Border, PlaceholderFg, Accent, BtnHover;
 
         static Config()
@@ -529,6 +580,17 @@ namespace HoverExplorer
                         case "HideTooltip": HideTooltip = Convert.ToBoolean(v); break;
                         case "ShowTips": ShowTips = Convert.ToBoolean(v); break;
                         case "HideTrayIcon": HideTrayIcon = Convert.ToBoolean(v); break;
+                        case "TrayIconPath": TrayIconPath = Convert.ToString(v); break;
+                        case "TrayShowExplorer": TrayShowExplorer = Convert.ToBoolean(v); break;
+                        case "TrayShowPreview": TrayShowPreview = Convert.ToBoolean(v); break;
+                        case "TrayShowOrigSize": TrayShowOrigSize = Convert.ToBoolean(v); break;
+                        case "TrayShowDebugLog": TrayShowDebugLog = Convert.ToBoolean(v); break;
+                        case "TrayShowHideTooltip": TrayShowHideTooltip = Convert.ToBoolean(v); break;
+                        case "TrayShowButtonTips": TrayShowButtonTips = Convert.ToBoolean(v); break;
+                        case "TrayShowAutostart": TrayShowAutostart = Convert.ToBoolean(v); break;
+                        case "TrayShowHideTray": TrayShowHideTray = Convert.ToBoolean(v); break;
+                        case "TrayShowAddCard": TrayShowAddCard = Convert.ToBoolean(v); break;
+                        case "TrayMiddleAction": TrayMiddleAction = Convert.ToInt32(v); break;
                         case "HotkeyEnabled": HotkeyEnabled = Convert.ToBoolean(v); break;
                         case "HotkeyModifiers": HotkeyModifiers = Convert.ToInt32(v); break;
                         case "HotkeyKey": HotkeyKey = Convert.ToInt32(v); break;
@@ -536,6 +598,8 @@ namespace HoverExplorer
                         case "Theme": Theme = Convert.ToString(v); break;
                         case "CardPaletteIndex": CardPaletteIndex = Convert.ToInt32(v); break;
                         case "LastSettingsPage": LastSettingsPage = Convert.ToInt32(v); break;
+                        case "SettingsW": SettingsW = Convert.ToInt32(v); break;
+                        case "SettingsH": SettingsH = Convert.ToInt32(v); break;
                         case "PinnedItems":
                             PinnedItems = new List<PinnedItem>();
                             foreach (var item in (System.Collections.ArrayList)v)
@@ -593,6 +657,7 @@ namespace HoverExplorer
                             break;
                         case "KeepOnLeave": KeepOnLeave = Convert.ToBoolean(v); break;
                         case "RowSwapSides": RowSwapSides = Convert.ToBoolean(v); break;
+                        case "StatusFilter": StatusFilter = Convert.ToBoolean(v); break;
                         case "RowSplitX": RowSplitX = Convert.ToInt32(v); break;
                         case "FolderGateEnabled": FolderGateEnabled = Convert.ToBoolean(v); break;
                         case "FolderGateMods": FolderGateMods = Convert.ToInt32(v); break;
@@ -605,6 +670,16 @@ namespace HoverExplorer
                         case "CardPalettesData": CardPalettesData = Convert.ToString(v); break;
                         case "SortMode": SortMode = Convert.ToString(v); break;
                         case "SortDesc": SortDesc = Convert.ToBoolean(v); break;
+                        case "ListHeaderFontName": ListHeaderFontName = Convert.ToString(v); break;
+                        case "ListHeaderFontSize": ListHeaderFontSize = Convert.ToSingle(v); break;
+                        case "ListTitleFontName": ListTitleFontName = Convert.ToString(v); break;
+                        case "ListTitleFontSize": ListTitleFontSize = Convert.ToSingle(v); break;
+                        case "ListItemFontName": ListItemFontName = Convert.ToString(v); break;
+                        case "ListItemFontSize": ListItemFontSize = Convert.ToSingle(v); break;
+                        case "ListChipFontName": ListChipFontName = Convert.ToString(v); break;
+                        case "ListChipFontSize": ListChipFontSize = Convert.ToSingle(v); break;
+                        case "ListMetaFontName": ListMetaFontName = Convert.ToString(v); break;
+                        case "ListMetaFontSize": ListMetaFontSize = Convert.ToSingle(v); break;
                     }
                 }
                 // 旧格式迁移：FavoriteFolders(扁平) → FavoriteGroups(多分组) 首组
@@ -661,6 +736,17 @@ namespace HoverExplorer
                 data["HideTooltip"] = HideTooltip;
                 data["ShowTips"] = ShowTips;
                 data["HideTrayIcon"] = HideTrayIcon;
+                data["TrayIconPath"] = TrayIconPath;
+                data["TrayShowExplorer"] = TrayShowExplorer;
+                data["TrayShowPreview"] = TrayShowPreview;
+                data["TrayShowOrigSize"] = TrayShowOrigSize;
+                data["TrayShowDebugLog"] = TrayShowDebugLog;
+                data["TrayShowHideTooltip"] = TrayShowHideTooltip;
+                data["TrayShowButtonTips"] = TrayShowButtonTips;
+                data["TrayShowAutostart"] = TrayShowAutostart;
+                data["TrayShowHideTray"] = TrayShowHideTray;
+                data["TrayShowAddCard"] = TrayShowAddCard;
+                data["TrayMiddleAction"] = TrayMiddleAction;
                 data["HotkeyEnabled"] = HotkeyEnabled;
                 data["HotkeyModifiers"] = HotkeyModifiers;
                 data["HotkeyKey"] = HotkeyKey;
@@ -690,6 +776,7 @@ namespace HoverExplorer
                 data["RecentFolders"] = RecentFolders;
                 data["KeepOnLeave"] = KeepOnLeave;
                 data["RowSwapSides"] = RowSwapSides;
+                data["StatusFilter"] = StatusFilter;
                 data["RowSplitX"] = RowSplitX;
                 data["FolderGateEnabled"] = FolderGateEnabled;
                 data["FolderGateMods"] = FolderGateMods;
@@ -701,10 +788,22 @@ namespace HoverExplorer
                 data["ListPalettesData"] = ListPalettesData;
                 data["SortMode"] = SortMode;
                 data["SortDesc"] = SortDesc;
+                data["ListHeaderFontName"] = ListHeaderFontName;
+                data["ListHeaderFontSize"] = ListHeaderFontSize;
+                data["ListTitleFontName"] = ListTitleFontName;
+                data["ListTitleFontSize"] = ListTitleFontSize;
+                data["ListItemFontName"] = ListItemFontName;
+                data["ListItemFontSize"] = ListItemFontSize;
+                data["ListChipFontName"] = ListChipFontName;
+                data["ListChipFontSize"] = ListChipFontSize;
+                data["ListMetaFontName"] = ListMetaFontName;
+                data["ListMetaFontSize"] = ListMetaFontSize;
                 data["Language"] = Language;
                 data["Theme"] = Theme;
                 data["CardPaletteIndex"] = CardPaletteIndex;
                 data["LastSettingsPage"] = LastSettingsPage;
+                data["SettingsW"] = SettingsW;
+                data["SettingsH"] = SettingsH;
                 data["CardPalettesData"] = CardPalettesData;
                 data["HoverDelay"] = HoverDelay;
                 data["CloseDelay"] = CloseDelay;

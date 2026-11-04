@@ -32,6 +32,27 @@ namespace HoverExplorer
             BackColor = Color.Transparent;
         }
 
+        // 滚动条贴在可调大小窗体（设置窗）右缘时会盖住尺寸调整热区：
+        // 滑块本体（含余量）仍归滚动条拖拽，其余贴缘区域转交宿主窗体（PopupForm 等其他宿主不受影响）
+        protected override void WndProc(ref Message m)
+        {
+            var sf = FindForm() as HoverExplorer.SettingsForm;
+            if (sf != null)
+            {
+                const int WM_NCHITTEST = 0x0084;
+                const int WM_NCLBUTTONDOWN = 0x00A1;
+                if (m.Msg == WM_NCHITTEST)
+                {
+                    long lp = m.LParam.ToInt64();
+                    var p = PointToClient(new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF)));
+                    var tr = ThumbRect(); tr.Inflate(2, 2);
+                    if (!tr.Contains(p) && sf._fnNcHitTest(ref m)) return;
+                }
+                else if (m.Msg == WM_NCLBUTTONDOWN) { if (sf.ForwardSizeDrag(ref m)) return; }
+            }
+            base.WndProc(ref m);
+        }
+
         public int Maximum
         {
             get { return _max; }

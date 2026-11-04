@@ -322,6 +322,13 @@ namespace HoverExplorer
             return IntPtr.Size == 8 ? SetWindowLong64(hWnd, nIndex, dwNewLong) : (IntPtr)SetWindowLong32(hWnd, nIndex, dwNewLong.ToInt32());
         }
 
+        public const int GWL_WNDPROC = -4;
+        public const uint WM_MBUTTONUP = 0x0209;
+
+        public delegate IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll", EntryPoint = "CallWindowProcW")]
+        public static extern IntPtr CallWindowProc(IntPtr lpPrevWndFunc, IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
         public static IntPtr SendMsg(IntPtr hwnd, uint msg, IntPtr wparam, IntPtr lparam)
         {
             IntPtr res;
@@ -351,6 +358,7 @@ namespace HoverExplorer
         public const int VK_SHIFT = 0x10;
         public const int VK_CONTROL = 0x11;
         public const int VK_MENU = 0x12;
+        public const int VK_MBUTTON = 0x04;  // 鼠标中键（托盘中键轮询检测用）
         public const int VK_PRIOR = 0x21;   // PageUp
         public const int VK_NEXT = 0x22;    // PageDown
 

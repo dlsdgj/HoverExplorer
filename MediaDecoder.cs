@@ -713,6 +713,7 @@ namespace HoverExplorer
                 if (_pos > _info.DurationSec) _pos = _info.DurationSec;
             }
             _lbl.Text = MediaPreview.Fmt(TimeSpan.FromSeconds(_pos)) + " / " + MediaPreview.Fmt(TimeSpan.FromSeconds(_info.DurationSec));
+            _prog.DurationSec = _info.DurationSec;
             _prog.Ratio = _pos / _info.DurationSec;
         }
 

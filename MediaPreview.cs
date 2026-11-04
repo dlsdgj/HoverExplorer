@@ -638,6 +638,7 @@ internal static class MediaPreview
             {
                 if (!session.IsLoaded || session.Duration <= TimeSpan.Zero) return;
                 lblTime.Text = Fmt(session.Position) + " / " + Fmt(session.Duration);
+                prog.DurationSec = session.Duration.TotalSeconds;
                 prog.Ratio = session.Position.TotalMilliseconds / session.Duration.TotalMilliseconds;
                 btn.Text = session.IsPlaying ? "❚❚" : "▶";
             };
@@ -800,6 +801,25 @@ internal static class MediaPreview
         internal class SeekBar : WinControl
         {
             private double _ratio;
+            public double DurationSec;          // 悬停提示用：媒体总时长（秒）
+            private float _hoverRatio = -1f;    // 悬停位置比例（-1=鼠标不在控件上）
+            private Panel _tip;                 // 悬浮时间气泡：挂在所属窗体上（进度条太矮，画在自身内会被裁剪/压住轨道）
+            private string _tipText;
+
+            // 气泡画板（Panel 的 SetStyle 是保护成员，需子类开启双缓冲）
+            private sealed class TipPanel : Panel
+            {
+                public Action<Graphics> Draw;
+                public TipPanel()
+                {
+                    SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
+                        | ControlStyles.OptimizedDoubleBuffer, true);
+                }
+                protected override void OnPaint(PaintEventArgs e)
+                {
+                    if (Draw != null) Draw(e.Graphics); else base.OnPaint(e);
+                }
+            }
             public double Ratio
             {
                 get { return _ratio; }
@@ -813,6 +833,85 @@ internal static class MediaPreview
                     | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
                 BackColor = Config.BG;
                 Cursor = Cursors.Hand;
+                // 悬停进度条：跟随鼠标在条上方显示对应进度时间
+                MouseMove += (s, e) =>
+                {
+                    float r = (float)Math.Max(0, Math.Min(1, (e.X - 4.0) / Math.Max(1, Width - 8)));
+                    if (Math.Abs(r - _hoverRatio) > 0.001f) { _hoverRatio = r; ShowTip(); }
+                };
+                MouseLeave += (s, e) => { _hoverRatio = -1f; HideTip(); };
+                VisibleChanged += (s, e) => { if (!Visible) { _hoverRatio = -1f; HideTip(); } };
+                HandleDestroyed += (s, e) =>
+                {
+                    if (_tip != null) { try { _tip.Dispose(); } catch { } _tip = null; }
+                };
+            }
+
+            private static string FmtT(double sec)
+            {
+                int t = (int)Math.Round(sec);
+                int hh = t / 3600, mm = (t % 3600) / 60, ss = t % 60;
+                return hh > 0 ? string.Format("{0}:{1:00}:{2:00}", hh, mm, ss)
+                              : string.Format("{0}:{1:00}", mm, ss);
+            }
+
+            // 悬浮气泡：显示在进度条上方 6px，水平跟随悬停点，夹在窗体范围内
+            private void ShowTip()
+            {
+                var form = FindForm();
+                if (form == null || DurationSec <= 0 || _hoverRatio < 0) { HideTip(); return; }
+                string txt = FmtT(DurationSec * _hoverRatio);
+                if (_tip == null || _tip.IsDisposed)
+                {
+                    var tp = new TipPanel();
+                    tp.Draw = DrawTip;
+                    _tip = tp;
+                    _tip.Visible = false;
+                    form.Controls.Add(_tip);
+                }
+                _tip.BringToFront();
+                if (_tipText != txt)
+                {
+                    _tipText = txt;
+                    using (var f = new Font(Config.FontName, 8f))
+                    {
+                        var ts = TextRenderer.MeasureText(txt, f);
+                        _tip.Size = new Size(ts.Width + 12, ts.Height + 5);
+                    }
+                }
+                var sp = PointToScreen(new Point((int)Math.Round(4 + (Width - 8) * _hoverRatio), 0));
+                var fp = form.PointToClient(sp);
+                int tx = fp.X - _tip.Width / 2;
+                if (tx < 2) tx = 2;
+                if (tx + _tip.Width > form.ClientSize.Width - 2) tx = form.ClientSize.Width - _tip.Width - 2;
+                _tip.Location = new Point(tx, Math.Max(2, fp.Y - _tip.Height - 6));
+                _tip.Visible = true;
+                _tip.Invalidate();
+            }
+
+            private void HideTip()
+            {
+                if (_tip != null && !_tip.IsDisposed && _tip.Visible) _tip.Visible = false;
+            }
+
+            private void DrawTip(Graphics g)
+            {
+                if (_tipText == null) return;
+                int w = _tip.Width, h = _tip.Height;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                var path = new System.Drawing.Drawing2D.GraphicsPath();
+                int r = 4;
+                path.AddArc(0, 0, r * 2, r * 2, 180, 180);
+                path.AddArc(w - r * 2, 0, r * 2, r * 2, 270, 180);
+                path.AddArc(w - r * 2, h - r * 2, r * 2, r * 2, 0, 180);
+                path.AddArc(0, h - r * 2, r * 2, r * 2, 90, 180);
+                path.CloseFigure();
+                using (var b = new SolidBrush(Config.BG)) g.FillPath(b, path);
+                using (var p = new Pen(Config.Border)) g.DrawPath(p, path);
+                using (var f = new Font(Config.FontName, 8f))
+                    TextRenderer.DrawText(g, _tipText, f, new Rectangle(0, 1, w, h), Config.FG,
+                        TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                path.Dispose();
             }
 
             protected override void OnPaint(PaintEventArgs e)

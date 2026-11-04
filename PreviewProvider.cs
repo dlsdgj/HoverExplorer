@@ -145,8 +145,12 @@ namespace HoverExplorer
             string ext = Path.GetExtension(full).ToLowerInvariant();
             if (ext == ".ico")
             {
-                try { using (var icon = new Icon(full)) img = icon.ToBitmap(); }
-                catch { img = Image.FromFile(full); }
+                img = LoadViaWic(full);
+                if (img == null)
+                {
+                    try { using (var icon = new Icon(full)) img = icon.ToBitmap(); }
+                    catch { img = Image.FromFile(full); }
+                }
             }
             else
             {

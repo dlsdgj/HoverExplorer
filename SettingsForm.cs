@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Drawing.Drawing2D;
@@ -22,6 +22,8 @@ namespace HoverExplorer
         private int _contentW;             // 主区内容宽度（扣除侧栏+滚动条+内边距）
         private int _curPage = -1;          // 当前分页索引（-1 确保首次切换生效）
         private readonly List<Label> _navItems = new List<Label>();
+        private static readonly int[] _boldNavPages = { 0, 3, 4 };
+        private static readonly int[] _indentNavPages = { 1, 2 };
 
         private readonly List<AccGroup> _groups = new List<AccGroup>();
         private AccGroup _hoverGroup;
@@ -29,7 +31,6 @@ namespace HoverExplorer
         private AccGroup _cardGroup;
         private AccGroup _cardTriggerGroup;
         private AccGroup _entryGroup;
-        private AccGroup _sortGroup;
         private AccGroup _tcGroup;
         private AccGroup _pvTypeGroup;
         private ViewportPanel _viewport;
@@ -40,7 +41,10 @@ namespace HoverExplorer
         private PictureBox _iconBox;
         private Label _verLbl;
         private LinkLabel _updateLbl;
-        private static string _latestVer; // null=未检测, ""=失败, "x.x.x"=最新版
+        private Panel _sidebar;   // 侧栏导航（宽度固定，高度随窗口拉伸）
+        // 窗口最小尺寸（约为默认 660×720 的 80%）
+        private const int _minW = 528;
+        private const int _minH = 576;
 
         private ToggleSwitch _hoverToggle;
         private ToggleSwitch _cardToggle;
@@ -68,6 +72,15 @@ namespace HoverExplorer
         private ToggleSwitch _pvSpectrumToggle;
         private TextBox _ffmpegPathBox;
         private Label _ffmpegStatusLbl;
+        private TextBox _trayIconBox;
+        private DarkCombo _trayMiddleCombo;
+        private ToggleSwitch _trayShowExplorerToggle;
+        private ToggleSwitch _trayShowPreviewToggle;
+        private ToggleSwitch _trayShowOrigToggle;
+        private ToggleSwitch _trayShowDebugLogToggle;
+        private ToggleSwitch _trayShowHideTooltipToggle;
+        private ToggleSwitch _trayShowButtonTipsToggle;
+        private ToggleSwitch _trayShowAutostartToggle;
         private HotkeyPill _hoverPill;
         private HotkeyPill _cardPill;
         private HotkeyPill _entryPill;
@@ -78,6 +91,9 @@ namespace HoverExplorer
         private DarkCombo _cornerCombo;
         private DarkCombo _tcSortCombo;
         private DarkCombo _sortCombo;
+        private ListPreviewPanel _listPreview;   // 列表外观·实时预览（模拟弹出面板）
+        private CardPreviewPanel _cardPreview;   // 桌面卡片·外观实时预览（模拟一张卡片）
+        private ToggleSwitch _statusFilterToggle;   // 列表底部格式筛选开关
         private Label _areaLbl;
         private Button _areaPickBtn;
         private Button _pausePickBtn;
@@ -133,10 +149,14 @@ namespace HoverExplorer
             FormBorderStyle = FormBorderStyle.None;
             MaximizeBox = false;
             MinimizeBox = false;
-            Width = 660;
-            Height = Math.Min(720, Screen.FromPoint(Cursor.Position).WorkingArea.Height - 60);
+            // 尺寸：默认 660×min(720, 工作区-60)；上次关闭时持久化的尺寸（Config.SettingsW/H）优先
+            var wa = Screen.FromPoint(Cursor.Position).WorkingArea;
+            Width = Config.SettingsW >= _minW ? Math.Min(Config.SettingsW, wa.Width - 20) : 660;
+            Height = Math.Min(Config.SettingsH >= _minH ? Config.SettingsH : 720, wa.Height - 60);
+            MinimumSize = new Size(_minW, Math.Min(_minH, wa.Height - 60));
             ShowInTaskbar = false;
             DoubleBuffered = true;
+            SetStyle(ControlStyles.ResizeRedraw, true);   // 拖拽调尺寸时整窗重绘（含 OnPaint 头部）
             KeyPreview = true;
             _contentW = Width - SidebarW - PadX * 2 - ScrollBarW;
 
@@ -237,15 +257,15 @@ namespace HoverExplorer
             // 结构：viewport（固定可视区，裁切溢出）→ _scrollPanel（内容层，Y 偏移滚动）+ _scrollBar（Dock Right）
             int viewH = Height - HeadAreaH;   // 赞助区已并入"关于"折叠组随滚动，不再预留固定高度；底部无按钮栏
             // ---- 侧栏导航 ----
-            var sidebar = new Panel
+            _sidebar = new HotEdgePanel()
             {
                 Location = new Point(0, HeadAreaH),
                 Size = new Size(SidebarW, viewH),
                 BackColor = Config.BgHover
             };
-            Controls.Add(sidebar);
+            Controls.Add(_sidebar);
             int navY = 14;
-            string[] navLabels = { I18n.T("group_window"), I18n.T("group_content"), I18n.T("group_appearance"), I18n.T("group_card"), I18n.T("group_entry"), I18n.T("group_advanced"), I18n.T("group_about") };
+            string[] navLabels = { I18n.T("nav_preview_list"), I18n.T("group_content"), I18n.T("group_appearance"), I18n.T("group_card"), I18n.T("group_entry"), I18n.T("group_advanced"), I18n.T("group_tray"), I18n.T("group_about") };
             for (int i = 0; i < navLabels.Length; i++)
             {
                 int idx = i;
@@ -255,8 +275,8 @@ namespace HoverExplorer
                     Location = new Point(0, navY),
                     Size = new Size(SidebarW - 2, 34),
                     TextAlign = ContentAlignment.MiddleLeft,
-                    Padding = new Padding(18, 0, 0, 0),
-                    Font = new Font(Config.FontName, 9f),
+                    Padding = new Padding(Array.IndexOf(_indentNavPages, idx) >= 0 ? 36 : 18, 0, 0, 0),
+                    Font = new Font(Config.FontName, 9f, Array.IndexOf(_boldNavPages, idx) >= 0 ? FontStyle.Bold : FontStyle.Regular),
                     Cursor = Cursors.Hand,
                     BackColor = Config.BgHover,
                     ForeColor = Config.FG,
@@ -265,38 +285,18 @@ namespace HoverExplorer
                 item.MouseEnter += (s, e) => { if (idx != _curPage) item.BackColor = Config.BG; };
                 item.MouseLeave += (s, e) => { if (idx != _curPage) item.BackColor = Config.BgHover; };
                 item.Click += (s, e) => _fnSwitchPage(idx);
-                sidebar.Controls.Add(item);
+                _sidebar.Controls.Add(item);
                 _navItems.Add(item);
                 navY += 34;
             }
-            var healthPanel = new Panel
-            {
-                Location = new Point(0, viewH - 96),
-                Size = new Size(SidebarW - 2, 96),
-                BackColor = Config.BgHover
-            };
-            var healthDot = new Label { Text = "●", Font = new Font(Config.FontName, 7f), ForeColor = Color.FromArgb(0x12, 0xB8, 0x6A), Location = new Point(14, 6), AutoSize = true };
-            var healthTitle = new Label { Text = I18n.T("health_all_running"), Font = new Font(Config.FontName, 8f), ForeColor = Config.FG, Location = new Point(26, 4), AutoSize = true };
-            healthPanel.Controls.Add(healthDot);
-            healthPanel.Controls.Add(healthTitle);
-            string[] hkLabels = { I18n.T("health_hover"), I18n.T("health_entry"), I18n.T("group_card") };
-            string[] hkVals = { HotkeyDisplay(true, _hoverMods, _hoverKey), HotkeyDisplay(true, _entryMods, _entryKey), HotkeyDisplay(true, _cardMods, _cardKey) };
-            for (int i = 0; i < 3; i++)
-            {
-                var lbl = new Label { Text = hkLabels[i], Font = new Font(Config.FontName, 7.5f), ForeColor = Config.PlaceholderFg, Location = new Point(18, 24 + i * 20), AutoSize = true };
-                var val = new Label { Text = hkVals[i], Font = new Font(Config.FontName, 7.5f), ForeColor = Config.Accent, Location = new Point(SidebarW - 14 - 70, 24 + i * 20), AutoSize = true };
-                val.Location = new Point(SidebarW - 14 - val.PreferredWidth, 24 + i * 20);
-                healthPanel.Controls.Add(lbl);
-                healthPanel.Controls.Add(val);
-            }
-            sidebar.Controls.Add(healthPanel);
+
             _viewport = new ViewportPanel
             {
                 Location = new Point(SidebarW, HeadAreaH),
                 Size = new Size(Width - SidebarW, viewH),
                 BackColor = Config.BG
             };
-            _scrollPanel = new FlowLayoutPanel
+            _scrollPanel = new HotEdgeFlowPanel
             {
                 Location = new Point(0, 0),
                 Size = new Size(Width - SidebarW - ScrollBarW, viewH),
@@ -324,7 +324,6 @@ namespace HoverExplorer
             _hoverGroup = _fnNewGroup(I18n.T("group_trigger"), true, 0);
             _hoverToggle = new ToggleSwitch { On = Config.HotkeyEnabled };
             _hoverToggle.Toggled += (s, e) => { _fnUpdateHoverState(); _fnApplySettings(true, false); };
-            _hoverGroup.SetToggle(_hoverToggle);
             _hoverGroup.AddChip(HotkeyDisplay(Config.HotkeyEnabled, _hoverMods, _hoverKey));
             _hoverGroup.AddChip(string.Format("{0:0.00} {1}", Config.HoverDelay, I18n.T("delay_unit")));
 
@@ -332,7 +331,9 @@ namespace HoverExplorer
             _hoverPill = new HotkeyPill();
             _hoverPill.SetHotkey(_hoverMods, _hoverKey);
             _hoverPill.RecordClick += (s, e) => _fnStartHoverCapture();
-            y = _hoverGroup.AddRow(y, I18n.T("hotkey_row"), I18n.T("hotkey_desc"), _hoverPill);
+            y = _fnMakeHotkeyRow(_hoverGroup, y, I18n.T("hotkey_row"), I18n.T("hotkey_desc"),
+                _hoverToggle, _hoverPill, _fnStartHoverCapture,
+                () => { _hoverPill.SetHotkey(0, 0); _hoverMods = 0; _hoverKey = 0; _fnApplySettings(true, false); });
 
             // 暂停触控区：独立框选矩形（设置方式复制触发区域那套：框选按钮+清除+矩形标签+桌面标识块）。
             // 鼠标驻留该区域 0.3s 切换悬停启用/暂停；未框选时仅剩快捷键 Ctrl+Alt+Q
@@ -387,6 +388,13 @@ namespace HoverExplorer
             _hoverGroup.Controls.Add(_pauseClearBtn);
             _hoverGroup.ExpandRow(pauseRowY, Math.Max(RowH, 19 + _pauseRectLbl.PreferredHeight + 8));
             _fnUpdatePauseLbl();
+            // 暂停区行内的手动控件（矩形标签+框选/清除按钮）登记重排
+            _hoverGroup.TagLastRow(null, py =>
+            {
+                _pauseRectLbl.Location = new Point(AccGroup.InL, AccGroup.HeadH + py + 19);
+                _pausePickBtn.Location = new Point(_hoverGroup.Width - AccGroup.InR - _pausePickBtn.Width, AccGroup.HeadH + py);
+                _pauseClearBtn.Location = new Point(_pausePickBtn.Left - _pauseClearBtn.Width - 8, AccGroup.HeadH + py);
+            });
 
             _delayStepper = new DelayStepper { Value = Config.HoverDelay };
             _delayStepper.ValueChanged += (s, e) => { _fnRefreshChips(); _fnApplySettings(false, false); };
@@ -399,9 +407,10 @@ namespace HoverExplorer
 
             _hoverGroup.FinishRows();
 
-            // ==== 组：预览窗口（page 0）====
+            // ==== 组：行为（page 0）====
             _windowGroup = _fnNewGroup(I18n.T("group_window"), true, 0);
             _windowGroup.AddChip(Config.CloseDelayMs + " ms");
+            _windowGroup.AddChip("");   // 排序 chip（_fnRefreshChips 填充）
 
             int yw = 8;
             _closeDelayStepper = new MsStepper { Value = Config.CloseDelayMs };
@@ -411,11 +420,6 @@ namespace HoverExplorer
             _keepToggle = new ToggleSwitch { On = Config.KeepOnLeave };
             _keepToggle.Toggled += (s, e) => _fnApplySettings(false, false);
             yw = _windowGroup.AddRow(yw, I18n.T("keep_open"), I18n.T("keep_open_desc"), _keepToggle);
-
-            _rowSwapToggle = new ToggleSwitch { On = Config.RowSwapSides };
-            // 行布局互换影响已开面板的按钮位置 → 应用时刷新存活面板
-            _rowSwapToggle.Toggled += (s, e) => _fnApplySettings(false, true);
-            yw = _windowGroup.AddRow(yw, I18n.T("row_swap"), I18n.T("row_swap_desc"), _rowSwapToggle);
 
             // 悬停浏览（桌面/资源管理器）与文件预览：各一个下拉搞定——关闭 / 总是 / 按住某键 / 长按才触发。
             // 即改即生效，ApplySettingsLive 会把托盘勾选态同步
@@ -431,19 +435,24 @@ namespace HoverExplorer
             _longPressStepper.ValueChanged += (s, e) => _fnApplySettings(false, false);
             yw = _windowGroup.AddRow(yw, I18n.T("long_press_delay"), I18n.T("long_press_delay_desc"), _longPressStepper);
 
-            // 窗口边角：直角（卡片风默认）/ 圆角·粗描边（Win11）；切换即时重刷存活窗口
-            _cornerCombo = new DarkCombo { Font = new Font(Config.FontName, 8.5f), Width = 150, Height = 24 };
-            _cornerCombo.SetItems(new object[] { I18n.T("corner_square"), I18n.T("corner_round") },
-                Config.WindowCorners == 1 ? 1 : 0);
-            _cornerCombo.SelectedIndex = Config.WindowCorners == 1 ? 1 : 0;
-            _cornerCombo.SelectedIndexChanged += (s, e) =>
-            {
-                Config.WindowCorners = _cornerCombo.SelectedIndex;
-                _fnApplySettings(false, false);
-                Program.RefreshWindowCorners();
-                Win11.RefreshNc(Handle);   // 设置窗口自己也跟着切换描边风格
-            };
-            yw = _windowGroup.AddRow(yw, I18n.T("corner_row"), I18n.T("corner_desc"), _cornerCombo);
+            // 默认排序（原独立"排序"组并入行为组）：文件夹列表的排列方式
+            _sortCombo = new DarkCombo { Font = new Font(Config.FontName, 8.5f), Width = 170, Height = 24 };
+            _sortCombo.Items.AddRange(new object[] {
+                I18n.T("sort_name") + " ↑", I18n.T("sort_name") + " ↓",
+                I18n.T("sort_size") + " ↑", I18n.T("sort_size") + " ↓",
+                I18n.T("sort_date") + " ↑", I18n.T("sort_date") + " ↓",
+            });
+            string[] sortModes = { "name", "size", "date" };
+            int sortIdx = Array.IndexOf(sortModes, Config.SortMode);
+            if (sortIdx < 0) sortIdx = 0;
+            _sortCombo.SelectedIndex = sortIdx * 2 + (Config.SortDesc ? 1 : 0);
+            _sortCombo.SelectedIndexChanged += (s, e) => { _fnRefreshChips(); _fnApplySettings(false, true); };
+            yw = _windowGroup.AddRow(yw, I18n.T("sort_default"), I18n.T("sort_default_desc"), _sortCombo);
+
+            // 列表底部格式筛选：关闭后状态栏不显示格式标签（保留拖动/搜索入口），切换后刷新存活面板
+            _statusFilterToggle = new ToggleSwitch { On = Config.StatusFilter };
+            _statusFilterToggle.Toggled += (s, e) => _fnApplySettings(false, true);
+            yw = _windowGroup.AddRow(yw, I18n.T("status_filter"), I18n.T("status_filter_desc"), _statusFilterToggle);
 
             // 说明文字（黄底黑字常显）
             var tipBg = Color.FromArgb(0xFF, 0xF5, 0x9C);
@@ -452,6 +461,15 @@ namespace HoverExplorer
             var wheelHint = new Label { Text = I18n.T("hint_ctrl_wheel"), AutoSize = true, MaximumSize = new Size(_windowGroup.Width - PadX * 2, 0), BackColor = tipBg, ForeColor = Color.Black, Font = new Font(Config.FontName, 8f), Padding = new Padding(6, 3, 6, 3), Location = new Point(PadX, dblHint.Bottom + 4), Tag = "tip" };
             _windowGroup.Controls.Add(wheelHint);
             _windowGroup.ExpandRow(yw + 6 + dblHint.Height + 4 + wheelHint.Height + 4, 0);
+            _windowGroup.AddTailHook(ty =>
+            {
+                int hw = Math.Max(160, _windowGroup.Width - PadX * 2);
+                dblHint.MaximumSize = new Size(hw, 0);
+                dblHint.Location = new Point(PadX, AccGroup.HeadH + ty + 6);
+                wheelHint.MaximumSize = new Size(hw, 0);
+                wheelHint.Location = new Point(PadX, dblHint.Bottom + 4);
+                _windowGroup.NoticeContentBottom(ty + 6 + dblHint.Height + 4 + wheelHint.Height + 4);
+            });
 
             _windowGroup.FinishRows();
 
@@ -557,11 +575,23 @@ namespace HoverExplorer
             _pvTypeGroup.ExpandRow(ffStatusY, 20);
             y = ffStatusY + 20;
             _fnUpdateFfmpegStatus();
+            // ffmpeg 状态行（固定高 20 的手动行）登记进行栈
+            _pvTypeGroup.AddBlock((by, w) =>
+            {
+                _ffmpegStatusLbl.Location = new Point(AccGroup.InL, AccGroup.HeadH + by + 2);
+                return by + 20;
+            });
 
             // 音频卡片滚轮提示（黄底黑字常显）
             var audioHint = new Label { Text = I18n.T("hint_audio_wheel"), AutoSize = true, MaximumSize = new Size(_pvTypeGroup.Width - PadX * 2, 0), BackColor = Color.FromArgb(0xFF, 0xF5, 0x9C), ForeColor = Color.Black, Font = new Font(Config.FontName, 8f), Padding = new Padding(6, 3, 6, 3), Location = new Point(PadX, AccGroup.HeadH + y + 6), Tag = "tip" };
             _pvTypeGroup.Controls.Add(audioHint);
             _pvTypeGroup.ExpandRow(y + 6 + audioHint.Height + 4, 0);
+            _pvTypeGroup.AddTailHook(ty =>
+            {
+                audioHint.MaximumSize = new Size(Math.Max(160, _pvTypeGroup.Width - PadX * 2), 0);
+                audioHint.Location = new Point(PadX, AccGroup.HeadH + ty + 6);
+                _pvTypeGroup.NoticeContentBottom(ty + 6 + audioHint.Height + 4);
+            });
 
             _pvTypeGroup.FinishRows();
 
@@ -576,6 +606,14 @@ namespace HoverExplorer
             var listGenLink = MakeLink(I18n.T("list_gen_link"), PadX, AccGroup.HeadH + y, "https://dlsdgj.github.io/hoverExplorers-cheme-generator/");
             palGroup.Controls.Add(listGenLink);
             y += listGenLink.Height + 8;
+            // 头部提示块登记进行栈：宽度重排时重定位重测
+            palGroup.AddBlock((by, w) =>
+            {
+                listHint.MaximumSize = new Size(Math.Max(160, w - PadX * 2), 0);
+                listHint.Location = new Point(PadX, AccGroup.HeadH + by);
+                listGenLink.Location = new Point(PadX, AccGroup.HeadH + by + listHint.Height + 6);
+                return by + listHint.Height + 6 + listGenLink.Height + 8;
+            });
             y = palGroup.AddRow(y, I18n.T("list_palette"), I18n.T("list_palette_desc"), null);
             int palW = palGroup.Width - 24;
             Func<string, Button> mkBtn = delegate(string text)
@@ -593,7 +631,7 @@ namespace HoverExplorer
             int row1Y = AccGroup.HeadH + y;
             var schemeLbl = new Label { Text = I18n.T("palette_scheme") + ":", Font = new Font(Config.FontName, 9f), ForeColor = Config.FG, Location = new Point(12, row1Y + 4), AutoSize = true, Visible = false };
             palGroup.Controls.Add(schemeLbl);
-            var schemeCombo = new DarkCombo { Font = new Font(Config.FontName, 9f), Location = new Point(12 + schemeLbl.PreferredWidth + 8, row1Y), Width = 130, Visible = false };
+            var schemeCombo = new DarkCombo { Font = new Font(Config.FontName, 9f), Location = new Point(12 + schemeLbl.PreferredWidth + 8, row1Y), Width = 130, Visible = false, WheelSwitch = true };
             palGroup.Controls.Add(schemeCombo);
             var btnDelScheme = mkBtn(I18n.T("del_scheme"));
             var btnSaveAs = mkBtn(I18n.T("save_as"));
@@ -647,6 +685,7 @@ namespace HoverExplorer
                 for (int i = 0; i < palKeys.Length; i++) sb.Append(palKeys[i]).Append('=').Append(hexBoxes[i].Text).Append('\n');
                 if (sb.Length > 0) sb.Length--;
                 Config.ListPalette = sb.ToString(); Config.ApplyListPalette(); Config.Save(); Program.RefreshAllPanels();
+                if (_listPreview != null) _listPreview.Invalidate();   // 配色变了同步重绘预览
             };
             for (int i = 0; i < palKeys.Length; i++) { int idx = i; hexBoxes[i].Leave += (s, e) => { try { colorBlocks[idx].BackColor = ColorTranslator.FromHtml("#" + hexBoxes[idx].Text); } catch { } applyNow(); }; }
             fillEditor(Config.ListPalette);
@@ -661,6 +700,102 @@ namespace HoverExplorer
             btnCopyPrompt.Location = new Point(promptLbl.Right + 12, row3Y);
             btnPasteImport.Location = new Point(btnCopyPrompt.Right + 8, row3Y);
             palGroup.Controls.Add(btnCopyPrompt); palGroup.Controls.Add(btnPasteImport);
+            // 方案/预设按钮/可视化编辑器/AI 提示词手动块登记进行栈：宽度重排时整体重定位
+            palGroup.AddBlock((by, w) =>
+            {
+                int r1 = AccGroup.HeadH + by;          // 行1：方案下拉
+                int r1b = r1 + 32;                     // 行2：预设按钮
+                int r2 = r1b + 32;                     // 行3：可视化编辑器
+                int r3 = r2 + editorH + 8;             // 行4：AI 提示词
+                schemeLbl.Location = new Point(12, r1 + 4);
+                schemeCombo.Location = new Point(12 + schemeLbl.PreferredWidth + 8, r1);
+                btnDelScheme.Location = new Point(schemeCombo.Right + 8, r1);
+                btnSaveAs.Location = new Point(btnDelScheme.Right + 8, r1);
+                btnPreset.Location = new Point(12, r1b);
+                btnClear.Location = new Point(btnPreset.Right + 8, r1b);
+                btnWallpaper.Location = new Point(btnClear.Right + 8, r1b);
+                editorPanel.Location = new Point(12, r2);
+                editorPanel.Width = Math.Max(200, w - 24);
+                promptLbl.Location = new Point(12, r3 + 4);
+                btnCopyPrompt.Location = new Point(promptLbl.Right + 12, r3);
+                btnPasteImport.Location = new Point(btnCopyPrompt.Right + 8, r3);
+                return by + 64 + editorH + 42;
+            });
+
+            // ==== 实时预览：模拟弹出列表面板（置于 AI 提示词下方、分区字体行之前）====
+            int fy = row3Y - AccGroup.HeadH + 34;
+            fy = palGroup.AddRow(fy, I18n.T("appearance_preview"), null, null);
+            int pvH = 92;
+            _listPreview = new ListPreviewPanel { Location = new Point(12, AccGroup.HeadH + fy), Size = new Size(palGroup.Width - 24, pvH), Tag = "paint", Visible = palGroup.Open };
+            palGroup.Controls.Add(_listPreview);
+            palGroup.TagLastRow(w => 46 + pvH + 8, ry =>
+            {
+                _listPreview.Location = new Point(12, AccGroup.HeadH + ry + 46);
+                _listPreview.Width = Math.Max(200, palGroup.Width - 24);
+            });
+            palGroup.ExpandRow(fy + pvH + 8, 0);
+            fy += pvH + 8;
+
+            // ==== 分区字体 5 行（表头/标题/列表文字/格式标签/数量·大小信息）====
+            // 每行右侧 = 字体族下拉 + 字号步进器；改动即存并刷新存活面板与预览
+            string[] fKeys = { "header", "title", "item", "chip", "meta" };
+            var fNames = new[] { Config.ListHeaderFontName, Config.ListTitleFontName, Config.ListItemFontName, Config.ListChipFontName, Config.ListMetaFontName };
+            var fSizes = new[] { Config.ListHeaderFontSize, Config.ListTitleFontSize, Config.ListItemFontSize, Config.ListChipFontSize, Config.ListMetaFontSize };
+            var famList = new List<string>();
+            try { using (var ifc = new InstalledFontCollection()) foreach (var f in ifc.Families) famList.Add(f.Name); } catch { }
+            Action<int> applyFontRow = delegate(int i)
+            {
+                switch (i)
+                {
+                    case 0: Config.ListHeaderFontName = fNames[i]; Config.ListHeaderFontSize = fSizes[i]; break;
+                    case 1: Config.ListTitleFontName = fNames[i]; Config.ListTitleFontSize = fSizes[i]; break;
+                    case 2: Config.ListItemFontName = fNames[i]; Config.ListItemFontSize = fSizes[i]; break;
+                    case 3: Config.ListChipFontName = fNames[i]; Config.ListChipFontSize = fSizes[i]; break;
+                    default: Config.ListMetaFontName = fNames[i]; Config.ListMetaFontSize = fSizes[i]; break;
+                }
+                Config.Save();
+                Program.RefreshAllPanels();
+                if (_listPreview != null) _listPreview.Invalidate();
+            };
+            fy = row3Y - AccGroup.HeadH + 34;   // 预览已在上方插入，此处仅复位（值相同）
+            for (int i = 0; i < fKeys.Length; i++)
+            {
+                int idx = i;
+                var combo = new DarkCombo { Font = new Font(Config.FontName, 8.5f), Width = 140, Height = 24 };
+                foreach (var nm in famList) combo.Items.Add(nm);
+                if (combo.Items.Contains(fNames[idx])) combo.SelectedItem = fNames[idx];
+                else if (famList.Count > 0) { combo.Items.Add(fNames[idx]); combo.SelectedItem = fNames[idx]; }
+                var step = new FontStepper { Value = Math.Max(6, Math.Min(24, (int)fSizes[idx])) };
+                step.ValueChanged += (s, e) => { fSizes[idx] = step.Value; applyFontRow(idx); };
+                combo.SelectedIndexChanged += (s, e) => { var nm = (string)combo.SelectedItem; if (!string.IsNullOrEmpty(nm)) { fNames[idx] = nm; applyFontRow(idx); } };
+                fy = palGroup.AddRow(fy, I18n.T("font_" + fKeys[idx]), null, step);
+                // 字体族下拉摆在字号步进器左侧（AddRow 只贴右一个控件）
+                combo.Location = new Point(step.Left - 8 - combo.Width, step.Top + (step.Height - combo.Height) / 2);
+                palGroup.TagLastRow(null, cy => combo.Location = new Point(step.Left - 8 - combo.Width, step.Top + (step.Height - combo.Height) / 2));
+                palGroup.Controls.Add(combo);
+                combo.Visible = palGroup.Open;
+            }
+
+            // 名称靠右（原"预览窗口"组）：行布局互换影响已开面板的按钮位置 → 应用时刷新存活面板
+            _rowSwapToggle = new ToggleSwitch { On = Config.RowSwapSides };
+            _rowSwapToggle.Toggled += (s, e) => _fnApplySettings(false, true);
+            fy = palGroup.AddRow(fy, I18n.T("row_swap"), I18n.T("row_swap_desc"), _rowSwapToggle);
+
+            // 窗口边角（原"预览窗口"组）：直角（卡片风默认）/ 圆角·粗描边（Win11）；切换即时重刷存活窗口
+            _cornerCombo = new DarkCombo { Font = new Font(Config.FontName, 8.5f), Width = 150, Height = 24 };
+            _cornerCombo.SetItems(new object[] { I18n.T("corner_square"), I18n.T("corner_round") },
+                Config.WindowCorners == 1 ? 1 : 0);
+            _cornerCombo.SelectedIndex = Config.WindowCorners == 1 ? 1 : 0;
+            _cornerCombo.SelectedIndexChanged += (s, e) =>
+            {
+                Config.WindowCorners = _cornerCombo.SelectedIndex;
+                _fnApplySettings(false, false);
+                Program.RefreshWindowCorners();
+                Win11.RefreshNc(Handle);   // 设置窗口自己也跟着切换描边风格
+            };
+            fy = palGroup.AddRow(fy, I18n.T("corner_row"), I18n.T("corner_desc"), _cornerCombo);
+
+            // （实时预览已上移至 AI 提示词下方）
 
             // 方案列表数据解析/序列化（格式：每行 name=escapedText，text 中 \n→\\n、=→\\e）
             Func<string, List<KeyValuePair<string,string>>> parsePalettes = delegate(string data)
@@ -688,7 +823,7 @@ namespace HoverExplorer
 
             schemeCombo.SelectedIndexChanged += (s, e) => { if (schemeCombo.SelectedIndex >= 0) { fillEditor(schemes0[schemeCombo.SelectedIndex].Value); applyNow(); } };
             btnPreset.Click += (s, e) => { fillEditor(preset); applyNow(); };
-            btnClear.Click += (s, e) => { Config.ListPalette = ""; Config.ApplyListPalette(); Config.Save(); fillEditor(""); Program.RefreshAllPanels(); };
+            btnClear.Click += (s, e) => { Config.ListPalette = ""; Config.ApplyListPalette(); Config.Save(); fillEditor(""); Program.RefreshAllPanels(); if (_listPreview != null) _listPreview.Invalidate(); };
             btnWallpaper.Click += (s, e) =>
             {
                 string wpPath = null;
@@ -772,6 +907,7 @@ namespace HoverExplorer
                 Config.Save();
                 fillEditor(pal);
                 Program.RefreshAllPanels();
+                if (_listPreview != null) _listPreview.Invalidate();
             };
             btnDelScheme.Click += (s, e) =>
             {
@@ -822,7 +958,7 @@ namespace HoverExplorer
                 Config.ListPalettesData = sbSave.ToString(); Config.Save(); reloadCombo(schemes0);
                 schemeCombo.SelectedIndex = schemeCombo.Items.Count - 1;
             };
-            palGroup.ExpandRow(row3Y - AccGroup.HeadH + 34, 0);
+            palGroup.ExpandRow(Math.Max(row3Y - AccGroup.HeadH + 34, fy), 0);
             palGroup.FinishRows();
 
 
@@ -830,14 +966,15 @@ namespace HoverExplorer
             _cardTriggerGroup = _fnNewGroup(I18n.T("group_card"), true, 3);
             _cardToggle = new ToggleSwitch { On = Config.CardHotkeyEnabled };
             _cardToggle.Toggled += (s, e) => { _fnUpdateCardState(); _fnApplySettings(true, false); };
-            _cardTriggerGroup.SetToggle(_cardToggle);
             _cardTriggerGroup.AddChip(HotkeyDisplay(Config.CardHotkeyEnabled, _cardMods, _cardKey));
 
             y = 8;
             _cardPill = new HotkeyPill();
             _cardPill.SetHotkey(_cardMods, _cardKey);
             _cardPill.RecordClick += (s, e) => _fnStartCardCapture();
-            y = _cardTriggerGroup.AddRow(y, I18n.T("hotkey_row"), I18n.T("card_hotkey_desc"), _cardPill);
+            y = _fnMakeHotkeyRow(_cardTriggerGroup, y, I18n.T("hotkey_row"), I18n.T("card_hotkey_desc"),
+                _cardToggle, _cardPill, _fnStartCardCapture,
+                () => { _cardPill.SetHotkey(0, 0); _cardMods = 0; _cardKey = 0; _fnApplySettings(true, false); });
             _cardTriggerGroup.FinishRows();
 
             // ==== 组：桌面卡片·外观（page 5）====
@@ -847,6 +984,11 @@ namespace HoverExplorer
             var cardGenLink = MakeLink(I18n.T("card_gen_link"), PadX, AccGroup.HeadH + y, "https://dlsdgj.github.io/hoverexplorer-card-palette/");
             _cardGroup.Controls.Add(cardGenLink);
             y += cardGenLink.Height + 8;
+            _cardGroup.AddBlock((by, w) =>
+            {
+                cardGenLink.Location = new Point(PadX, AccGroup.HeadH + by);
+                return by + cardGenLink.Height + 8;
+            });
 
             // ---- 卡片配色编辑器（方案下拉 + 色块编辑 + 字体 + 导入，参考列表配色）----
             string[] cpKeys = { "bg", "fg", "badge_bg", "badge_fg", "strip" };
@@ -854,13 +996,14 @@ namespace HoverExplorer
             int cpRow1Y = AccGroup.HeadH + y;
             var cpSchemeLbl = new Label { Text = I18n.T("palette_scheme") + ":", Font = new Font(Config.FontName, 9f), ForeColor = Config.FG, Location = new Point(12, cpRow1Y + 4), AutoSize = true, Visible = false };
             _cardGroup.Controls.Add(cpSchemeLbl);
-            var cpSchemeCombo = new DarkCombo { Font = new Font(Config.FontName, 9f), Location = new Point(12 + cpSchemeLbl.PreferredWidth + 8, cpRow1Y), Width = 130, Visible = false };
+            var cpSchemeCombo = new DarkCombo { Font = new Font(Config.FontName, 9f), Location = new Point(12 + cpSchemeLbl.PreferredWidth + 8, cpRow1Y), Width = 130, Visible = false, WheelSwitch = true };
             _cardGroup.Controls.Add(cpSchemeCombo);
             Func<string, Button> cpBtn = delegate(string text) { var b = new Button { Text = text, Font = new Font(Config.FontName, 9f), FlatStyle = FlatStyle.Flat, BackColor = Config.BG, ForeColor = Config.FG, Height = 26, Visible = false }; b.FlatAppearance.BorderColor = Config.Border; return b; };
             Action cpApply = null;
+            Action cpLive = null;          // 实时应用：写回当前方案 + 刷新卡片 + 重绘预览
+            bool cpFillBusy = false;       // cpFill 程序化赋值期间抑制实时应用
             var cpBtnDel = cpBtn(I18n.T("del_scheme")); var cpBtnSaveAs = cpBtn(I18n.T("save_as"));
             var cpBtnImport = cpBtn(I18n.T("paste_import"));
-            var cpBtnUpdate = cpBtn(I18n.T("update_scheme"));
             cpBtnDel.Location = new Point(cpSchemeCombo.Right + 8, cpRow1Y); cpBtnSaveAs.Location = new Point(cpBtnDel.Right + 8, cpRow1Y);
             _cardGroup.Controls.Add(cpBtnDel); _cardGroup.Controls.Add(cpBtnSaveAs);
             int cpRow2Y = cpRow1Y + 32;
@@ -876,8 +1019,8 @@ namespace HoverExplorer
                 cpEditor.Controls.Add(blk); cpEditor.Controls.Add(hx); cpHex[i] = hx; cpBlk[i] = blk;
                 int idx = i;
                 blk.Paint += (sender, pe) => { var p = (Panel)sender; var g = pe.Graphics; using (var bw = new SolidBrush(Color.White)) using (var bg = new SolidBrush(Color.FromArgb(0xCC, 0xCC, 0xCC))) for (int bx = 0; bx < p.Width; bx += 5) for (int by = 0; by < p.Height; by += 5) g.FillRectangle(((bx / 5 + by / 5) & 1) == 0 ? bw : bg, bx, by, 5, 5); using (var b = new SolidBrush(p.BackColor)) g.FillRectangle(b, p.ClientRectangle); };
-                blk.Click += (s, e) => { using (var cd = new ColorDialog()) { cd.Color = Color.FromArgb(255, cpBlk[idx].BackColor); if (cd.ShowDialog() == DialogResult.OK) { var old = cpBlk[idx].BackColor; var nc = Color.FromArgb(old.A, cd.Color.R, cd.Color.G, cd.Color.B); cpBlk[idx].BackColor = nc; cpHex[idx].Text = CardPalette.ToRgba(nc); cpBtnUpdate.Visible = true; } } };
-                blk.MouseDown += (s, e) => { if (e.Button == MouseButtons.Right) { using (var af = new Form { Text = "Alpha 0-255", Width = 200, Height = 110, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false }) { var nud = new NumericUpDown { Location = new Point(20, 15), Width = 80, Minimum = 0, Maximum = 255, Value = cpBlk[idx].BackColor.A }; var ok = new Button { Text = "OK", Location = new Point(110, 13), Width = 60, Height = 26, DialogResult = DialogResult.OK }; af.Controls.Add(nud); af.Controls.Add(ok); if (af.ShowDialog(this) == DialogResult.OK) { var old = cpBlk[idx].BackColor; var nc = Color.FromArgb((int)nud.Value, old.R, old.G, old.B); cpBlk[idx].BackColor = nc; cpHex[idx].Text = CardPalette.ToRgba(nc); cpBtnUpdate.Visible = true; } } } };
+                blk.Click += (s, e) => { using (var cd = new ColorDialog()) { cd.Color = Color.FromArgb(255, cpBlk[idx].BackColor); if (cd.ShowDialog() == DialogResult.OK) { var old = cpBlk[idx].BackColor; var nc = Color.FromArgb(old.A, cd.Color.R, cd.Color.G, cd.Color.B); cpBlk[idx].BackColor = nc; cpHex[idx].Text = CardPalette.ToRgba(nc); if (cpLive != null) cpLive(); } } };
+                blk.MouseDown += (s, e) => { if (e.Button == MouseButtons.Right) { using (var af = new Form { Text = "Alpha 0-255", Width = 200, Height = 110, StartPosition = FormStartPosition.CenterParent, FormBorderStyle = FormBorderStyle.FixedDialog, MaximizeBox = false, MinimizeBox = false }) { var nud = new NumericUpDown { Location = new Point(20, 15), Width = 80, Minimum = 0, Maximum = 255, Value = cpBlk[idx].BackColor.A }; var ok = new Button { Text = "OK", Location = new Point(110, 13), Width = 60, Height = 26, DialogResult = DialogResult.OK }; af.Controls.Add(nud); af.Controls.Add(ok); if (af.ShowDialog(this) == DialogResult.OK) { var old = cpBlk[idx].BackColor; var nc = Color.FromArgb((int)nud.Value, old.R, old.G, old.B); cpBlk[idx].BackColor = nc; cpHex[idx].Text = CardPalette.ToRgba(nc); if (cpLive != null) cpLive(); } } } };
             }
             // 色条宽 + 字体 + 字号 + 圆角（纵向排列，与上方颜色行对齐）
             int cpExtraY = cpKeys.Length * 24 + 2;
@@ -909,21 +1052,20 @@ namespace HoverExplorer
             _cardGroup.Controls.Add(cpBtnCopyPrompt);
             cpBtnImport.Location = new Point(cpBtnCopyPrompt.Right + 8, cpPromptY);
             _cardGroup.Controls.Add(cpBtnImport);
-            cpBtnUpdate.Location = new Point(cpBtnImport.Right + 8, cpPromptY);
-            cpBtnUpdate.Visible = false;
-            _cardGroup.Controls.Add(cpBtnUpdate);
             var cpPromptText = I18n.T("card_palette_prompt_text");
             cpBtnCopyPrompt.Click += (s, e) => { try { Clipboard.SetText(cpPromptText); } catch { } };
             // 填充编辑器
             Action<CardPalette> cpFill = delegate(CardPalette p) {
                 if (p == null) return;
+                cpFillBusy = true;
                 var vals = new Dictionary<string, Color> { {"bg",p.Bg},{"fg",p.Fg},{"badge_bg",p.BadgeBg},{"badge_fg",p.BadgeFg},{"strip",p.StripColor} };
                 for (int i = 0; i < cpKeys.Length; i++) { Color c; vals.TryGetValue(cpKeys[i], out c); cpBlk[i].BackColor = c; cpHex[i].Text = CardPalette.ToRgba(c); }
                 cpStripW.Value = Math.Max(0, Math.Min(10, p.StripWidth));
                 if (cpFontCombo.Items.Contains(p.FontName)) cpFontCombo.SelectedItem = p.FontName; else { cpFontCombo.Items.Add(p.FontName); cpFontCombo.SelectedItem = p.FontName; }
                 cpFontSize.Value = (decimal)Math.Max(6, Math.Min(24, p.FontSize));
                 cpRadius.Value = Math.Max(0, Math.Min(12, p.Radius));
-                cpBtnUpdate.Visible = false;
+                cpFillBusy = false;
+                if (_cardPreview != null) _cardPreview.Invalidate();   // 方案变了同步重绘预览
             };
             // 应用编辑器值到当前方案 + 保存 + 刷新卡片
 
@@ -937,11 +1079,13 @@ namespace HoverExplorer
                 bool dark = CardPalette.Lum(p.Bg) < 128; p.Hover = CardPalette.Mix(p.Bg, dark ? Color.White : Color.Black, dark ? 0.10 : 0.07); p.Sub = CardPalette.Mix(p.Fg, p.Bg, 0.45);
                 CardPalettes.Save(); Config.Save();
             };
-            for (int i = 0; i < cpKeys.Length; i++) { int idx = i; cpHex[i].Leave += (s, e) => { var txt = cpHex[idx].Text.Trim(); Color nc; if (txt.StartsWith("rgba", StringComparison.OrdinalIgnoreCase) || txt.StartsWith("rgb", StringComparison.OrdinalIgnoreCase)) nc = CardPalette.Hx(txt); else { var h = txt.TrimStart('#'); if (System.Text.RegularExpressions.Regex.IsMatch(h, "^[0-9a-fA-F]{6}$|^[0-9a-fA-F]{8}$")) nc = CardPalette.Hx(h); else return; } cpBlk[idx].BackColor = nc; cpBtnUpdate.Visible = true; }; }
-            cpStripW.ValueChanged += (s, e) => cpBtnUpdate.Visible = true;
-            cpFontCombo.SelectedIndexChanged += (s, e) => cpBtnUpdate.Visible = true;
-            cpFontSize.ValueChanged += (s, e) => cpBtnUpdate.Visible = true;
-            cpRadius.ValueChanged += (s, e) => cpBtnUpdate.Visible = true;
+            // 实时应用：写回当前方案 + 刷新全部桌面卡片 + 重绘预览
+            cpLive = delegate() { cpApply(); Program.RefreshAllCards(); if (_cardPreview != null) _cardPreview.Invalidate(); };
+            for (int i = 0; i < cpKeys.Length; i++) { int idx = i; cpHex[i].Leave += (s, e) => { var txt = cpHex[idx].Text.Trim(); Color nc; if (txt.StartsWith("rgba", StringComparison.OrdinalIgnoreCase) || txt.StartsWith("rgb", StringComparison.OrdinalIgnoreCase)) nc = CardPalette.Hx(txt); else { var h = txt.TrimStart('#'); if (System.Text.RegularExpressions.Regex.IsMatch(h, "^[0-9a-fA-F]{6}$|^[0-9a-fA-F]{8}$")) nc = CardPalette.Hx(h); else return; } cpBlk[idx].BackColor = nc; if (!cpFillBusy && cpLive != null) cpLive(); }; }
+            cpStripW.ValueChanged += (s, e) => { if (!cpFillBusy && cpLive != null) cpLive(); };
+            cpFontCombo.SelectedIndexChanged += (s, e) => { if (!cpFillBusy && cpLive != null) cpLive(); };
+            cpFontSize.ValueChanged += (s, e) => { if (!cpFillBusy && cpLive != null) cpLive(); };
+            cpRadius.ValueChanged += (s, e) => { if (!cpFillBusy && cpLive != null) cpLive(); };
             // 方案下拉
             Action cpRefreshSchemes = delegate() {
                 int cur = Config.CardPaletteIndex;
@@ -978,15 +1122,54 @@ namespace HoverExplorer
                 CardPalettes.Save(); Config.Save();
                 cpRefreshSchemes(); cpFill(parsed); Program.RefreshAllCards();
             };
-            cpBtnUpdate.Click += (s, e) => { cpApply(); Program.RefreshAllCards(); cpBtnUpdate.Visible = false; };
             cpRefreshSchemes(); cpFill(CardPalettes.Current);
+
             _cardGroup.ExpandRow(cpBtnImport.Bottom - AccGroup.HeadH + 4, 0);
+            // 卡片配色编辑器手动块登记进行栈：宽度重排时整体重定位（行1 方案/行2 编辑器/行3 提示词）
+            _cardGroup.AddBlock((by, w) =>
+            {
+                int r1 = AccGroup.HeadH + by;
+                int r2 = r1 + 32;
+                int r3 = r2 + cpEditor.Height + 4;
+                cpSchemeLbl.Location = new Point(12, r1 + 4);
+                cpSchemeCombo.Location = new Point(12 + cpSchemeLbl.PreferredWidth + 8, r1);
+                cpBtnDel.Location = new Point(cpSchemeCombo.Right + 8, r1);
+                cpBtnSaveAs.Location = new Point(cpBtnDel.Right + 8, r1);
+                cpEditor.Location = new Point(12, r2);
+                cpEditor.Width = Math.Max(200, w - 24);
+                cpPromptLbl.Location = new Point(12, r3 + 4);
+                cpBtnCopyPrompt.Location = new Point(cpPromptLbl.Right + 8, r3);
+                cpBtnImport.Location = new Point(cpBtnCopyPrompt.Right + 8, r3);
+                _cardGroup.NoticeContentBottom(by + 32 + cpEditor.Height + 34);
+                return by + 32 + cpEditor.Height + 40;   // 链尾推进到 cardHint 的 y
+            });
 
             // 滚轮切换配色说明（黄底黑字常显）
             int cardHintY = cpBtnImport.Bottom - AccGroup.HeadH + 10;
             var cardHint = new Label { Text = I18n.T("hint_card_wheel"), AutoSize = true, MaximumSize = new Size(_cardGroup.Width - PadX * 2, 0), BackColor = Color.FromArgb(0xFF, 0xF5, 0x9C), ForeColor = Color.Black, Font = new Font(Config.FontName, 8f), Padding = new Padding(6, 3, 6, 3), Location = new Point(PadX, AccGroup.HeadH + cardHintY), Tag = "tip" };
             _cardGroup.Controls.Add(cardHint);
             _cardGroup.ExpandRow(cardHintY + cardHint.Height + 4, 0);
+            _cardGroup.AddBlock((by, w) =>
+            {
+                cardHint.MaximumSize = new Size(Math.Max(160, w - PadX * 2), 0);
+                cardHint.Location = new Point(PadX, AccGroup.HeadH + by);
+                _cardGroup.NoticeContentBottom(by + cardHint.Height + 4);
+                return by + cardHint.Height + 10;
+            });
+
+            // 实时预览：按当前卡片配色/圆角/色条模拟一张桌面卡片（编辑应用/切方案后 Invalidate 重绘）
+            int cpvY = cardHintY + cardHint.Height + 10;
+            cpvY = _cardGroup.AddRow(cpvY, I18n.T("card_preview"), null, null);
+            int cpvH = 48;
+            _cardPreview = new CardPreviewPanel { Location = new Point(12, AccGroup.HeadH + cpvY), Size = new Size(_cardGroup.Width - 24, cpvH), Tag = "paint", Visible = _cardGroup.Open };
+            _cardGroup.Controls.Add(_cardPreview);
+            _cardGroup.ExpandRow(cpvY + cpvH + 8, 0);
+            _cardGroup.AddTailHook(ty =>
+            {
+                _cardPreview.Location = new Point(12, AccGroup.HeadH + ty);
+                _cardPreview.Width = Math.Max(200, _cardGroup.Width - 24);
+                _cardGroup.NoticeContentBottom(ty + cpvH + 8);
+            });
 
             _cardGroup.FinishRows();
 
@@ -995,7 +1178,6 @@ namespace HoverExplorer
             _entryGroup = _fnNewGroup(I18n.T("group_entry"), true, 4);
             _entryToggle = new ToggleSwitch { On = Config.EntryHotkeyEnabled };
             _entryToggle.Toggled += (s, e) => { _fnUpdateEntryState(); _fnApplySettings(true, false); };
-            _entryGroup.SetToggle(_entryToggle);
             _entryGroup.AddChip(HotkeyDisplay(Config.EntryHotkeyEnabled, _entryMods, _entryKey));
             _entryGroup.AddChip("");   // 区域尺寸 chip（_fnUpdateAreaLbl 填充）
 
@@ -1003,7 +1185,9 @@ namespace HoverExplorer
             _entryPill = new HotkeyPill();
             _entryPill.SetHotkey(_entryMods, _entryKey);
             _entryPill.RecordClick += (s, e) => _fnStartEntryCapture();
-            y = _entryGroup.AddRow(y, I18n.T("entry_hotkey"), null, _entryPill);
+            y = _fnMakeHotkeyRow(_entryGroup, y, I18n.T("entry_hotkey"), null,
+                _entryToggle, _entryPill, _fnStartEntryCapture,
+                () => { _entryPill.SetHotkey(0, 0); _entryMods = 0; _entryKey = 0; _fnApplySettings(true, false); });
 
             // 触发区域行：色块 + 清除 + 框选（手动定位，desc 动态）
             int areaRowY = y;
@@ -1087,37 +1271,38 @@ namespace HoverExplorer
             _entryGroup.Controls.Add(_areaClearBtn);
             _entryGroup.Controls.Add(_areaColorBlock);
             _entryGroup.ExpandRow(areaRowY, Math.Max(RowH, 19 + _areaLbl.PreferredHeight + 8));
+            // 触发区域行内的手动控件（说明标签+框选/清除/色块按钮）登记重排，行高随标签换行重算
+            _entryGroup.TagLastRow(w2 =>
+            {
+                int mw = Math.Max(160, w2 - AccGroup.InL - 200);
+                _areaLbl.MaximumSize = new Size(mw, 0);
+                int lh = TextRenderer.MeasureText(_areaLbl.Text, _areaLbl.Font, new Size(mw, 10000),
+                    TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl).Height;
+                return Math.Max(RowH, 19 + lh + 8);
+            }, ay =>
+            {
+                _areaLbl.Location = new Point(AccGroup.InL, AccGroup.HeadH + ay + 19);
+                _areaPickBtn.Location = new Point(_entryGroup.Width - AccGroup.InR - _areaPickBtn.Width, AccGroup.HeadH + ay);
+                _areaClearBtn.Location = new Point(_areaPickBtn.Left - _areaClearBtn.Width - 8, AccGroup.HeadH + ay);
+                _areaColorBlock.Location = new Point(_areaClearBtn.Left - _areaColorBlock.Width - 8, AccGroup.HeadH + ay);
+            });
 
             // 收藏列表功能说明（黄底黑字常显）
             int favHintY = areaRowY + Math.Max(RowH, 19 + _areaLbl.PreferredHeight + 8) + 6;
             var favHint = new Label { Text = I18n.T("hint_fav_features"), AutoSize = true, MaximumSize = new Size(_entryGroup.Width - PadX * 2, 0), BackColor = Color.FromArgb(0xFF, 0xF5, 0x9C), ForeColor = Color.Black, Font = new Font(Config.FontName, 8f), Padding = new Padding(6, 3, 6, 3), Location = new Point(PadX, AccGroup.HeadH + favHintY), Tag = "tip" };
             _entryGroup.Controls.Add(favHint);
             _entryGroup.ExpandRow(favHintY + favHint.Height + 4, 0);
+            _entryGroup.AddTailHook(ty =>
+            {
+                favHint.MaximumSize = new Size(Math.Max(160, _entryGroup.Width - PadX * 2), 0);
+                favHint.Location = new Point(PadX, AccGroup.HeadH + ty + 6);
+                _entryGroup.NoticeContentBottom(ty + 6 + favHint.Height + 4);
+            });
 
             _entryGroup.FinishRows();
 
 
-            // ==== 组 4：排序（默认排序，独立于 TC）====
-            _sortGroup = _fnNewGroup(I18n.T("group_sort"), true, 2);
-            _sortGroup.AddChip("");
-
-            _sortCombo = new DarkCombo { Font = new Font(Config.FontName, 8.5f), Width = 170, Height = 24 };
-            _sortCombo.Items.AddRange(new object[] {
-                I18n.T("sort_name") + " ↑", I18n.T("sort_name") + " ↓",
-                I18n.T("sort_size") + " ↑", I18n.T("sort_size") + " ↓",
-                I18n.T("sort_date") + " ↑", I18n.T("sort_date") + " ↓",
-            });
-            string[] sortModes = { "name", "size", "date" };
-            int sortIdx = Array.IndexOf(sortModes, Config.SortMode);
-            if (sortIdx < 0) sortIdx = 0;
-            _sortCombo.SelectedIndex = sortIdx * 2 + (Config.SortDesc ? 1 : 0);
-            _sortCombo.SelectedIndexChanged += (s, e) => { _fnRefreshChips(); _fnApplySettings(false, true); };
-
-            y = 8;
-            y = _sortGroup.AddRow(y, I18n.T("sort_default"), I18n.T("sort_default_desc"), _sortCombo);
-
-
-            _sortGroup.FinishRows();
+            // （原"组 4：排序"已并入 page 0 的"行为"组）
 
 
             // ==== 组 5：Total Commander 支持（暂停开发）====
@@ -1138,14 +1323,201 @@ namespace HoverExplorer
             var perchLink2 = MakeLink(I18n.T("hidden_features_perch_link"), PadX, obsLink.Bottom + 4, "https://github.com/dlsdgj/perch");
             _tcGroup.Controls.Add(perchLink2);
             _tcGroup.ExpandRow(y + 6 + tcHint.Height + 6 + obsLink.Height + 4 + perchLink2.Height + 4, 0);
+            _tcGroup.AddTailHook(ty =>
+            {
+                tcHint.MaximumSize = new Size(Math.Max(160, _tcGroup.Width - PadX * 2), 0);
+                tcHint.Location = new Point(PadX, AccGroup.HeadH + ty + 6);
+                obsLink.Location = new Point(PadX, tcHint.Bottom + 6);
+                perchLink2.Location = new Point(PadX, obsLink.Bottom + 4);
+                _tcGroup.NoticeContentBottom(ty + 6 + tcHint.Height + 6 + obsLink.Height + 4 + perchLink2.Height + 4);
+            });
             _tcGroup.FinishRows();
+
+            // ---- "托盘管理"折叠组 ----
+            var trayGroup = _fnNewGroup(I18n.T("group_tray"), true, 6);
+            y = 8;
+            _trayIconBox = new TextBox
+            {
+                Text = Config.TrayIconPath,
+                Font = new Font("Consolas", 8.5f),
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = Config.BG,
+                ForeColor = Config.FG,
+                Size = new Size(150, 22),
+            };
+            var trayBrowseBtn = new Button
+            {
+                Text = I18n.T("tray_browse"),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Config.BG,
+                ForeColor = Config.FG,
+                Font = new Font(Config.FontName, 8.5f),
+                Size = new Size(48, 22),
+                Cursor = Cursors.Hand,
+            };
+            trayBrowseBtn.FlatAppearance.BorderColor = Config.Border;
+            var trayDefBtn = new Button
+            {
+                Text = I18n.T("tray_default"),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Config.BG,
+                ForeColor = Config.FG,
+                Font = new Font(Config.FontName, 8.5f),
+                Size = new Size(48, 22),
+                Cursor = Cursors.Hand,
+            };
+            trayDefBtn.FlatAppearance.BorderColor = Config.Border;
+            var trayIconRow = new Panel { Size = new Size(206, 24), BackColor = Config.BG };
+            _trayIconBox.Location = new Point(0, 1);
+            trayBrowseBtn.Location = new Point(156, 0);
+            trayIconRow.Controls.Add(_trayIconBox);
+            trayIconRow.Controls.Add(trayBrowseBtn);
+            y = trayGroup.AddRow(y, I18n.T("tray_icon_path"), I18n.T("tray_icon_desc"), trayIconRow);
+            trayBrowseBtn.Click += (s, e) =>
+            {
+                using (var ofd = new OpenFileDialog { Filter = "ICO (*.ico)|*.ico", Title = I18n.T("tray_icon_path") })
+                {
+                    if (ofd.ShowDialog() == DialogResult.OK)
+                    {
+                        _trayIconBox.Text = ofd.FileName;
+                        _fnApplyTrayIcon();
+                    }
+                }
+            };
+            trayDefBtn.Click += (s, e) => { _trayIconBox.Text = ""; _fnApplyTrayIcon(); };
+            _trayIconBox.LostFocus += (s, e) => _fnApplyTrayIcon();
+            _trayIconBox.KeyDown += (s, e) => { if (e.KeyCode == Keys.Enter) { _trayIconBox.Text = _trayIconBox.Text.Trim(); _fnApplyTrayIcon(); } };
+
+            _trayMiddleCombo = new DarkCombo { Font = new Font(Config.FontName, 8.5f), Width = 130, Height = 24 };
+            _trayMiddleCombo.SetItems(new object[] { I18n.T("tray_middle_none"), I18n.T("tray_middle_settings"), I18n.T("tray_middle_restart"), I18n.T("tray_middle_exit") }, Math.Max(0, Math.Min(3, Config.TrayMiddleAction)));
+            _trayMiddleCombo.SelectedIndexChanged += (s, e) => { Config.TrayMiddleAction = _trayMiddleCombo.SelectedIndex; Config.Save(); };
+            y = trayGroup.AddRow(y, I18n.T("tray_middle_click"), I18n.T("tray_middle_hint"), _trayMiddleCombo);
+
+            y = trayGroup.AddRow(y, I18n.T("tray_menu_items"), null, null);
+
+            int panelW = 130;
+            int showX = 6, enableX = 80;
+            int listRowH = 28;
+            int contentRight = trayGroup.Width - AccGroup.InR;
+            int panelLeft = contentRight - panelW;
+            var trayPlacers = new List<Action<int, int>>();   // 表头+列表行的重排回调：(行 y, 行面板左 x)
+
+            {
+                int hy = AccGroup.HeadH + y;
+                var lItem = new Label { Text = I18n.T("tray_col_item"), AutoSize = true, Font = new Font(Config.FontName, 8f), ForeColor = Config.PlaceholderFg, Location = new Point(AccGroup.InL, hy + 6) };
+                var lShow = new Label { Text = I18n.T("tray_col_show"), AutoSize = true, Font = new Font(Config.FontName, 8f), ForeColor = Config.PlaceholderFg };
+                lShow.Location = new Point(panelLeft + showX + 22 - lShow.PreferredWidth / 2, hy + 6);
+                var lEnable = new Label { Text = I18n.T("tray_col_enable"), AutoSize = true, Font = new Font(Config.FontName, 8f), ForeColor = Config.PlaceholderFg };
+                lEnable.Location = new Point(panelLeft + enableX + 22 - lEnable.PreferredWidth / 2, hy + 6);
+                trayGroup.Controls.Add(lItem);
+                trayGroup.Controls.Add(lShow);
+                trayGroup.Controls.Add(lEnable);
+                trayPlacers.Add((py, pl) =>
+                {
+                    lItem.Location = new Point(AccGroup.InL, AccGroup.HeadH + py + 6);
+                    lShow.Location = new Point(pl + showX + 22 - lShow.PreferredWidth / 2, AccGroup.HeadH + py + 6);
+                    lEnable.Location = new Point(pl + enableX + 22 - lEnable.PreferredWidth / 2, AccGroup.HeadH + py + 6);
+                });
+                y += listRowH;
+                trayGroup.ExpandRow(y, 0);
+            }
+
+            Action<string, ToggleSwitch, ToggleSwitch, string> addListRow = (name, showT, enableT, desc) =>
+            {
+                int ry = AccGroup.HeadH + y;
+                var lName = new Label { Text = name, AutoSize = true, Font = new Font(Config.FontName, 9f), Location = new Point(AccGroup.InL, ry + 3) };
+                // 行说明：灰色小字紧跟名称之后（如"隐藏提示 → 系统tooltip"）
+                Label lDesc = null;
+                if (!string.IsNullOrEmpty(desc))
+                {
+                    lDesc = new Label { Text = desc, AutoSize = true, Font = new Font(Config.FontName, 8f), ForeColor = Config.PlaceholderFg, Location = new Point(AccGroup.InL + lName.PreferredWidth + 8, ry + 5) };
+                    trayGroup.Controls.Add(lDesc);
+                }
+                var rowPanel = new Panel { Size = new Size(panelW, 22), Location = new Point(panelLeft, ry), BackColor = Config.BG };
+                showT.Location = new Point(showX, 0);
+                rowPanel.Controls.Add(showT);
+                if (enableT != null) { enableT.Location = new Point(enableX, 0); rowPanel.Controls.Add(enableT); }
+                trayGroup.Controls.Add(lName);
+                trayGroup.Controls.Add(rowPanel);
+                trayPlacers.Add((py, pl) =>
+                {
+                    lName.Location = new Point(AccGroup.InL, AccGroup.HeadH + py + 3);
+                    if (lDesc != null) lDesc.Location = new Point(AccGroup.InL + lName.PreferredWidth + 8, AccGroup.HeadH + py + 5);
+                    rowPanel.Location = new Point(pl, AccGroup.HeadH + py);
+                });
+                y += listRowH;
+                trayGroup.ExpandRow(y, 0);
+            };
+
+            _trayShowExplorerToggle = new ToggleSwitch { On = Config.TrayShowExplorer };
+            _trayShowExplorerToggle.Toggled += (s, e) => { Config.TrayShowExplorer = _trayShowExplorerToggle.On; Config.Save(); Program.RebuildTrayMenu(); };
+            var enableExplorer = new ToggleSwitch { On = Config.ExplorerEnabled };
+            enableExplorer.Toggled += (s, e) => { Config.ExplorerEnabled = enableExplorer.On; Config.Save(); Program.RebuildTrayMenu(); };
+            addListRow(I18n.T("tray_show_explorer"), _trayShowExplorerToggle, enableExplorer, null);
+
+            _trayShowPreviewToggle = new ToggleSwitch { On = Config.TrayShowPreview };
+            _trayShowPreviewToggle.Toggled += (s, e) => { Config.TrayShowPreview = _trayShowPreviewToggle.On; Config.Save(); Program.RebuildTrayMenu(); };
+            var enablePreview = new ToggleSwitch { On = Config.PreviewFiles };
+            enablePreview.Toggled += (s, e) => { Config.PreviewFiles = enablePreview.On; Config.Save(); Program.RebuildTrayMenu(); };
+            addListRow(I18n.T("tray_show_preview"), _trayShowPreviewToggle, enablePreview, null);
+
+            _trayShowOrigToggle = new ToggleSwitch { On = Config.TrayShowOrigSize };
+            _trayShowOrigToggle.Toggled += (s, e) => { Config.TrayShowOrigSize = _trayShowOrigToggle.On; Config.Save(); Program.RebuildTrayMenu(); };
+            var enableOrig = new ToggleSwitch { On = Config.PreviewOriginalSize };
+            enableOrig.Toggled += (s, e) => { Config.PreviewOriginalSize = enableOrig.On; Config.Save(); Program.RebuildTrayMenu(); };
+            addListRow(I18n.T("tray_show_orig"), _trayShowOrigToggle, enableOrig, null);
+
+            _trayShowDebugLogToggle = new ToggleSwitch { On = Config.TrayShowDebugLog };
+            _trayShowDebugLogToggle.Toggled += (s, e) => { Config.TrayShowDebugLog = _trayShowDebugLogToggle.On; Config.Save(); Program.RebuildTrayMenu(); };
+            var enableDebugLog = new ToggleSwitch { On = Config.DebugLog };
+            enableDebugLog.Toggled += (s, e) => { Config.DebugLog = enableDebugLog.On; Config.Save(); Program.RebuildTrayMenu(); };
+            addListRow(I18n.T("tray_show_debuglog"), _trayShowDebugLogToggle, enableDebugLog, null);
+
+            _trayShowHideTooltipToggle = new ToggleSwitch { On = Config.TrayShowHideTooltip };
+            _trayShowHideTooltipToggle.Toggled += (s, e) => { Config.TrayShowHideTooltip = _trayShowHideTooltipToggle.On; Config.Save(); Program.RebuildTrayMenu(); };
+            var enableHideTooltip = new ToggleSwitch { On = Config.HideTooltip };
+            enableHideTooltip.Toggled += (s, e) => { Config.HideTooltip = enableHideTooltip.On; Config.Save(); Program.RebuildTrayMenu(); };
+            addListRow(I18n.T("tray_show_hidetooltip"), _trayShowHideTooltipToggle, enableHideTooltip, I18n.T("tray_hidetooltip_desc"));
+
+            _trayShowButtonTipsToggle = new ToggleSwitch { On = Config.TrayShowButtonTips };
+            _trayShowButtonTipsToggle.Toggled += (s, e) => { Config.TrayShowButtonTips = _trayShowButtonTipsToggle.On; Config.Save(); Program.RebuildTrayMenu(); };
+            var enableButtonTips = new ToggleSwitch { On = Config.ShowTips };
+            enableButtonTips.Toggled += (s, e) => { Config.ShowTips = enableButtonTips.On; Config.Save(); Program.RebuildTrayMenu(); Tips.ApplyConfig(); Program.RefreshAllPanels(); };
+            addListRow(I18n.T("tray_show_buttontips"), _trayShowButtonTipsToggle, enableButtonTips, null);
+
+            _trayShowAutostartToggle = new ToggleSwitch { On = Config.TrayShowAutostart };
+            _trayShowAutostartToggle.Toggled += (s, e) => { Config.TrayShowAutostart = _trayShowAutostartToggle.On; Config.Save(); Program.RebuildTrayMenu(); };
+            var enableAutostart = new ToggleSwitch { On = Program.IsAutoStart() };
+            enableAutostart.Toggled += (s, e) => { Program.SetAutoStart(enableAutostart.On); Program.RebuildTrayMenu(); };
+            addListRow(I18n.T("tray_show_autostart"), _trayShowAutostartToggle, enableAutostart, null);
+
+            var showHideTray = new ToggleSwitch { On = Config.TrayShowHideTray };
+            showHideTray.Toggled += (s, e) => { Config.TrayShowHideTray = showHideTray.On; Config.Save(); Program.RebuildTrayMenu(); };
+            var enableHideTray = new ToggleSwitch { On = Config.HideTrayIcon };
+            enableHideTray.Toggled += (s, e) => { Config.HideTrayIcon = enableHideTray.On; Config.Save(); Program.ApplyHideTrayIcon(); Program.RebuildTrayMenu(); };
+            addListRow(I18n.T("tray_show_hidetray"), showHideTray, enableHideTray, null);
+
+            var showAddCard = new ToggleSwitch { On = Config.TrayShowAddCard };
+            showAddCard.Toggled += (s, e) => { Config.TrayShowAddCard = showAddCard.On; Config.Save(); Program.RebuildTrayMenu(); };
+            addListRow(I18n.T("tray_show_addcard"), showAddCard, null, null);
+
+            // 表头+列表行手动块登记进行栈：宽度重排时右列面板跟随右缘
+            trayGroup.AddBlock((by, w) =>
+            {
+                int pl = w - AccGroup.InR - panelW;
+                int ty2 = by;
+                foreach (var p in trayPlacers) { p(ty2, pl); ty2 += listRowH; }
+                return ty2;
+            });
+
+            trayGroup.FinishRows();
 
             // ---- "关于"折叠组（赞助/版本，随内容滚动）----
             EventHandler copyWx = (s, e) =>
             {
                 try { Clipboard.SetText("jtugqivi"); MessageBox.Show(I18n.T("donated"), I18n.T("donate"), MessageBoxButtons.OK, MessageBoxIcon.Information); } catch { }
             };
-            var aboutGroup = _fnNewGroup(I18n.T("group_about"), true, 6);
+            var aboutGroup = _fnNewGroup(I18n.T("group_about"), true, 7);
             aboutGroup.FreeformLayout = true;   // 自由排版说明文本，几何审计按行式规则扫会误报
             const int qrSize = 150;
             Image qrImg = null;
@@ -1168,14 +1540,15 @@ namespace HoverExplorer
             _verLbl = new Label { Text = "v" + Program.Version, AutoSize = true, ForeColor = Config.PlaceholderFg, Font = new Font(Config.FontName, 8f), Tag = "sub", Visible = false };
             _verLbl.Location = new Point(aboutGroup.Width - PadX - 18 - _verLbl.PreferredWidth, aboutBase + qrSize - _verLbl.PreferredHeight);
             aboutGroup.Controls.Add(_verLbl);
-            // 更新检测：异步查 GitHub latest release，新版则在版本号左侧显示红点标识，点击打开 Releases
+            // 更新检测：查 GitHub latest release（逻辑已抽离到 Program.UpdateChecker，托盘绿点共用同一份结果），
+            // 新版则在版本号左侧显示红点标识，点击打开 Releases
             _updateLbl = new LinkLabel { Text = "", AutoSize = true, Font = new Font(Config.FontName, 8f, FontStyle.Bold), Tag = "sub", Visible = false, LinkColor = Color.FromArgb(0xE0, 0x31, 0x31), ActiveLinkColor = Color.FromArgb(0xE0, 0x31, 0x31) };
             _updateLbl.LinkClicked += (s, e) => { try { System.Diagnostics.Process.Start("https://github.com/dlsdgj/HoverExplorer/releases"); } catch { } };
             aboutGroup.Controls.Add(_updateLbl);
-            _fnCheckUpdate(latest =>
+            UpdateChecker.Check(latest =>
             {
                 if (IsDisposed || _updateLbl == null || _verLbl == null) return;
-                if (_fnNewer(latest))
+                if (UpdateChecker.Newer(latest))
                 {
                     _updateLbl.Text = "● v" + latest + " ↗";
                     _updateLbl.Location = new Point(_verLbl.Left - 10 - _updateLbl.PreferredWidth, _verLbl.Top);
@@ -1288,6 +1661,30 @@ namespace HoverExplorer
             };
             wdBody.Height = Math.Max(60, (int)Math.Ceiling((double)TextRenderer.MeasureText(wdBody.Text, wdBody.Font, wdBody.Size, TextFormatFlags.WordBreak).Height / 12.0) * 12 + 4);
             aboutGroup.Controls.Add(wdBody);
+            // 宽度重排：正文宽度重测换行、链接与说明随之前移，版本号/更新红点跟随右缘
+            aboutGroup.AddTailHook(_ =>
+            {
+                int aw = aboutGroup.Width;
+                mp3Body.Width = Math.Max(200, aw - PadX * 2);
+                mp3Body.Height = Math.Max(48, (int)Math.Ceiling((double)TextRenderer.MeasureText(mp3Body.Text, mp3Body.Font, mp3Body.Size, TextFormatFlags.WordBreak).Height / 12.0) * 12 + 4);
+                fixerLink.Location = new Point(PadX, mp3Body.Bottom + 6);
+                int fdY = fixerLink.Bottom + 14;
+                ffDlTitle.Location = new Point(PadX, fdY);
+                ffDlBody.Location = new Point(PadX, fdY + 20);
+                ffDlBody.Width = Math.Max(200, aw - PadX * 2);
+                ffDlBody.Height = Math.Max(48, (int)Math.Ceiling((double)TextRenderer.MeasureText(ffDlBody.Text, ffDlBody.Font, ffDlBody.Size, TextFormatFlags.WordBreak).Height / 12.0) * 12 + 4);
+                ffDlLink.Location = new Point(PadX, ffDlBody.Bottom + 6);
+                ffDlStatus.Location = new Point(ffDlLink.Right + 10, ffDlLink.Top + 2);
+                int wdY2 = ffDlLink.Bottom + 14;
+                wdTitle.Location = new Point(PadX, wdY2);
+                wdBody.Location = new Point(PadX, wdY2 + 20);
+                wdBody.Width = Math.Max(200, aw - PadX * 2);
+                wdBody.Height = Math.Max(60, (int)Math.Ceiling((double)TextRenderer.MeasureText(wdBody.Text, wdBody.Font, wdBody.Size, TextFormatFlags.WordBreak).Height / 12.0) * 12 + 4);
+                _verLbl.Location = new Point(aw - PadX - 18 - _verLbl.PreferredWidth, _verLbl.Top);
+                if (!string.IsNullOrEmpty(_updateLbl.Text))
+                    _updateLbl.Location = new Point(_verLbl.Left - 10 - _updateLbl.PreferredWidth, _verLbl.Top);
+                aboutGroup.NoticeContentBottom(wdBody.Bottom + 20 - AccGroup.HeadH);
+            });
             aboutGroup.ExpandRow(wdBody.Bottom + 20 - AccGroup.HeadH, 0);
             aboutGroup.FinishRows();
             if (aboutGroup.Open) { aboutGroup.Open = false; aboutGroup.Open = true; }
@@ -1309,6 +1706,8 @@ namespace HoverExplorer
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
             Config.LastSettingsPage = _curPage < 0 ? 0 : _curPage;
+            Config.SettingsW = Width;   // 尺寸持久化
+            Config.SettingsH = Height;
             Config.Save();
             base.OnFormClosed(e);
         }
@@ -1326,8 +1725,62 @@ namespace HoverExplorer
 
         protected override void WndProc(ref Message m)
         {
+            const int WM_NCHITTEST = 0x0084;
+            if (m.Msg == WM_NCHITTEST && _fnNcHitTest(ref m)) return;   // 无边框窗口的边缘热区（拖拽调尺寸）
             if (Win11.WndNcBorder(Handle, ref m)) return;
             base.WndProc(ref m);
+        }
+
+        // 八向调整热区：右缘/底缘/右下角必支持，左右下角顺带支持；
+        // 上缘不劫持（避免与关闭/展开按钮冲突），左右缘限定头部区以下。
+        // 供窗体自身与盖住边缘的子容器（侧栏/视口/滚动层/分组/滚动条）共同调用
+        internal bool _fnNcHitTest(ref Message m)
+        {
+            long lp = m.LParam.ToInt64();
+            var p = PointToClient(new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF)));
+            const int edge = 6;
+            bool left = p.X <= edge, right = p.X >= Width - edge, bottom = p.Y >= Height - edge;
+            if (!left && !right && !bottom) return false;
+            if ((left || right) && p.Y < HeadAreaH) return false;
+            if (left && bottom) { m.Result = (IntPtr)12; return true; }    // HTBOTTOMLEFT
+            if (right && bottom) { m.Result = (IntPtr)17; return true; }   // HTBOTTOMRIGHT
+            if (left) { m.Result = (IntPtr)10; return true; }              // HTLEFT
+            if (right) { m.Result = (IntPtr)11; return true; }             // HTRIGHT
+            m.Result = (IntPtr)15;                                         // HTBOTTOM
+            return true;
+        }
+
+        // 子容器把 WM_NCLBUTTONDOWN(尺寸 HT 代码) 转交窗体：由窗体进入系统调整循环
+        internal bool ForwardSizeDrag(ref Message m)
+        {
+            const int WM_NCLBUTTONDOWN = 0x00A1;
+            int ht = (int)m.WParam;
+            if (ht >= 10 && ht <= 17)   // HTLEFT..HTBOTTOMRIGHT
+            {
+                NativeMethods.SendMessage(Handle, WM_NCLBUTTONDOWN, ht, m.LParam.ToInt32());
+                return true;
+            }
+            return false;
+        }
+
+        protected override void OnResize(EventArgs e)
+        {
+            base.OnResize(e);
+            _fnRelayoutWindow();
+        }
+
+        // 尺寸变化整体重排：侧栏/视口/滚动条拉伸，各组宽度重排（行栈重算），最后同步滚动范围
+        private void _fnRelayoutWindow()
+        {
+            if (_scrollPanel == null || _viewport == null || _closeBtn == null) return;   // 构造期尺寸变化时布局尚未建立
+            int viewH = Height - HeadAreaH;
+            if (_sidebar != null) _sidebar.Size = new Size(SidebarW, viewH);
+            _viewport.Size = new Size(Width - SidebarW, viewH);
+            _closeBtn.Location = new Point(Width - 32, 8);
+            _fnPlaceExpandBtn();
+            _contentW = Width - SidebarW - PadX * 2 - ScrollBarW;
+            foreach (var g in _groups) g.Relayout(_contentW);
+            _fnSyncScroll();
         }
 
         protected override void OnMouseDown(MouseEventArgs e)
@@ -1399,58 +1852,14 @@ namespace HoverExplorer
                 bool on = i == idx;
                 _navItems[i].BackColor = on ? Config.BG : Config.BgHover;
                 _navItems[i].ForeColor = on ? Config.Accent : Config.FG;
-                _navItems[i].Font = on ? new Font(Config.FontName, 10f, FontStyle.Bold) : new Font(Config.FontName, 9f);
+                bool boldBase = Array.IndexOf(_boldNavPages, i) >= 0;
+                _navItems[i].Font = on ? new Font(Config.FontName, 10f, FontStyle.Bold) : new Font(Config.FontName, 9f, boldBase ? FontStyle.Bold : FontStyle.Regular);
             }
             if (_scrollBar != null) _scrollBar.Value = 0;
             _fnSyncScroll();
         }
 
-        // GitHub latest release 版本检测（静态缓存，多次开设置只查一次）
-        private static void _fnCheckUpdate(Action<string> done)
-        {
-            if (_latestVer != null) { done(_latestVer); return; }
-            try
-            {
-                var wc = new System.Net.WebClient();
-                wc.Headers.Add("user-agent", "HoverExplorer/" + Program.Version);
-                wc.DownloadStringCompleted += (s, e) =>
-                {
-                    string res = "";
-                    try
-                    {
-                        if (e.Error == null && e.Result != null)
-                        {
-                            var m = System.Text.RegularExpressions.Regex.Match(e.Result.ToString(), @"""tag_name""\s*:\s*""v?([\d.]+)""");
-                            if (m.Success) res = m.Groups[1].Value;
-                        }
-                    }
-                    catch { }
-                    _latestVer = res;
-                    try { done(res); } catch { }
-                };
-                wc.DownloadStringAsync(new Uri("https://api.github.com/repos/dlsdgj/HoverExplorer/releases/latest"));
-            }
-            catch { _latestVer = ""; try { done(""); } catch { } }
-        }
-
-        private static bool _fnNewer(string latest)
-        {
-            if (string.IsNullOrEmpty(latest)) return false;
-            try
-            {
-                var a = Program.Version.Split('.');
-                var b = latest.Split('.');
-                for (int i = 0; i < Math.Max(a.Length, b.Length); i++)
-                {
-                    int ai = i < a.Length ? int.Parse(a[i]) : 0;
-                    int bi = i < b.Length ? int.Parse(b[i]) : 0;
-                    if (bi > ai) return true;
-                    if (bi < ai) return false;
-                }
-            }
-            catch { }
-            return false;
-        }
+        // GitHub latest release 版本检测：已抽离到 Program.UpdateChecker（托盘绿点与设置窗红点共用同一份结果）
 
         // ================= 自绘滚动 =================
 
@@ -1479,9 +1888,32 @@ namespace HoverExplorer
                 _scrollBar.Value = Math.Max(0, g.Location.Y + g.Height - _viewport.Height);
         }
 
+        // 光标下的滚轮切换下拉（配色方案用）；null=不在 WheelSwitch 下拉上
+        private DarkCombo _fnWheelCombo()
+        {
+            if (_viewport == null) return null;
+            var ctl = _viewport.GetChildAtPoint(_viewport.PointToClient(Cursor.Position));
+            while (ctl != null && !(ctl is DarkCombo))
+            {
+                if (!ctl.Visible) return null;
+                ctl = ctl.GetChildAtPoint(ctl.PointToClient(Cursor.Position));
+            }
+            var dc = ctl as DarkCombo;
+            return dc != null && dc.Visible && dc.Enabled ? dc : null;
+        }
+
         protected override void OnMouseWheel(MouseEventArgs e)
         {
             base.OnMouseWheel(e);
+            // 悬停在配色方案下拉上：滚轮切换方案而非滚动页面
+            var dc = _fnWheelCombo();
+            if (dc != null && dc.WheelSwitch)
+            {
+                dc.WheelStep(e.Delta > 0 ? -1 : 1);
+                var hm = e as HandledMouseEventArgs;
+                if (hm != null) hm.Handled = true;
+                return;
+            }
             if (_scrollBar == null || !_scrollBar.Visible) return;
             var loc = _viewport.PointToClient(Cursor.Position);
             if (loc.X < 0 || loc.X >= _viewport.Width || loc.Y < 0 || loc.Y >= _viewport.Height) return;
@@ -1506,14 +1938,110 @@ namespace HoverExplorer
 
         private void _fnRefreshChips()
         {
-            if (_hoverGroup == null || _windowGroup == null || _cardGroup == null || _cardTriggerGroup == null || _entryGroup == null || _sortGroup == null) return;
+            if (_hoverGroup == null || _windowGroup == null || _cardGroup == null || _cardTriggerGroup == null || _entryGroup == null) return;
             if (_hoverPill == null || _cardPill == null || _entryPill == null || _delayStepper == null || _closeDelayStepper == null || _sortCombo == null) return;
             _hoverGroup.SetChip(0, HotkeyDisplay(_hoverToggle.On, _hoverMods, _hoverKey));
             _hoverGroup.SetChip(1, string.Format("{0:0.00} {1}", _delayStepper.Value, I18n.T("delay_unit")));
             _windowGroup.SetChip(0, _closeDelayStepper.Value + " ms");
+            _windowGroup.SetChip(1, _sortCombo.SelectedIndex >= 0 ? _sortCombo.SelectedItem.ToString() : "");
             _cardTriggerGroup.SetChip(0, HotkeyDisplay(_cardToggle.On, _cardMods, _cardKey));
             _entryGroup.SetChip(0, HotkeyDisplay(_entryToggle.On, _entryMods, _entryKey));
-            _sortGroup.SetChip(0, _sortCombo.SelectedIndex >= 0 ? _sortCombo.SelectedItem.ToString() : "");
+        }
+
+        private int _fnMakeHotkeyRow(AccGroup g, int y, string title, string desc,
+            ToggleSwitch toggle, HotkeyPill pill,
+            Action startCapture, Action clearHotkey)
+        {
+            int panelH = 30;
+            var delBtn = new Button
+            {
+                Text = I18n.T("hotkey_delete"),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Config.BgHover,
+                ForeColor = Config.FG,
+                Font = new Font(Config.FontName, 8f),
+                AutoSize = true,
+                Padding = new Padding(6, 2, 6, 2),
+                Cursor = Cursors.Hand
+            };
+            delBtn.FlatAppearance.BorderColor = Config.Border;
+            delBtn.FlatAppearance.MouseOverBackColor = Config.BG;
+            var resetBtn = new Button
+            {
+                Text = I18n.T("hotkey_reset"),
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Config.BgHover,
+                ForeColor = Config.FG,
+                Font = new Font(Config.FontName, 8f),
+                AutoSize = true,
+                Padding = new Padding(6, 2, 6, 2),
+                Cursor = Cursors.Hand
+            };
+            resetBtn.FlatAppearance.BorderColor = Config.Border;
+            resetBtn.FlatAppearance.MouseOverBackColor = Config.BG;
+            int pillAreaW = 100;
+            int panelW = toggle.Width + 8 + delBtn.Width + 4 + resetBtn.Width + 8 + pillAreaW;
+            var panel = new Panel
+            {
+                Size = new Size(panelW, panelH),
+                BackColor = Config.BG
+            };
+            toggle.Location = new Point(0, (panelH - toggle.Height) / 2);
+            delBtn.Location = new Point(toggle.Right + 8, (panelH - delBtn.Height) / 2);
+            resetBtn.Location = new Point(delBtn.Right + 4, (panelH - resetBtn.Height) / 2);
+            pill.Location = new Point(panelW - pill.Width, (panelH - pill.Height) / 2);
+            panel.Controls.Add(toggle);
+            panel.Controls.Add(delBtn);
+            panel.Controls.Add(resetBtn);
+            panel.Controls.Add(pill);
+            delBtn.Click += (s, e) => clearHotkey();
+            resetBtn.Click += (s, e) =>
+            {
+                if (pill.Recording) _fnStopCapture();
+                else startCapture();
+            };
+            pill.SizeChanged += (s, e) =>
+            {
+                pill.Location = new Point(panel.Width - pill.Width, (panelH - pill.Height) / 2);
+            };
+            int origY = y;
+            y = g.AddRow(y, title, null, panel);
+            Label d = null;
+            int descH = 0;
+            if (!string.IsNullOrEmpty(desc))
+            {
+                int descW = g.Width - AccGroup.InR - AccGroup.InL;
+                d = new Label
+                {
+                    Text = desc,
+                    Location = new Point(AccGroup.InL, AccGroup.HeadH + origY + panelH + 2),
+                    AutoSize = true,
+                    MaximumSize = new Size(descW, 0),
+                    ForeColor = Config.PlaceholderFg,
+                    Font = new Font(Config.FontName, 8f),
+                    Tag = "sub",
+                    Visible = g.Open
+                };
+                g.Controls.Add(d);
+                descH = TextRenderer.MeasureText(desc, d.Font, new Size(descW, 10000),
+                    TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl).Height;
+            }
+            int rowH = d != null ? Math.Max(RowH, panelH + 2 + descH + 8) : Math.Max(RowH, panelH + 6);
+            g.ExpandRow(origY, rowH);
+            // 说明小字与行高登记重排：宽度变化时重测换行、重定位、重算行高
+            g.TagLastRow(w2 =>
+            {
+                if (d == null) return Math.Max(RowH, panelH + 6);
+                int dw = Math.Max(160, w2 - AccGroup.InR - AccGroup.InL);
+                d.MaximumSize = new Size(dw, 0);
+                int dh = TextRenderer.MeasureText(desc, d.Font, new Size(dw, 10000),
+                    TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl).Height;
+                return Math.Max(RowH, panelH + 2 + dh + 8);
+            }, py =>
+            {
+                if (d != null) d.Location = new Point(AccGroup.InL, AccGroup.HeadH + py + panelH + 2);
+            });
+            return origY + rowH;
         }
 
         // ================= 快捷键录制 =================
@@ -1564,8 +2092,7 @@ namespace HoverExplorer
 
         private void _fnPlacePill(HotkeyPill pill, AccGroup g)
         {
-            if (pill == null || g == null) return;
-            pill.Location = new Point(g.Width - AccGroup.InR - pill.Width, pill.Location.Y);
+
         }
 
         private void _fnUpdatePauseLbl()
@@ -1642,6 +2169,7 @@ namespace HoverExplorer
             Config.CardHotkeyKey = _cardKey;
             Config.KeepOnLeave = _keepToggle.On;
             Config.RowSwapSides = _rowSwapToggle.On;
+            Config.StatusFilter = _statusFilterToggle.On;
             if (_modeExplorer != null) ApplyMode(true, _modeExplorer.SelectedIndex);
             if (_modePreview != null) ApplyMode(false, _modePreview.SelectedIndex);
             if (_longPressStepper != null) Config.LongPressDelayMs = _longPressStepper.Value;
@@ -1668,6 +2196,7 @@ namespace HoverExplorer
             if (_pvSpeedToggle != null) Config.SpeedToggle = _pvSpeedToggle.On;
             if (_pvWaveformToggle != null) Config.WaveformEnabled = _pvWaveformToggle.On;
             if (_pvSpectrumToggle != null) Config.SpectrumEnabled = _pvSpectrumToggle.On;
+            if (_pvMuteToggle != null) Config.PreviewMuted = _pvMuteToggle.On;
             if (_ffmpegPathBox != null)
             {
                 string fp = (_ffmpegPathBox.Text ?? "").Trim();
@@ -1679,6 +2208,20 @@ namespace HoverExplorer
                 }
             }
             Program.ApplySettingsLive(hotkeys, panels);
+        }
+
+        private void _fnApplyTrayIcon()
+        {
+            if (_trayIconBox != null)
+            {
+                string p = (_trayIconBox.Text ?? "").Trim();
+                if (p != Config.TrayIconPath)
+                {
+                    Config.TrayIconPath = p;
+                    Config.Save();
+                    Program.ApplyTrayIcon();
+                }
+            }
         }
 
         // 模式下拉（悬停浏览/文件预览共用）：0 关闭 1 总是 2 按住Ctrl 3 按住Shift 4 按住Alt 5 长按
@@ -1840,8 +2383,43 @@ namespace HoverExplorer
 
         private class Separator : Panel { }
 
+        // 边缘热区容器：侧栏/视口/滚动层等子窗口盖住了窗体边缘，
+        // WM_NCHITTEST 与尺寸拖拽转交宿主设置窗处理（无边框窗口的八向调整）
+        private class HotEdgePanel : Panel
+        {
+            protected override void WndProc(ref Message m)
+            {
+                var sf = FindForm() as SettingsForm;
+                if (sf != null)
+                {
+                    const int WM_NCHITTEST = 0x0084;
+                    const int WM_NCLBUTTONDOWN = 0x00A1;
+                    if (m.Msg == WM_NCHITTEST) { if (sf._fnNcHitTest(ref m)) return; }
+                    else if (m.Msg == WM_NCLBUTTONDOWN) { if (sf.ForwardSizeDrag(ref m)) return; }
+                }
+                base.WndProc(ref m);
+            }
+        }
+
+        // 同上，滚动内容层为 FlowLayoutPanel
+        private class HotEdgeFlowPanel : FlowLayoutPanel
+        {
+            protected override void WndProc(ref Message m)
+            {
+                var sf = FindForm() as SettingsForm;
+                if (sf != null)
+                {
+                    const int WM_NCHITTEST = 0x0084;
+                    const int WM_NCLBUTTONDOWN = 0x00A1;
+                    if (m.Msg == WM_NCHITTEST) { if (sf._fnNcHitTest(ref m)) return; }
+                    else if (m.Msg == WM_NCLBUTTONDOWN) { if (sf.ForwardSizeDrag(ref m)) return; }
+                }
+                base.WndProc(ref m);
+            }
+        }
+
         // 可视区容器：双缓冲 + 裁切滚动内容层（WinForms 子控件溢出父 bounds 默认被裁剪）
-        private class ViewportPanel : Panel
+        private class ViewportPanel : HotEdgePanel
         {
             public ViewportPanel() { DoubleBuffered = true; AutoScroll = false; }
         }
@@ -1849,10 +2427,73 @@ namespace HoverExplorer
         // 手风琴分组：标题行（点 + 标题 + chip + 开关 + 箭头）+ 可折叠内容行
         private class AccGroup : Panel
         {
+            // 分组滚到窗口底部时会盖住下缘热区：命中测试与尺寸拖拽转交宿主窗体
+            protected override void WndProc(ref Message m)
+            {
+                var sf = FindForm() as SettingsForm;
+                if (sf != null)
+                {
+                    const int WM_NCHITTEST = 0x0084;
+                    const int WM_NCLBUTTONDOWN = 0x00A1;
+                    if (m.Msg == WM_NCHITTEST) { if (sf._fnNcHitTest(ref m)) return; }
+                    else if (m.Msg == WM_NCLBUTTONDOWN) { if (sf.ForwardSizeDrag(ref m)) return; }
+                }
+                base.WndProc(ref m);
+            }
+
             public const int HeadH = 38;
             public const int InL = 14;
             public const int InR = 14;
             public int PageIdx = 0;   // 所属分页（侧栏导航用）
+
+            // ==== 宽度可变重排：行栈统一登记（AddRow 行 + 手动块），Relayout 自上而下重算 ====
+            private abstract class StackEntry { public abstract int Layout(AccGroup g, int y); }
+
+            // AddRow 产生的行：标题/描述/右侧控件，重排时按新宽度重定位、重测描述换行
+            private sealed class RowEntry : StackEntry
+            {
+                public Label Title, Desc;
+                public Control Right;
+                public Func<int, int> HeightFn;   // 自定义行高（热键/区域等含手动内容的行），参数=组宽
+                public Action<int> ExtraPlace;    // 行内额外手动控件定位，参数=行 y（相对内容区）
+                public override int Layout(AccGroup g, int y)
+                {
+                    Title.Location = new Point(InL, HeadH + y);
+                    int rowH;
+                    if (HeightFn != null)
+                        rowH = HeightFn(g.Width);
+                    else if (Desc != null)
+                    {
+                        int contentRight = g.Width - InR;
+                        int descRight = Right != null ? contentRight - Right.Width - 24 : contentRight;
+                        int descW = Math.Max(160, descRight - InL);
+                        Desc.MaximumSize = new Size(descW, 0);
+                        int descH = TextRenderer.MeasureText(Desc.Text, Desc.Font, new Size(descW, 10000),
+                            TextFormatFlags.WordBreak | TextFormatFlags.TextBoxControl).Height;
+                        Desc.Location = new Point(InL, HeadH + y + 19);
+                        rowH = Math.Max(RowH, 19 + descH + 14);
+                    }
+                    else rowH = RowH;
+                    if (Right != null)
+                    {
+                        int dy = Right.Height <= 22 ? 0 : -2;
+                        Right.Location = new Point(g.Width - InR - Right.Width, HeadH + y + dy);
+                    }
+                    if (ExtraPlace != null) ExtraPlace(y);
+                    return y + rowH;
+                }
+            }
+
+            // 手动块：自行定位一批控件并返回链推进后的 y（FFmpeg 状态行、方案按钮区、托盘列表行等）
+            private sealed class BlockEntry : StackEntry
+            {
+                public Func<int, int, int> Fn;   // (y, 组宽) → 新 y
+                public override int Layout(AccGroup g, int y) { return Fn(y, g.Width); }
+            }
+
+            private readonly List<StackEntry> _stack = new List<StackEntry>();
+            private int _stackStartY = -1;                            // 首行起始 y（首次 AddRow 记录）
+            private readonly List<Action<int>> _tailHooks = new List<Action<int>>();   // 链尾手动块（提示段落/预览区），参数=链尾 y
 
             private bool _open;
             private int _contentH;
@@ -2039,6 +2680,8 @@ namespace HoverExplorer
                     Controls.Add(d);
                 }
                 descLabel = d;
+                _stack.Add(new RowEntry { Title = t, Desc = d, Right = right });   // 登记行栈，供宽度重排
+                if (_stackStartY < 0) _stackStartY = y;
                 if (right != null)
                 {
                     int dy = right.Height <= 22 ? 0 : -2;
@@ -2063,6 +2706,65 @@ namespace HoverExplorer
             {
                 _contentH = Math.Max(_contentH, y + rowH);
                 if (_open) Height = HeadH + _contentH;
+            }
+
+            // 给最近一次 AddRow 的行挂自定义高度/额外定位（热键行、暂停区行、入口区域行等手动内容行）
+            public void TagLastRow(Func<int, int> heightFn, Action<int> extraPlace)
+            {
+                for (int i = _stack.Count - 1; i >= 0; i--)
+                {
+                    var re = _stack[i] as RowEntry;
+                    if (re == null) continue;
+                    if (heightFn != null) re.HeightFn = heightFn;
+                    if (extraPlace != null) re.ExtraPlace = extraPlace;
+                    return;
+                }
+            }
+
+            // 在链中插入手动块（按代码顺序与 AddRow 行交替重排）
+            public void AddBlock(Func<int, int, int> fn)
+            {
+                // 组以 AddBlock 开头（如桌面卡片外观组）时也要记录栈起点，否则首个 AddRow 的 y
+                // 会被当作栈起点，重排时整个内容被推到下方形成大片空白
+                if (_stackStartY < 0) _stackStartY = 0;
+                _stack.Add(new BlockEntry { Fn = fn });
+            }
+
+            // 注册链尾手动块（提示段落/预览区）：重排时以链尾 y 自行定位，内部用 NoticeContentBottom 补报高度
+            public void AddTailHook(Action<int> hook) { _tailHooks.Add(hook); }
+
+            // 手动块补报内容底边（相对 y），只增不减
+            public void NoticeContentBottom(int relY)
+            {
+                if (relY > _contentH) _contentH = relY;
+            }
+
+            // 宽度变化后整体重排：头部条 → 行栈 → 链尾块 → 收尾（行高与 AddRow 构建时同一套测高算法）
+            public void Relayout(int w)
+            {
+                Width = w;
+                _head.Size = new Size(w - 2, HeadH - 1);
+                _chev.Location = new Point(w - 2 - 13 - 12, 13);
+                if (_toggle != null)
+                    _toggle.Location = new Point(_chev.Left - 10 - _toggle.Width, (HeadH - _toggle.Height) / 2);
+                // 头部链接按标题实际宽度重排（AddHeadLink 构建逻辑的逆操作）
+                _title.Size = new Size(w - 2 - 25 - 195, HeadH - 4);
+                int titleTextW = TextRenderer.MeasureText(_title.Text, _title.Font).Width + 4;
+                _title.Width = Math.Min(_title.Width, titleTextW);
+                int lx = _title.Right + 8;
+                foreach (Control c in _head.Controls)
+                    if (c is LinkLabel) { c.Location = new Point(lx, c.Top); lx = c.Right + 8; }
+                PlaceChips();
+                if (_stack.Count > 0)
+                {
+                    int y = Math.Max(0, _stackStartY);
+                    foreach (var e in _stack) y = e.Layout(this, y);
+                    _contentH = y;
+                    foreach (var h in _tailHooks) h(y);
+                    _contentH += 10;
+                }
+                if (_open) Height = HeadH + _contentH;
+                Invalidate();
             }
 
             // 自由排版组（关于）：说明段落手动定位，几何审计的行式规则不适用
@@ -2218,6 +2920,29 @@ namespace HoverExplorer
                 public void AddRange(object[] items) { foreach (var it in items) List.Add(it == null ? "" : it.ToString()); }
             }
             public readonly ComboItemCollection Items = new ComboItemCollection();
+            // true=滚轮循环切换选中项（配色方案下拉用），并吞掉滚轮防止设置页滚动
+            public bool WheelSwitch;
+
+            // 滚轮步进：dir -1=上一项 +1=下一项（循环）；与点击选择同效（触发 SelectedIndexChanged）
+            internal void WheelStep(int dir)
+            {
+                if (!Enabled || Items.Count == 0) return;
+                int n = Items.Count;
+                int baseIdx = _index < 0 ? 0 : _index;
+                SetIndex((baseIdx + n + dir) % n, false);
+            }
+
+            protected override void OnMouseWheel(MouseEventArgs e)
+            {
+                if (WheelSwitch)
+                {
+                    WheelStep(e.Delta > 0 ? -1 : 1);
+                    var hm = e as HandledMouseEventArgs;
+                    if (hm != null) hm.Handled = true;   // 不再透传给父级滚动页面
+                    return;
+                }
+                base.OnMouseWheel(e);
+            }
 
             public DarkCombo()
             {
@@ -2285,7 +3010,7 @@ namespace HoverExplorer
                 _popup = new DarkComboPopup(this);
                 var wa = Screen.FromControl(this).WorkingArea;
                 var pt = PointToScreen(new Point(-2, Height + 2));
-                int ph = ItemCount * 24 + 6;
+                int ph = Math.Max(30, Math.Min(ItemCount * 24 + 6, wa.Height * 2 / 3));
                 if (pt.Y + ph > wa.Bottom) pt.Y = Math.Max(wa.Top, PointToScreen(Point.Empty).Y - ph - 2);
                 pt.X = Math.Min(Math.Max(wa.Left, pt.X), wa.Right - Width - 8);
                 _popup.Bounds = new Rectangle(pt.X, pt.Y, Math.Max(120, Width), ph);
@@ -2311,6 +3036,9 @@ namespace HoverExplorer
         {
             private readonly DarkCombo _combo;
             private int _hover = -1;
+            private int _scroll;
+            private int _maxScroll;
+            private SlimScrollBar _bar;
 
             public DarkComboPopup(DarkCombo combo)
             {
@@ -2322,21 +3050,58 @@ namespace HoverExplorer
                 DoubleBuffered = true;
                 BackColor = Config.BG;
                 Height = combo.ItemCount * 24 + 6;
+                _bar = new SlimScrollBar { Width = 10, Dock = DockStyle.Right, BackColor = Config.BG };
+                _bar.Scroll += (s, e) => { _scroll = _bar.Value; Invalidate(); };
+                Controls.Add(_bar);
             }
 
-            private Rectangle ItemRect(int i) { return new Rectangle(3, 3 + i * 24, Width - 6, 24); }
+            private int VisibleCount { get { return (Height - 6) / 24; } }
+
+            private void EnsureScroll()
+            {
+                int vis = VisibleCount;
+                _maxScroll = Math.Max(0, _combo.ItemCount - vis);
+                if (_scroll < 0) _scroll = 0;
+                if (_scroll > _maxScroll) _scroll = _maxScroll;
+                if (_bar != null)
+                {
+                    _bar._suppressScroll = true;
+                    _bar.Maximum = Math.Max(1, _combo.ItemCount);
+                    _bar.LargeChange = Math.Max(1, vis);
+                    _bar.Value = _scroll;
+                    _bar._suppressScroll = false;
+                }
+            }
+
+            private Rectangle ItemRect(int i) { return new Rectangle(3, 3 + (i - _scroll) * 24, Width - 10, 24); }
 
             protected override void OnPaint(PaintEventArgs e)
             {
+                EnsureScroll();
                 using (var p = new Pen(Config.Border)) e.Graphics.DrawRectangle(p, 0, 0, Width - 1, Height - 1);
-                for (int i = 0; i < _combo.ItemCount; i++)
+                int vis = VisibleCount;
+                for (int k = 0; k < vis; k++)
                 {
+                    int i = _scroll + k;
+                    if (i >= _combo.ItemCount) break;
                     var rc = ItemRect(i);
+                    if (rc.Bottom > Height - 3) break;
                     bool cur = i == _combo.SelectedIndex;
                     using (var b = new SolidBrush(i == _hover ? Config.BtnHover : Config.BG)) e.Graphics.FillRectangle(b, rc);
                     TextRenderer.DrawText(e.Graphics, _combo.ItemAt(i), Font, rc, cur ? Config.Accent : Config.FG,
                         TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
                 }
+            }
+
+            protected override void OnMouseWheel(MouseEventArgs e)
+            {
+                base.OnMouseWheel(e);
+                EnsureScroll();
+                int delta = e.Delta > 0 ? -1 : 1;
+                _scroll = Math.Max(0, Math.Min(_maxScroll, _scroll + delta));
+                _hover = -1;
+                EnsureScroll();
+                Invalidate();
             }
 
             protected override void OnMouseMove(MouseEventArgs e)
@@ -2359,9 +3124,45 @@ namespace HoverExplorer
             protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
             {
                 if (keyData == Keys.Escape) { _combo.ClosePopup(); return true; }
+                EnsureScroll();
+                int sel = _combo.SelectedIndex;
+                if (keyData == Keys.Down)
+                {
+                    int n = Math.Min(_combo.ItemCount - 1, sel < 0 ? 0 : sel + 1);
+                    if (n > _scroll + VisibleCount - 1) _scroll = n - VisibleCount + 1;
+                    EnsureScroll(); _hover = n; Invalidate(); return true;
+                }
+                if (keyData == Keys.Up)
+                {
+                    int n = Math.Max(0, sel < 0 ? 0 : sel - 1);
+                    if (n < _scroll) _scroll = n;
+                    EnsureScroll(); _hover = n; Invalidate(); return true;
+                }
+                if (keyData == Keys.Enter) { if (sel >= 0) _combo.Commit(sel); else if (_hover >= 0) _combo.Commit(_hover); return true; }
+                if (keyData == Keys.PageDown)
+                {
+                    _scroll = Math.Min(_maxScroll, _scroll + VisibleCount - 1);
+                    _hover = Math.Min(_combo.ItemCount - 1, _scroll + VisibleCount - 1);
+                    EnsureScroll(); Invalidate(); return true;
+                }
+                if (keyData == Keys.PageUp)
+                {
+                    _scroll = Math.Max(0, _scroll - VisibleCount + 1);
+                    _hover = _scroll;
+                    EnsureScroll(); Invalidate(); return true;
+                }
+                if (keyData == Keys.Home) { _scroll = 0; _hover = 0; EnsureScroll(); Invalidate(); return true; }
+                if (keyData == Keys.End) { _scroll = _maxScroll; _hover = _combo.ItemCount - 1; EnsureScroll(); Invalidate(); return true; }
                 return base.ProcessCmdKey(ref msg, keyData);
             }
-            private int Hit(Point p) { for (int i = 0; i < _combo.ItemCount; i++) if (ItemRect(i).Contains(p)) return i; return -1; }
+            private int Hit(Point p)
+            {
+                if (p.X < 3 || p.X > Width - 6 || p.Y < 3) return -1;
+                int k = (p.Y - 3) / 24;
+                int i = _scroll + k;
+                if (i < 0 || i >= _combo.ItemCount) return -1;
+                return i;
+            }
         }
 
         // 标题行状态点：展开 = Accent
@@ -2716,6 +3517,254 @@ namespace HoverExplorer
                 {
                     g.DrawLine(p, 22, 4, 22, Height - 4);
                     g.DrawLine(p, Width - 22, 4, Width - 22, Height - 4);
+                }
+            }
+        }
+
+        // 字号步进器：[-] 10 [+]，分区字体行用（6~24，步长 1）
+        private class FontStepper : Control
+        {
+            private int _val = 10;
+
+            public event EventHandler ValueChanged;
+
+            public int Value
+            {
+                get { return _val; }
+                set
+                {
+                    var nv = Math.Max(6, Math.Min(24, value));
+                    if (nv == _val) return;
+                    _val = nv;
+                    Invalidate();
+                    if (ValueChanged != null) ValueChanged(this, EventArgs.Empty);
+                }
+            }
+
+            public FontStepper()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
+                SetStyle(ControlStyles.Selectable, false);
+                Size = new Size(74, 26);
+                Cursor = Cursors.Hand;
+            }
+
+            protected override void OnMouseDown(MouseEventArgs e)
+            {
+                base.OnMouseDown(e);
+                if (e.X < 22) Value = _val - 1;
+                else if (e.X > Width - 22) Value = _val + 1;
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                using (var path = _fnRoundRect(0.5f, 0.5f, Width - 1, Height - 1, 4))
+                {
+                    using (var b = new SolidBrush(Config.BgHover)) g.FillPath(b, path);
+                    using (var p = new Pen(Config.Border)) g.DrawPath(p, path);
+                }
+                using (var f = new Font(Config.FontName, 8.5f))
+                {
+                    TextRenderer.DrawText(g, "−", f, new Rectangle(0, 0, 22, Height), Config.FG, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                    TextRenderer.DrawText(g, "+", f, new Rectangle(Width - 22, 0, 22, Height), Config.FG, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                    TextRenderer.DrawText(g, _val.ToString(), f, new Rectangle(22, 0, Width - 44, Height), Config.FG, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                }
+                using (var p = new Pen(Config.Border))
+                {
+                    g.DrawLine(p, 22, 4, 22, Height - 4);
+                    g.DrawLine(p, Width - 22, 4, Width - 22, Height - 4);
+                }
+            }
+        }
+
+        // 列表外观·实时预览：模拟弹出列表面板（标题行/表头/列表行/状态栏格式标签），
+        // 全部走 Config.List* 配色与分区字体，字体/配色设置变化时 Invalidate 重绘
+        private class ListPreviewPanel : Control
+        {
+            public ListPreviewPanel()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                    | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                SetStyle(ControlStyles.Selectable, false);
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;   // 文字抗锯齿（ClearType），否则预览字体有明显锯齿
+                int w = Width, h = Height;
+                // 卡片底：列表画布色 + 圆角描边，后续条带都裁进圆角内
+                using (var path = _fnRoundRect(0.5f, 0.5f, w - 1, h - 1, 4))
+                {
+                    using (var b = new SolidBrush(Config.ListCanvas)) g.FillPath(b, path);
+                    using (var p = new Pen(Config.ListBd)) g.DrawPath(p, path);
+                    g.SetClip(path);
+                }
+                // 标题行：文件夹名（粗体）+ 右侧条目计数小字（同 PopupForm：ListHdbg 底、ListFg/ListMu）
+                using (var fT = Config.ListTitleFont())
+                using (var fM = Config.ListMetaFont())
+                using (var bH = new SolidBrush(Config.ListHdbg))
+                using (var bFg = new SolidBrush(Config.ListFg))
+                using (var bMu = new SolidBrush(Config.ListMu))
+                {
+                    g.FillRectangle(bH, 1, 1, w - 2, 22);
+                    string title = I18n.T("preview_sample_folder");
+                    g.DrawString(title, fT, bFg, 8, 1 + (22 - fT.GetHeight(g)) / 2, StringFormat.GenericTypographic);
+                    string cnt = I18n.T("panel_status_count", 185);
+                    g.DrawString(cnt, fM, bMu, w - 8 - g.MeasureString(cnt, fM).Width, 1 + (22 - fM.GetHeight(g)) / 2, StringFormat.GenericTypographic);
+                }
+                // 表头：排序按钮（同 PopupForm 排序栏：描边小按钮，当前项带 ▲）
+                using (var fH = Config.ListHeaderFont())
+                using (var bBg = new SolidBrush(Config.ListBg))
+                using (var pBd = new Pen(Config.ListBd))
+                using (var bFg = new SolidBrush(Config.ListFg))
+                {
+                    int bx = 6;
+                    var labs = new[] { Config.SortLabels["name"] + " ▲", Config.SortLabels["size"], Config.SortLabels["date"] };
+                    foreach (var lab in labs)
+                    {
+                        int bw = (int)g.MeasureString(lab, fH).Width + 14;
+                        var rc = new Rectangle(bx, 25, bw, 18);
+                        using (var path = _fnRoundRect(rc.X, rc.Y, rc.Width, rc.Height, 3))
+                        {
+                            g.FillPath(bBg, path);
+                            g.DrawPath(pBd, path);
+                        }
+                        g.DrawString(lab, fH, bFg, rc.X + 7, rc.Y + (rc.Height - fH.GetHeight(g)) / 2, StringFormat.GenericTypographic);
+                        bx += bw + 4;
+                    }
+                }
+                // 列表行：示例文件 + 行内大小小字（同 PopupForm：ListBg 底、ListFg 名称、ListMu 大小）
+                using (var fI = Config.ListItemFont())
+                using (var fM = Config.ListMetaFont())
+                using (var bR = new SolidBrush(Config.ListBg))
+                using (var bFg = new SolidBrush(Config.ListFg))
+                using (var bMu = new SolidBrush(Config.ListMu))
+                using (var pMu = new Pen(Config.ListMu))
+                {
+                    g.FillRectangle(bR, 1, 45, w - 2, 24);
+                    g.DrawRectangle(pMu, 8, 51, 10, 12);   // 图标位示意
+                    g.DrawString(I18n.T("preview_sample_file"), fI, bFg, 26, 45 + (24 - fI.GetHeight(g)) / 2, StringFormat.GenericTypographic);
+                    string sz = "1.2 MB";
+                    g.DrawString(sz, fM, bMu, w - 8 - g.MeasureString(sz, fM).Width, 45 + (24 - fM.GetHeight(g)) / 2, StringFormat.GenericTypographic);
+                }
+                // 状态栏格式标签（同 PopupForm chips：ListHdbg 底、ListFg 文本）
+                using (var fC = Config.ListChipFont())
+                using (var bH = new SolidBrush(Config.ListHdbg))
+                using (var bFg = new SolidBrush(Config.ListFg))
+                {
+                    int cx = 6;
+                    foreach (var kind in new[] { "MP4", "JPG", "TXT" })
+                    {
+                        int cw = (int)g.MeasureString(kind, fC).Width + 12;
+                        g.FillRectangle(bH, cx, 73, cw, 16);
+                        g.DrawString(kind, fC, bFg, cx + 6, 73 + (16 - fC.GetHeight(g)) / 2, StringFormat.GenericTypographic);
+                        cx += cw + 4;
+                    }
+                }
+                g.ResetClip();
+            }
+        }
+
+        // 桌面卡片·实时预览：按 PinCardForm 的实际观感自绘一张示例卡片
+        // （自绘阴影/圆角底/左色条/今日绿点/名称/扩展名徽标），全部实时读 CardPalettes.Current，
+        // 卡片配色或字体编辑应用后由调用方 Invalidate 重绘
+        private class CardPreviewPanel : Control
+        {
+            public CardPreviewPanel()
+            {
+                SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer
+                    | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+                SetStyle(ControlStyles.Selectable, false);
+            }
+
+            // 圆角矩形路径（r<=0 退化为直角矩形，同 PinCardForm._fnRoundRect）
+            private static GraphicsPath _fnCardRoundRect(float x, float y, float w, float h, float r)
+            {
+                var path = new GraphicsPath();
+                if (r <= 0) { path.AddRectangle(new RectangleF(x, y, w, h)); return path; }
+                float d = Math.Min(r * 2, Math.Min(w, h));
+                path.AddArc(x, y, d, d, 180, 90);
+                path.AddArc(x + w - d, y, d, d, 270, 90);
+                path.AddArc(x + w - d, y + h - d, d, d, 0, 90);
+                path.AddArc(x, y + h - d, d, d, 90, 90);
+                path.CloseFigure();
+                return path;
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                var pal = CardPalettes.Current;
+                if (pal == null) return;
+                var g = e.Graphics;
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;   // 文字抗锯齿（ClearType），否则预览字体有明显锯齿
+
+                using (var fN = new Font(pal.FontName, pal.FontSize))
+                using (var fB = new Font(pal.FontName, Math.Max(6f, pal.FontSize - 1f), FontStyle.Bold))
+                {
+                    // 宽度收缩为卡片实际占用宽度（同 PinCardForm 布局：21 起点 + 名称 + 间隙 + 徽标 + 右缘留白 + 阴影），
+                    // 字体变化时跟随；不占满设置面板整行
+                    string nm = I18n.T("card_preview_sample");
+                    int nameNeed = Math.Min(TextRenderer.MeasureText(nm, fN).Width + 2, 260);
+                    int extNeed = TextRenderer.MeasureText("PNG", fB, new Size(200, 20), TextFormatFlags.NoPadding).Width + 8;
+                    int needW = 21 + nameNeed + 5 + extNeed + 8 + 2;
+                    if (Width != needW) { Width = needW; return; }   // ResizeRedraw 会再触发一次重绘，直接返回避免用旧宽画
+                    // 几何同 PinCardForm._fnLayout：内容上下各留 4px padding，至少 24px 高
+                    int nameH = (int)Math.Ceiling(fN.GetHeight(g)) + 2;
+                    int badgeH = nameH + 2;
+                    int ch = Math.Max(24, badgeH + 8);
+                    int shadow = 2;                       // 自绘阴影宽度（同 PinCardForm.ShadowPad）
+                    int cw = Width - shadow;
+                    int cy = Math.Max(0, (Height - ch) / 2);
+                    float radius = Math.Max(0, Math.Min(12, pal.Radius));
+
+                    // 自绘阴影（右下偏移，跟着圆角走）
+                    for (int i = shadow; i > 0; i--)
+                        using (var sp = _fnCardRoundRect(i, cy + i, cw, ch, radius))
+                        using (var sb = new SolidBrush(Color.FromArgb(30, 0, 0, 0)))
+                            g.FillPath(sb, sp);
+
+                    // 背景（圆角 + 支持半透明）
+                    using (var path = _fnCardRoundRect(0, cy, cw, ch, radius))
+                        if (pal.Bg.A > 0) using (var b = new SolidBrush(pal.Bg)) g.FillPath(b, path);
+
+                    // 左侧色条（裁剪到卡片圆角形状内）
+                    if (pal.StripWidth > 0 && pal.StripColor.A > 0)
+                        using (var clip = _fnCardRoundRect(0, cy, cw, ch, radius))
+                        {
+                            g.SetClip(clip);
+                            using (var b = new SolidBrush(pal.StripColor))
+                                g.FillRectangle(b, 0, cy, Math.Min(pal.StripWidth, cw), ch);
+                            g.ResetClip();
+                        }
+
+                    // 示例内容：今日绿点 + 名称 + 扩展名徽标（布局同 PinCardForm）
+                    string name = I18n.T("card_preview_sample");
+                    string ext = "PNG";
+                    int x = 21;                           // 有绿点时名称从 21 起（同 PinCardForm._fnLayout）
+                    int nameY = cy + (ch - nameH) / 2;
+                    int badgeY = cy + (ch - badgeH) / 2;
+                    int nameW = Math.Min(Math.Min(TextRenderer.MeasureText(name, fN).Width + 2, 260), Math.Max(40, cw - x - 8 - 60));
+                    int extW = TextRenderer.MeasureText(ext, fB, new Size(200, 20), TextFormatFlags.NoPadding).Width + 8;
+                    using (var b = new SolidBrush(Color.FromArgb(0x2f, 0xb3, 0x6b)))
+                        g.FillEllipse(b, 10, cy + 10, 5, 5);   // 今天修改过的状态点
+                    // 徽标背景（圆角）
+                    if (pal.BadgeBg.A > 0)
+                        using (var path = _fnCardRoundRect(x + nameW + 5, badgeY, extW, badgeH, radius))
+                        using (var b = new SolidBrush(pal.BadgeBg))
+                            g.FillPath(b, path);
+                    // 徽标文字（居中，同 PinCardForm）
+                    using (var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center, Trimming = StringTrimming.None })
+                    using (var br = new SolidBrush(pal.BadgeFg))
+                        g.DrawString(ext, fB, br, new RectangleF(x + nameW + 5, badgeY, extW, badgeH), sf);
+                    // 名称（超长省略号，同 PinCardForm）
+                    using (var sf = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center, Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap })
+                    using (var br = new SolidBrush(pal.Fg))
+                        g.DrawString(name, fN, br, new RectangleF(x, nameY, nameW, nameH), sf);
                 }
             }
         }
