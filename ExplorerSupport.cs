@@ -2,7 +2,6 @@ using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace HoverExplorer
 {
@@ -125,82 +124,13 @@ namespace HoverExplorer
                     _hitRect = rect; _outRect = rect; _hitAt = DateTime.UtcNow;
                     result = fullPath;
                 }
-                else
-                {
-                    // "此电脑"等 shell 命名空间视图：位置不是文件系统目录，拼路径必失败。
-                    // 通解走 shell COM（Folder.ParseName 按显示名解析，FolderItem.Path 直接给
-                    // 真实路径：驱动器 → "C:\"、文档 → C:\Users\...\Documents）；COM 够不着时
-                    // （如管理员权限的窗口）退驱动器盘符正则兜底
-                    string nsPath = ResolveNamespaceItem(explorerHwnd, name);
-                    if (nsPath == null) nsPath = ResolveDriveItem(name);
-                    if (nsPath != null)
-                    {
-                        isDir = Directory.Exists(nsPath);
-                        if (isDir || File.Exists(nsPath))
-                        {
-                            _hitHwnd = explorerHwnd; _hitPath = nsPath; _hitIsDir = isDir;
-                            _hitRect = rect; _outRect = rect; _hitAt = DateTime.UtcNow;
-                            result = nsPath;
-                        }
-                    }
-                    if (result == null) { rect = System.Drawing.Rectangle.Empty; isDir = false; }
-                }
+                else { rect = System.Drawing.Rectangle.Empty; isDir = false; }
             }
             _stillHwnd = explorerHwnd; _stillX = mx; _stillY = my;
             _stillPath = result; _stillRect = result != null ? rect : System.Drawing.Rectangle.Empty;
             _stillIsDir = result != null && isDir;
             _stillAt = DateTime.UtcNow;
             return result;
-        }
-
-        private static readonly Regex _driveNameRe = new Regex(@"([A-Za-z]):", RegexOptions.Compiled);
-
-        // "此电脑"的驱动器条目显示名（"本地磁盘 (C:)"）抽盘符 → "C:\"；匹配不到返回 null
-        internal static string ResolveDriveItem(string name)
-        {
-            if (string.IsNullOrEmpty(name)) return null;
-            Match m = _driveNameRe.Match(name);
-            if (!m.Success) return null;
-            string drive = m.Groups[1].Value.ToUpperInvariant() + ":\\";
-            return Directory.Exists(drive) ? drive : null;
-        }
-
-        // shell 命名空间视图（此电脑/回收站/控制面板...）按显示名解析真实路径。
-        // 与 GetOpenExplorerPaths 同款后期绑定 ShellWindows：按 HWND 找窗口 → Document
-        // 就是 shell32 的 Folder 对象 → ParseName(显示名) → FolderItem.Path 为真实路径
-        // （设备类条目 Path 为空串/异常 → 返回 null）。explorerHwnd 不在 ShellWindows 里
-        // （提权窗口）时返回 null，调用方走正则兜底
-        internal static string ResolveNamespaceItem(IntPtr explorerHwnd, string displayName)
-        {
-            if (string.IsNullOrEmpty(displayName)) return null;
-            try
-            {
-                var t = Type.GetTypeFromCLSID(new Guid("9BA05972-F6A8-11CF-A442-00A0C90A8F39"));
-                var obj = Activator.CreateInstance(t);
-                foreach (var w in (System.Collections.IEnumerable)obj)
-                {
-                    try
-                    {
-                        IntPtr hwnd = (IntPtr)(long)w.GetType().InvokeMember("HWND",
-                            System.Reflection.BindingFlags.GetProperty, null, w, null);
-                        if (hwnd != explorerHwnd) continue;
-                        object doc = w.GetType().InvokeMember("Document",
-                            System.Reflection.BindingFlags.GetProperty, null, w, null);
-                        if (doc == null) continue;
-                        object item = doc.GetType().InvokeMember("ParseName",
-                            System.Reflection.BindingFlags.InvokeMethod, null, doc,
-                            new object[] { displayName });
-                        if (item == null) continue;
-                        string path = item.GetType().InvokeMember("Path",
-                            System.Reflection.BindingFlags.GetProperty, null, item, null) as string;
-                        if (!string.IsNullOrEmpty(path) && (Directory.Exists(path) || File.Exists(path)))
-                            return path;
-                    }
-                    catch { }
-                }
-            }
-            catch { }
-            return null;
         }
 
         // desktop.ini 显示名 → 真实文件系统路径 的还原缓存（失败的显示名也缓存，免得每次 tick 重扫）

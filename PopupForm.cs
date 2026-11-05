@@ -4711,7 +4711,42 @@ namespace HoverExplorer
             int idx = KbNavActive() ? _rows.IndexOf(_kbRow) : -1;
             idx = idx < 0 ? (dir > 0 ? 0 : _rows.Count - 1) : Math.Max(0, Math.Min(_rows.Count - 1, idx + dir));
             SetKbRow(_rows[idx]);
+            ShowKbHintOnce();
             return true;
+        }
+
+        // 首次用键盘导航时面板底部浮出一条用法提示（每次会话只出现一次），几秒后自灭
+        private static bool _kbHintShown;
+        private Label _kbHint;
+        private Timer _kbHintTimer;
+
+        private void ShowKbHintOnce()
+        {
+            if (_kbHintShown || IsDisposed) return;
+            _kbHintShown = true;
+            try
+            {
+                _kbHint = new Label
+                {
+                    Text = I18n.T("kb_hint"),
+                    Dock = DockStyle.Bottom,
+                    Height = 22,
+                    BackColor = Config.ListHdbg,
+                    ForeColor = Config.FgDir,
+                    Font = new Font(Config.FontName, 8f),
+                    TextAlign = ContentAlignment.MiddleCenter,
+                };
+                Controls.Add(_kbHint);
+                _kbHint.BringToFront();
+                _kbHintTimer = new Timer { Interval = 4000 };
+                _kbHintTimer.Tick += delegate
+                {
+                    try { if (_kbHint != null) { _kbHint.Dispose(); _kbHint = null; } } catch { }
+                    try { if (_kbHintTimer != null) { _kbHintTimer.Stop(); _kbHintTimer.Dispose(); _kbHintTimer = null; } } catch { }
+                };
+                _kbHintTimer.Start();
+            }
+            catch { }
         }
 
         private void SetKbRow(RowLabel r)

@@ -465,18 +465,58 @@ namespace HoverExplorer
         private const int VK_LEFT = 0x25, VK_UP = 0x26, VK_RIGHT = 0x27, VK_DOWN = 0x28;
         private const int VK_RETURN = 0x0D, VK_ESCAPE = 0x1B, VK_DELETE = 0x2E, VK_F2 = 0x71;
 
-        // 面板/预览键盘路由——一个光标：
-        // 预览窗开着（面板内或外部直接预览）→ ↑↓←→ 都翻预览（↑/← 上一个，↓/→ 下一个），
-        // 面板行高亮自动跟随；没有预览窗 → ↑/↓ 是面板行选中光标（Enter 打开，Esc 取消）。
-        // 只拦裸键；前台输入态与无人消费时透传
+        // 面板/预览键盘路由——分工明确（用户实测定稿）：
+        // ↑/↓ 只管面板行选中（Enter 打开，Esc 取消，选中行自动滚入视口）；
+        // ←/→ 只管预览窗文件切换（↑↓ 不碰预览——按住会自动重复，逐个重建视频预览会风暴，
+        // 实测表现为 navigate 循环、预览窗反复 SHOW/CLOSE 关不掉）。只拦裸键；输入态透传
         private static bool RoutePanelKeys(int vk)
         {
             Keys k = (Keys)vk;
-            bool up = vk == VK_UP || vk == VK_LEFT;
-            bool down = vk == VK_DOWN || vk == VK_RIGHT;
-            if (up || down)
+            if (vk == VK_UP || vk == VK_DOWN)
             {
-                int dir = down ? 1 : -1;
+                PopupForm kbPanel = null;
+                for (int i = _panels.Count - 1; i >= 0; i--)
+                {
+                    var p = _panels[i];
+                    if (p == null || p.IsDisposed || !p.Visible) continue;
+                    if (p.KbNavActive()) { kbPanel = p; break; }
+                }
+                if (kbPanel != null) return kbPanel.KbNavigate(vk == VK_DOWN ? 1 : -1);
+                // 尚无选中行：第一次按键在鼠标压着的（或最近的）可见面板开始选中
+                // （旧版要求"先有选中行才进路由"，第一次按键永远进不来——上上轮返工的根因）
+                NativeMethods.POINT pt; NativeMethods.GetCursorPos(out pt);
+                PopupForm target = null;
+                for (int i = _panels.Count - 1; i >= 0; i--)
+                {
+                    var p = _panels[i];
+                    if (p == null || p.IsDisposed || !p.Visible) continue;
+                    if (p.ContainsPoint(pt.X, pt.Y)) { target = p; break; }
+                }
+                if (target == null)
+                    for (int i = _panels.Count - 1; i >= 0; i--)
+                    {
+                        var p = _panels[i];
+                        if (p != null && !p.IsDisposed && p.Visible) { target = p; break; }
+                    }
+                return target != null && target.KbNavigate(vk == VK_DOWN ? 1 : -1);
+            }
+            if (vk == VK_RETURN || vk == VK_ESCAPE)
+            {
+                for (int i = _panels.Count - 1; i >= 0; i--)
+                {
+                    var p = _panels[i];
+                    if (p == null || p.IsDisposed || !p.Visible) continue;
+                    if (p.KbNavActive())
+                    {
+                        if (k == Keys.Enter || k == Keys.Escape) return p.KbAction(k);
+                        break;
+                    }
+                }
+                return false;
+            }
+            if (vk == VK_LEFT || vk == VK_RIGHT)
+            {
+                int dir = vk == VK_RIGHT ? 1 : -1;
                 for (int i = _panels.Count - 1; i >= 0; i--)
                 {
                     var p = _panels[i];
@@ -484,37 +524,6 @@ namespace HoverExplorer
                     if (p.NavigatePreview(dir)) return true;
                 }
                 if (PopupForm.ExtPreviewActive()) { PopupForm.NavigateExtPreview(dir); return true; }
-                // 没有预览窗：↑/↓ 落到面板行选中（鼠标压着的面板优先，否则最近的可见面板）
-                if (vk == VK_UP || vk == VK_DOWN)
-                {
-                    NativeMethods.POINT pt; NativeMethods.GetCursorPos(out pt);
-                    PopupForm target = null;
-                    for (int i = _panels.Count - 1; i >= 0; i--)
-                    {
-                        var p = _panels[i];
-                        if (p == null || p.IsDisposed || !p.Visible) continue;
-                        if (p.ContainsPoint(pt.X, pt.Y)) { target = p; break; }
-                    }
-                    if (target == null)
-                        for (int i = _panels.Count - 1; i >= 0; i--)
-                        {
-                            var p = _panels[i];
-                            if (p != null && !p.IsDisposed && p.Visible) { target = p; break; }
-                        }
-                    if (target != null && target.KbNavigate(vk == VK_DOWN ? 1 : -1)) return true;
-                }
-                return false;
-            }
-            // Enter/Esc 归键盘选中行所在面板
-            for (int i = _panels.Count - 1; i >= 0; i--)
-            {
-                var p = _panels[i];
-                if (p == null || p.IsDisposed || !p.Visible) continue;
-                if (p.KbNavActive())
-                {
-                    if (k == Keys.Enter || k == Keys.Escape) return p.KbAction(k);
-                    break;
-                }
             }
             return false;
         }

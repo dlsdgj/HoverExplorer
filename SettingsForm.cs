@@ -496,6 +496,9 @@ namespace HoverExplorer
             _pvEdgeWidthStepper.ValueChanged += (s, e) => { _fnApplySettings(false, false); };
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_edge_width"), null, _pvEdgeWidthStepper);
 
+            // 面板/预览键盘用法说明（否则没人知道方向键怎么用）
+            y = _pvTypeGroup.AddRow(y, I18n.T("kb_hint"), null, null);
+
             _pvImageToggle = new ToggleSwitch { On = Config.PreviewImage };
             _pvImageToggle.Toggled += (s, e) => { _fnApplySettings(false, false); };
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_type_image"), null, _pvImageToggle);

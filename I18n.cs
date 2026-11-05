@@ -234,6 +234,7 @@ namespace HoverExplorer
             {"edge_left", new[]{"左缘","Left edge","左端","왼쪽 가장자리","Bord gauche","Левый край","Borde izquierdo"}},
             {"edge_right", new[]{"右缘","Right edge","右端","오른쪽 가장자리","Bord droit","Правый край","Borde derecho"}},
             {"edge_both", new[]{"两侧","Both edges","両端","양쪽 가장자리","Les deux bords","Оба края","Ambos bordes"}},
+            {"kb_hint", new[]{"面板键盘：↑/↓ 选行 · Enter 打开 · Esc 取消 · ←/→ 切换预览的上一个/下一个","Panel keys: Up/Down select row · Enter open · Esc cancel · Left/Right prev/next in preview","パネルキー：↑/↓ 行選択 · Enter 開く · Esc 取り消し · ←/→ プレビュー切替","패널 키: ↑/↓ 행 선택 · Enter 열기 · Esc 취소 · ←/→ 미리보기 전환","Touches panneau : ↑/↓ sélection · Enter ouvrir · Esc annuler · ←/→ précédent/suivant dans l'aperçu","Клавиши панели: ↑/↓ выбор строки · Enter открыть · Esc отмена · ←/→ пред./след. в предпросмотре","Teclas del panel: ↑/↓ seleccionar · Enter abrir · Esc cancelar · ←/→ anterior/siguiente en vista previa"}},
             {"pv_type_audio", new[]{"音频","Audio","音声","오디오","Audio","Аудио","Audio"}},
             {"pv_type_document", new[]{"文档","Document","文書","문서","Document","Документы","Documentos"}},
             {"pv_type_text", new[]{"文本","Text","テキスト","텍스트","Texte","Текст","Texto"}},
