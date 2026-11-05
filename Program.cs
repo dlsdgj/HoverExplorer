@@ -13,9 +13,10 @@ namespace HoverExplorer
 {
     internal static class Program
     {
-        public const string Version = "1.1.2";
+        public const string Version = "1.1.3";
 
         private static string _desktopPath;
+        private static string _publicDesktopPath;
         private static IntPtr _listview = IntPtr.Zero;
         private static RemoteReader _reader;
         private static readonly List<PopupForm> _panels = new List<PopupForm>();
@@ -207,6 +208,8 @@ namespace HoverExplorer
             }
 
             _desktopPath = GetDesktopPath();
+            try { _publicDesktopPath = Environment.GetFolderPath(Environment.SpecialFolder.CommonDesktopDirectory); }
+            catch { _publicDesktopPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "..", "..", "Users", "Public", "Desktop"); }
             TruncateLogIfNeeded();
             LogBootInfo();
 
@@ -1258,6 +1261,12 @@ namespace HoverExplorer
                 if (string.IsNullOrEmpty(dir) || string.IsNullOrEmpty(baseName)) return full;
                 var hits = Directory.GetFiles(dir, baseName + ".*");
                 if (hits.Length == 1) return hits[0];
+                // 公共桌面图标：用户桌面找不到时尝试 Public\Desktop
+                if (!string.IsNullOrEmpty(_publicDesktopPath) && !string.Equals(dir, _publicDesktopPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    var pubHits = Directory.GetFiles(_publicDesktopPath, baseName + ".*");
+                    if (pubHits.Length == 1) return pubHits[0];
+                }
             }
             catch { }
             return full;
@@ -1281,6 +1290,7 @@ namespace HoverExplorer
             if (string.IsNullOrEmpty(name)) return null;
 
             string full = Path.Combine(_desktopPath, name);
+
             isDir = Directory.Exists(full);
             rect = reader.GetItemRect(idx);
             return full;
@@ -1801,7 +1811,9 @@ namespace HoverExplorer
             string name = reader.GetItemText(idx);
             if (string.IsNullOrEmpty(name)) return null;
             string full = Path.Combine(_desktopPath, name);
-            return Directory.Exists(full) ? full : null;
+            if (Directory.Exists(full)) return full;
+
+            return null;
         }
 
         private static IntPtr GetDesktopListview()

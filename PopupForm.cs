@@ -3271,7 +3271,7 @@ namespace HoverExplorer
                 sortFlow.MouseDown += drag;
                 sortFlow.MouseUp += blankMenu;
 
-            if (_level == 0)
+            if (_level >= 0)   // 名称行+搜索框：一级面板与子面板都显示文件夹名称（搜索框默认隐藏，Ctrl+F 展开）
             {
                 // 名称行：当前文件夹名（过长省略，悬停 tooltip 显示完整路径）+ 编辑图标（点击就地改名）
                 // 底色不参与层级着色（Tag=noTint）：否则名称条上下 2px 内边距会露出 LevelBgColor 的彩色描边，
