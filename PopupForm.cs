@@ -4548,9 +4548,8 @@ namespace HoverExplorer
             // 异步生成完（解码波形等耗时）才在 ShowPreview 里被关，出现“新卡片已出、旧还在响”
             if (_previewForm != null && !_previewForm.Pinned) ClosePreviewForm();
             _previewPath = row.Full;
-            // 音频预览出声要快：缩短触发延迟（图片等较重预览仍用常规防误触延迟），
-            // 让 MediaElement 更早开始打开文件；剩余延迟来自 WPF 打开大/无索引 MP3 本身
-            int previewDelay = Config.HoverDelayMs;
+            // 按类型延时：视频单独延迟（起播慢、误触成本高），音频提速，其余全局
+            int previewDelay = Config.PreviewDelayMsFor(row.Full);
             foreach (var e in Config.AudioExts)
                 if (row.Full.EndsWith(e, StringComparison.OrdinalIgnoreCase)) { previewDelay = Math.Min(previewDelay, 100); break; }
             _previewTimer = new Timer { Interval = previewDelay };
@@ -4744,7 +4743,7 @@ namespace HoverExplorer
             _extRetryCount = 0;
             _extPreviewPath = full;
             Program.DebugLog("[preview] schedule " + full);
-            _extPreviewTimer = new Timer { Interval = Config.LongPressFor(true) ? Config.LongPressDelayMs : Config.HoverDelayMs };
+            _extPreviewTimer = new Timer { Interval = Config.LongPressFor(true) ? Config.LongPressDelayMs : Config.PreviewDelayMsFor(full) };
             _extPreviewTimer.Tick += delegate(object s, EventArgs e)
             {
                 ((Timer)s).Stop(); ((Timer)s).Dispose(); _extPreviewTimer = null;

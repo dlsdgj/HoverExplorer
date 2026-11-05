@@ -63,6 +63,7 @@ namespace HoverExplorer
         // 预览类型分类开关（图片/视频/音频/文档/文本/压缩包/字体/其他）
         private ToggleSwitch _pvImageToggle;
         private ToggleSwitch _pvVideoToggle;
+        private DelayStepper _pvVideoDelayStepper;  // 视频预览单独触发延时
         private ToggleSwitch _pvAudioToggle;
         private ToggleSwitch _pvDocToggle;
         private ToggleSwitch _pvTextToggle;
@@ -486,6 +487,10 @@ namespace HoverExplorer
             _pvVideoToggle = new ToggleSwitch { On = Config.PreviewVideo };
             _pvVideoToggle.Toggled += (s, e) => { _fnApplySettings(false, false); };
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_type_video"), null, _pvVideoToggle);
+
+            _pvVideoDelayStepper = new DelayStepper { Value = Config.VideoPreviewDelay };
+            _pvVideoDelayStepper.ValueChanged += (s, e) => { _fnApplySettings(false, false); };
+            y = _pvTypeGroup.AddRow(y, I18n.T("pv_video_delay"), I18n.T("pv_video_delay_desc"), _pvVideoDelayStepper);
 
             _pvAudioToggle = new ToggleSwitch { On = Config.PreviewAudio };
             _pvAudioToggle.Toggled += (s, e) => { _fnApplySettings(false, false); };
@@ -2193,6 +2198,7 @@ namespace HoverExplorer
             // 预览类型分类开关（关掉的类别不再弹预览窗）
             if (_pvImageToggle != null) Config.PreviewImage = _pvImageToggle.On;
             if (_pvVideoToggle != null) Config.PreviewVideo = _pvVideoToggle.On;
+            if (_pvVideoDelayStepper != null) Config.VideoPreviewDelay = _pvVideoDelayStepper.Value;
             if (_pvAudioToggle != null) Config.PreviewAudio = _pvAudioToggle.On;
             if (_pvDocToggle != null) Config.PreviewDocument = _pvDocToggle.On;
             if (_pvTextToggle != null) Config.PreviewText = _pvTextToggle.On;

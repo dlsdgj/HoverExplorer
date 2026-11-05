@@ -140,6 +140,24 @@ namespace HoverExplorer
         public static double HoverDelay = 0.30;
         // 文件预览触发延时跟随用户的悬停延时设置（秒 -> 毫秒）
         public static int HoverDelayMs { get { return Math.Max(50, (int)(HoverDelay * 1000)); } }
+        // 视频预览单独触发延时（秒）：视频起播慢、误触成本高，默认比全局延时长；
+        // 图片/文档等仍用全局 HoverDelay，音频维持面板行里既有的 100ms 提速
+        public static double VideoPreviewDelay = 0.8;
+
+        // 按类型的预览触发延时：视频走 VideoPreviewDelay，其余用全局 HoverDelay
+        // （音频的 100ms 提速在 SchedulePreview 里叠加 min 处理）
+        public static int PreviewDelayMsFor(string full)
+        {
+            int d = HoverDelayMs;
+            try
+            {
+                string ext = Path.GetExtension(full ?? "");
+                if (ext.Length > 0 && VideoExts.Contains(ext))
+                    d = Math.Max(50, (int)(VideoPreviewDelay * 1000));
+            }
+            catch { }
+            return d;
+        }
         public static int SubHoverDelay = 150;
         public static double CloseDelay = 0.35;
         // 鼠标离开后关闭列表/预览窗的统一延迟（毫秒）：面板、预览窗、历史·收藏列表共用
@@ -569,6 +587,7 @@ namespace HoverExplorer
                         case "PreviewFiles": PreviewFiles = Convert.ToBoolean(v); break;
                         case "PreviewImage": PreviewImage = Convert.ToBoolean(v); break;
                         case "PreviewVideo": PreviewVideo = Convert.ToBoolean(v); break;
+                        case "VideoPreviewDelay": VideoPreviewDelay = Convert.ToDouble(v); break;
                         case "PreviewAudio": PreviewAudio = Convert.ToBoolean(v); break;
                         case "PreviewDocument": PreviewDocument = Convert.ToBoolean(v); break;
                         case "PreviewText": PreviewText = Convert.ToBoolean(v); break;
@@ -725,6 +744,7 @@ namespace HoverExplorer
                 data["PreviewFiles"] = PreviewFiles;
                 data["PreviewImage"] = PreviewImage;
                 data["PreviewVideo"] = PreviewVideo;
+                data["VideoPreviewDelay"] = VideoPreviewDelay;
                 data["PreviewAudio"] = PreviewAudio;
                 data["PreviewDocument"] = PreviewDocument;
                 data["PreviewText"] = PreviewText;

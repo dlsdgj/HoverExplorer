@@ -225,6 +225,8 @@ namespace HoverExplorer
             {"pv_types_desc", new[]{"逐类开关要预览的文件类型","Choose which file types to preview","プレビューするファイルの種類を種類ごとに切り替え","미리보기할 파일 유형을 종류별로 켜고 끕니다","Choisir les types de fichiers à prévisualiser","Выберите, какие типы файлов предпросматривать","Elige qué tipos de archivo previsualizar"}},
             {"pv_type_image", new[]{"图片","Image","画像","이미지","Image","Изображения","Imágenes"}},
             {"pv_type_video", new[]{"视频","Video","動画","동영상","Vidéo","Видео","Vídeo"}},
+            {"pv_video_delay", new[]{"视频预览延时","Video preview delay","動画プレビュー遅延","동영상 미리보기 지연","Délai d'aperçu vidéo","Задержка предпросмотра видео","Retraso de vista previa de vídeo"}},
+            {"pv_video_delay_desc", new[]{"视频起播慢、扫过时误触成本高，给视频单独设触发延时（秒）","Videos start slowly and accidental hovers cost more; separate trigger delay for videos (seconds)","動画は起動が遅く誤ホバーのコストが高いため、動画専用の遅延（秒）","동영상은 시작이 느리고 잘못된 호버 비용이 커서 별도 지연(초) 설정","Les vidéos démarrent lentement ; délai de déclenchement séparé (secondes)","Видео запускаются медленно; отдельная задержка запуска (секунды)","Los vídeos inician lento; retardo de activación separado (segundos)"}},
             {"pv_type_audio", new[]{"音频","Audio","音声","오디오","Audio","Аудио","Audio"}},
             {"pv_type_document", new[]{"文档","Document","文書","문서","Document","Документы","Documentos"}},
             {"pv_type_text", new[]{"文本","Text","テキスト","텍스트","Texte","Текст","Texto"}},
