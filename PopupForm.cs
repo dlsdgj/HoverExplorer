@@ -4757,8 +4757,26 @@ namespace HoverExplorer
             ClosePreviewForm();
             _previewPath = files[next];
             ShowPreviewCore(files[next], null, keep);
+            SyncRowToPath(files[next]);   // 面板行跟随：高亮当前预览的文件并滚到可见
             Program.DebugLog("[panel-preview] navigate " + dir + " -> " + files[next]);
             return true;
+        }
+
+        // 面板行跟随预览切换：选中当前预览的文件所在行，滚出视口时拉回来
+        private void SyncRowToPath(string path)
+        {
+            foreach (var r in _rows)
+            {
+                if (r == null || r.IsDisposed || !string.Equals(r.Full, path, StringComparison.OrdinalIgnoreCase)) continue;
+                SetKbRow(r);
+                if (_listPanel != null && r.Top >= 0)
+                {
+                    int top = r.Top - _listPanel.ContentScrollPos;
+                    if (top < 0) _listPanel.SetOffset(r.Top);
+                    else if (top + r.Height > _listPanel.Height) _listPanel.SetOffset(r.Top + r.Height - _listPanel.Height);
+                }
+                return;
+            }
         }
 
         // 本面板是否有内嵌预览在显示
@@ -4852,6 +4870,12 @@ namespace HoverExplorer
             int next = (idx + dir + files.Count) % files.Count;
             NativeMethods.POINT pt; NativeMethods.GetCursorPos(out pt);
             LoadFilePreview(files[next], new Point(pt.X, pt.Y));
+            // 打开着同目录面板时行跟随（高亮 + 滚动到可见）
+            foreach (var p in Program.Panels)
+            {
+                if (p == null || p.IsDisposed || !p.Visible) continue;
+                if (string.Equals(p.CurrentPath, dir0, StringComparison.OrdinalIgnoreCase)) p.SyncRowToPath(files[next]);
+            }
             Program.DebugLog("[preview] navigate " + dir + " -> " + files[next]);
         }
 
