@@ -445,10 +445,11 @@ namespace HoverExplorer
                         || (NativeMethods.GetAsyncKeyState(NativeMethods.VK_MENU) & 0x8000) != 0;
                     if (!mod && RoutePageKey(hs.vkCode == NativeMethods.VK_NEXT ? 1 : -1)) return (IntPtr)1;
                 }
-                // 面板键盘导航 / 预览窗文件切换：仅裸键，且前台不在输入态（Explorer 重命名/搜索框不能被抢键）
+                // 面板键盘导航 / 预览窗文件切换：仅裸键，且前台不在输入态（Explorer 重命名/搜索框不能被抢键）。
+                // F2/Del 不路由（用户实测后砍掉）：重命名/删除交给资源管理器自己，导航只管选中和打开
                 int vk = (int)hs.vkCode;
                 bool nav = vk == VK_UP || vk == VK_DOWN || vk == VK_LEFT || vk == VK_RIGHT
-                    || vk == VK_RETURN || vk == VK_ESCAPE || vk == VK_DELETE || vk == VK_F2;
+                    || vk == VK_RETURN || vk == VK_ESCAPE;
                 if (nav)
                 {
                     bool mod = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_SHIFT) & 0x8000) != 0

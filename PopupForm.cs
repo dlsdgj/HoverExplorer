@@ -4734,8 +4734,6 @@ namespace HoverExplorer
             switch (k)
             {
                 case Keys.Enter: ClearKbRow(); OpenPath(row.Full); return true;
-                case Keys.F2: ShowShellMenu(row); return true;   // 原生菜单自带重命名，不重造行内编辑框
-                case Keys.Delete: ClearKbRow(); RecycleRows(new List<RowLabel> { row }); return true;
                 case Keys.Escape: ClearKbRow(); return true;
             }
             return false;
