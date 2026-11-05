@@ -347,6 +347,47 @@ internal static class MediaPreview
             return pb;
         }
 
+        // 刻度尺"悬停试速"统一接线：提示浮层即时显示（便宜），实际 SpeedRatio 变更
+        // 驻留 180ms 才应用——MF 改速率要重建播放拓扑、ffmpeg 路径要重建 atempo 滤镜链，
+        // 划过刻度尺去拉进度条时逐格应用会把播放卡出一串顿挫（用户实测卡顿源）
+        internal static void AttachSpeedRuler(SpeedRuler ruler, IMediaSession session, Label hint)
+        {
+            System.Windows.Forms.Timer debounce = null;
+            double pending = double.NaN;
+            Action apply = delegate
+            {
+                if (debounce != null) debounce.Stop();
+                if (double.IsNaN(pending) || session == null) return;
+                double r = pending; pending = double.NaN;
+                try { if (Math.Abs(session.SpeedRatio - r) > 0.001) session.SpeedRatio = r; } catch { }
+            };
+            ruler.PreviewSpeed += delegate(double r)
+            {
+                UpdateSpeedHint(hint, r);
+                pending = r;
+                if (debounce == null)
+                {
+                    debounce = new System.Windows.Forms.Timer { Interval = 180 };
+                    debounce.Tick += delegate { apply(); };
+                }
+                debounce.Stop(); debounce.Start();   // 重启计时 = 驻留判定
+            };
+            ruler.CommitSpeed += delegate(double r)
+            {
+                if (debounce != null) debounce.Stop();
+                pending = double.NaN;
+                if (session != null) { try { session.SpeedRatio = r; } catch { } }
+                UpdateSpeedHint(hint, r);
+            };
+            ruler.RestoreSpeed += delegate
+            {
+                if (debounce != null) debounce.Stop();
+                pending = double.NaN;
+                if (session != null) { try { if (Math.Abs(session.SpeedRatio - ruler.Committed) > 0.001) session.SpeedRatio = ruler.Committed; } catch { } }
+                UpdateSpeedHint(hint, ruler.Committed);
+            };
+        }
+
         // ===== WPF MediaElement 播放器（音频+视频统一，Media Foundation 解码，零部署）=====
         private static bool _wpfInited;
         internal static void EnsureWpf()
@@ -442,9 +483,7 @@ internal static class MediaPreview
             panel.Controls.Add(specBadge);
             specBadge.BringToFront();   // 压在画面上层；Label 挡不挡鼠标无所谓（悬停交互在 WPF 宿主里）
             var ruler = new SpeedRuler { Dock = DockStyle.Bottom };
-            ruler.PreviewSpeed += delegate(double r) { try { session.SpeedRatio = r; } catch { } UpdateSpeedHint(spdHint, r); };
-            ruler.CommitSpeed += delegate(double r) { try { session.SpeedRatio = r; } catch { } UpdateSpeedHint(spdHint, r); };
-            ruler.RestoreSpeed += delegate { try { session.SpeedRatio = ruler.Committed; } catch { } UpdateSpeedHint(spdHint, ruler.Committed); };
+            AttachSpeedRuler(ruler, session, spdHint);
             var cls = CloseButton(panel);
             // 静音键：默认静音开关（Config.PreviewMuted 时视频起始即为静音态）
             bool startMuted = false;

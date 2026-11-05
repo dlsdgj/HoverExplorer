@@ -808,9 +808,7 @@ namespace HoverExplorer
 
             // 倍速刻度尺（常显在标题栏上方，与视频一致）+ 关闭
             _audioRuler = new MediaPreview.SpeedRuler();
-            _audioRuler.PreviewSpeed += delegate(double r) { if (_audio != null) _audio.SpeedRatio = r; MediaPreview.UpdateSpeedHint(_audioSpdHint, r); };
-            _audioRuler.CommitSpeed += delegate(double r) { if (_audio != null) _audio.SpeedRatio = r; MediaPreview.UpdateSpeedHint(_audioSpdHint, r); };
-            _audioRuler.RestoreSpeed += delegate { if (_audio != null) _audio.SpeedRatio = _audioRuler.Committed; MediaPreview.UpdateSpeedHint(_audioSpdHint, _audioRuler.Committed); };
+            MediaPreview.AttachSpeedRuler(_audioRuler, _audio, _audioSpdHint);
             Controls.Add(_audioRuler);
             _audioSpdHint = MediaPreview.CreateSpeedHint(_scrollPanel, 2);
 
