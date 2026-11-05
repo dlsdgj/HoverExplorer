@@ -973,7 +973,9 @@ internal static class MediaPreview
             IsVideo = isVideo;
             MediaPreview.EnsureWpf();
             _ctx = System.Threading.SynchronizationContext.Current;
-            _host = new ElementHost { BackColorTransparent = true };
+            // BackColorTransparent 必须关：它逼 WPF 空域走透明合成，视频帧合成路径变重（播放掉帧）。
+            // 视频区被画面+黑边铺满、音频宿主只有 1×1，都不需要透出 WinForms 底色
+            _host = new ElementHost { BackColorTransparent = false };
             _me = new MediaElement
             {
                 LoadedBehavior = MediaState.Manual,
