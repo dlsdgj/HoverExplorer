@@ -682,6 +682,7 @@ namespace HoverExplorer
             var path = new GraphicsPath();
             if (r <= 0) { path.AddRectangle(new Rectangle(x, y, w, h)); return path; }
             r = Math.Min(r, Math.Min(w, h) / 2);
+            if (r <= 0) { path.AddRectangle(new Rectangle(x, y, w, h)); return path; }
             int d = r * 2;
             path.AddArc(x, y, d, d, 180, 90);
             path.AddArc(x + w - d, y, d, d, 270, 90);

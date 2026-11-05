@@ -13,7 +13,7 @@ namespace HoverExplorer
 {
     internal static class Program
     {
-        public const string Version = "1.1.1";
+        public const string Version = "1.1.2";
 
         private static string _desktopPath;
         private static IntPtr _listview = IntPtr.Zero;
@@ -189,7 +189,7 @@ namespace HoverExplorer
         static void Main(string[] args)
         {
             AppDomain.CurrentDomain.UnhandledException += (s, e) => DebugLog("[FATAL] UnhandledException: " + e.ExceptionObject);
-            Application.ThreadException += (s, e) => DebugLog("[FATAL] ThreadException: " + e.Exception);
+            Application.ThreadException += (s, e) => DebugLog("[FATAL] ThreadException: " + e.Exception + "\n" + (e.Exception != null ? e.Exception.StackTrace : ""));
             Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
 
             Config.Load();
@@ -1562,7 +1562,12 @@ namespace HoverExplorer
             // 面板行拖出进行中：保留源面板（保 GiveFeedback 光标反馈），只弹列表；
             // 拖放结束后鼠标不在面板上，按正常悬停逻辑收起。无拖拽时照常清场避免叠窗
             if (!_panels.Any(p => !p.IsDisposed && p.IsDragging)) CloseAll();
-            var f = new EntryListForm(OpenFolderInExplorer);
+            EntryListForm f;
+            try
+            {
+                f = new EntryListForm(OpenFolderInExplorer);
+            }
+            catch (Exception ex) { DebugLog("[entry] construct fail: " + ex + "\n" + ex.StackTrace); return; }
             _entryListForm = f;
             try
             {

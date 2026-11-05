@@ -6,6 +6,7 @@ using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -363,33 +364,39 @@ namespace HoverExplorer
 
         // 名称单行中间省略："前半…后半"（Finder 风格，左 60% 右 40%），二分找最大保留字符数
         // 测量与行绘制统一走 TextRenderer（GDI），保证"量出来放得下 = 画出来放得下"
+        private static readonly Size _measureMax = new Size(int.MaxValue, int.MaxValue);
+        private const TextFormatFlags _measureFlags = TextFormatFlags.NoPadding | TextFormatFlags.SingleLine;
+
         internal static string MidEllipsis(Graphics g, string s, Font f, float maxW)
         {
             if (string.IsNullOrEmpty(s)) return s;
-            Func<string, float> measure = t => TextRenderer.MeasureText(g, t, f,
-                new Size(int.MaxValue, int.MaxValue),
-                TextFormatFlags.NoPadding | TextFormatFlags.SingleLine).Width;
-            if (measure(s) <= maxW) return s;
+            if (TextRenderer.MeasureText(g, s, f, _measureMax, _measureFlags).Width <= maxW) return s;
             const string ell = "…";
-            float ellW = measure(ell);
+            float ellW = TextRenderer.MeasureText(g, ell, f, _measureMax, _measureFlags).Width;
             if (maxW <= ellW) return ell;
-            Func<int, string> build = delegate(int k)
-            {
-                int a = Math.Max(1, (int)Math.Round(k * 0.6));
-                int b = Math.Max(1, k - a);
-                if (a > s.Length) a = s.Length;
-                if (b > s.Length - a) b = s.Length - a;
-                if (b < 1) return s.Substring(0, a) + ell;
-                return s.Substring(0, a) + ell + s.Substring(s.Length - b);
-            };
             int lo = 1, hi = Math.Max(1, s.Length - 1), best = 0;
             while (lo <= hi)
             {
                 int mid = (lo + hi) / 2;
-                if (measure(build(mid)) <= maxW) { best = mid; lo = mid + 1; }
+                if (MeasureBuild(g, s, f, mid, ell) <= maxW) { best = mid; lo = mid + 1; }
                 else hi = mid - 1;
             }
-            return best > 0 ? build(best) : ell;
+            return best > 0 ? BuildStr(s, best, ell) : ell;
+        }
+
+        private static string BuildStr(string s, int k, string ell)
+        {
+            int a = Math.Max(1, (int)Math.Round(k * 0.6));
+            int b = Math.Max(1, k - a);
+            if (a > s.Length) a = s.Length;
+            if (b > s.Length - a) b = s.Length - a;
+            if (b < 1) return s.Substring(0, a) + ell;
+            return s.Substring(0, a) + ell + s.Substring(s.Length - b);
+        }
+
+        private static float MeasureBuild(Graphics g, string s, Font f, int k, string ell)
+        {
+            return TextRenderer.MeasureText(g, BuildStr(s, k, ell), f, _measureMax, _measureFlags).Width;
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -495,11 +502,18 @@ namespace HoverExplorer
             using (var p = new System.Drawing.Drawing2D.GraphicsPath())
             {
                 int r = 3, w = Width - 1, h = Height - 1;
-                p.AddArc(0, 0, r * 2, r * 2, 180, 90);
-                p.AddArc(w - r * 2, 0, r * 2, r * 2, 270, 90);
-                p.AddArc(w - r * 2, h - r * 2, r * 2, r * 2, 0, 90);
-                p.AddArc(0, h - r * 2, r * 2, r * 2, 90, 90);
-                p.CloseFigure();
+                if (r > 0 && w >= r * 2 && h >= r * 2)
+                {
+                    p.AddArc(0, 0, r * 2, r * 2, 180, 90);
+                    p.AddArc(w - r * 2, 0, r * 2, r * 2, 270, 90);
+                    p.AddArc(w - r * 2, h - r * 2, r * 2, r * 2, 0, 90);
+                    p.AddArc(0, h - r * 2, r * 2, r * 2, 90, 90);
+                    p.CloseFigure();
+                }
+                else
+                {
+                    p.AddRectangle(new Rectangle(0, 0, w, h));
+                }
                 e.Graphics.DrawPath(pen, p);
             }
             if (SortArrow > 0)
@@ -2983,13 +2997,11 @@ namespace HoverExplorer
             string ext = isDir ? "" : Path.GetExtension(full);
             string key = isDir ? "<dir>" : ext;
             // lnk 的图标由目标决定（指向文件夹=文件夹图标，指向 png=图片图标），
-            // 按目标类型分桶缓存——否则一个指向文件夹的快捷方式会污染整个 ".lnk" 桶，
-            // 让同列表里指向 png/mp4 的快捷方式也全显示文件夹图标
+            // 每个快捷方式按自身路径独立缓存——既避免一个 lnk 污染整个 ".lnk" 桶，
+            // 也避免多个指向 .exe 的 lnk 共享同一桶而显示成第一个的图标
             if (!isDir && string.Equals(ext, ".lnk", StringComparison.OrdinalIgnoreCase))
             {
-                string t = PreviewProvider.GetLnkTarget(full);
-                if (!string.IsNullOrEmpty(t))
-                    key = Directory.Exists(t) ? ".lnk|dir" : ".lnk|" + Path.GetExtension(t);
+                key = "lnk|" + full.ToLowerInvariant();
             }
             Image cached;
             if (_iconCache.TryGetValue(key, out cached)) return cached;
@@ -3069,8 +3081,8 @@ namespace HoverExplorer
             }
             // 表头三件套所有层级都同步（子面板排序栏/固定按钮同样跟随宽度）
             if (_sortFlow != null) _sortFlow.Width = w - 12;
-            // 固定按钮 y 跟随所在带：一级面板名称行在顶部（按钮 y=2），子面板在排序栏带内（y=7）
-            int pinY = _level == 0 ? 2 : 7;
+            // 固定按钮 y 跟随所在带：一级面板跟随名称行垂直居中，子面板在排序栏带内（y=7）
+            int pinY = _level == 0 ? (_nameRow != null ? _nameRow.Top + (_nameRow.Height - 18) / 2 : 2) : 7;
             if (_pinBtn != null) _pinBtn.Location = new Point(w - 26, pinY);
             if (_pinCardBtn != null) _pinCardBtn.Location = new Point(w - 26 - 22, pinY);
             if (_listPanel != null)
@@ -3385,6 +3397,10 @@ namespace HoverExplorer
                 _nameRow.Top = sortBandTop;
                 sortFlow.Top = sortBandTop + nameRowH + 2;
                 curY += nameRowH + 2;
+                // 固定按钮跟随名称行垂直居中（创建时用临时 y，名称行调换位置后校正）
+                int pinY0 = sortBandTop + (nameRowH - 18) / 2;
+                if (_pinBtn != null) _pinBtn.Top = pinY0;
+                if (_pinCardBtn != null) _pinCardBtn.Top = pinY0;
 
                 // 搜索框：默认隐藏，Ctrl+F 才展开（常驻输入框会带来假焦点/IME 遮挡问题）
                 // 搜索框跟随列表配色（ListBg/ListMu/ListFg/ListHdbg）：主题色经 tint 只换

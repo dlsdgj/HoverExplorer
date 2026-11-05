@@ -201,7 +201,7 @@ namespace HoverExplorer
             {"group_trigger", new[]{"触发","Trigger","トリガー","트리거","Déclencheur","Триггер","Disparador"}},
             {"group_window", new[]{"行为","Behavior","動作","동작","Comportement","Поведение","Comportamiento"}},
             {"nav_preview_list", new[]{"预览列表","Preview list","プレビューリスト","미리보기 목록","Liste d'aperçu","Список предпросмотра","Lista de vista previa"}},
-            {"group_content", new[]{"预览内容","Preview content","プレビュー内容","미리보기 내용","Contenu d'aperçu","Содержимое предпросмотра","Contenido de vista"}},
+            {"group_content", new[]{"预览窗口","Preview window","プレビュー窗口","미리보기 창","Fenêtre d'aperçu","Окно предпросмотra","Ventana de vista"}},
             {"group_appearance", new[]{"列表外观","List appearance","リスト外観","목록 외관","Apparence liste","Внешний вид списка","Apariencia lista"}},
             {"font_header", new[]{"表头字体","Header font","ヘッダーフォント","헤더 글꼴","Police en-tête","Шрифт заголовка","Fuente encabezado"}},
             {"font_title", new[]{"文件夹名称字体","Folder name font","フォルダ名フォント","폴더 이름 글꼴","Police nom dossier","Шрифт имени папки","Fuente nombre carpeta"}},

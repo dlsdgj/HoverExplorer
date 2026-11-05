@@ -4,6 +4,8 @@ using System.Drawing;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading.Tasks;
+
 
 using System.Windows.Forms;
 
@@ -53,6 +55,10 @@ namespace HoverExplorer
         private const int SideGap = 4;            // 左侧分组栏与右侧列表间距
         private const int SideBarWMin = 72, SideBarWMax = 150;
         private int _sideW = 90;                  // 左侧分组栏宽度
+        private PreviewForm _previewForm;
+        private Timer _previewTimer, _previewCloseTimer;
+        private string _previewPath;
+
 
         protected override bool ShowWithoutActivation { get { return true; } }
 
@@ -62,6 +68,7 @@ namespace HoverExplorer
             // 与面板/预览一致：暗色标题区 + DWM 圆角（Win11）+ 投影
             Win11.Apply(Handle, Config.IsDark, Config.Border);
             Win11.RemoveNcBorder(Handle);
+
         }
 
         public EntryListForm(Action<string, Point> onOpenFolder)
@@ -186,6 +193,7 @@ namespace HoverExplorer
 
         private void _fnBuildRows()
         {
+
             foreach (var r in _rows) { try { Controls.Remove(r); r.Dispose(); } catch { } }
             _rows.Clear();
             var grp = CurrentGroup();
@@ -236,6 +244,7 @@ namespace HoverExplorer
             // 左侧分组栏（纵向，历史置顶）
             int sideBarH = _fnBuildSideBar(y, _sideW, font);
 
+
             // ---- 右侧当前分组列表 ----
             _listTop = y;
             int contentH = Math.Max(26, items.Count * 26 + 4);
@@ -276,6 +285,7 @@ namespace HoverExplorer
             }
             Controls.Add(listDrop);
             _rows.Add(listDrop);
+
 
             if (items.Count == 0)
             {
@@ -323,6 +333,7 @@ namespace HoverExplorer
             if (_pinBtn != null) { _pinBtn.Location = new Point(_headPanel.Width - 46, 4); _pinBtn.BackColor = headBg; }
             if (_foldBtn != null) { _foldBtn.Location = new Point(_headPanel.Width - 24, 4); _foldBtn.BackColor = headBg; }
             ClientSize = new Size(_listW, _fullH);
+
         }
 
         // 外部文件拖入空白区 → 收藏到当前分组
@@ -959,6 +970,13 @@ namespace HoverExplorer
         // ---- 行悬停 → 右侧级联子列表（与文件列表行为一致）----
         private void _fnStartRowHover(EntryRow row)
         {
+            // 文件行：调度预览；文件夹行：调度级联子列表（与原行为一致）
+            bool isFile = File.Exists(row.Full);
+            if (isFile && Config.PreviewFiles && PreviewProvider.CanPreview(row.Full))
+            {
+                _fnSchedulePreview(row);
+                return;
+            }
             if (_rowHoverTimer == null)
             {
                 _rowHoverTimer = new Timer { Interval = 400 };
@@ -981,6 +999,143 @@ namespace HoverExplorer
         {
             if (_rowHoverTimer != null) _rowHoverTimer.Stop();
             _rowHoverRow = null;
+            _fnSchedulePreviewClose();
+        }
+
+        // ---- 文件预览（复用 PreviewProvider/PreviewForm，定位锚定列表行）----
+        private void _fnSchedulePreview(EntryRow row)
+        {
+            if (_previewForm != null && _previewPath == row.Full) return;
+            if (_previewForm != null && !_previewForm.Pinned) _fnClosePreviewForm();
+            _previewPath = row.Full;
+            if (_previewTimer != null) { _previewTimer.Stop(); _previewTimer.Dispose(); _previewTimer = null; }
+            int delay = Math.Max(0, Config.PreviewDelay);
+            _previewTimer = new Timer { Interval = delay > 0 ? delay : 1 };
+            _previewTimer.Tick += (s, e) =>
+            {
+                _previewTimer.Stop(); _previewTimer.Dispose(); _previewTimer = null;
+                if (IsDisposed || _previewPath == null) return;
+                _fnShowPreview(row);
+            };
+            _previewTimer.Start();
+        }
+
+        private void _fnSchedulePreviewClose()
+        {
+            if (_previewForm == null)
+            {
+                if (_previewTimer != null) { _previewTimer.Stop(); _previewTimer.Dispose(); _previewTimer = null; }
+                _previewPath = null;
+                return;
+            }
+            if (_previewCloseTimer != null) { _previewCloseTimer.Stop(); _previewCloseTimer.Dispose(); _previewCloseTimer = null; }
+            _previewCloseTimer = new Timer { Interval = Math.Max(60, Config.CloseDelayMs) };
+            _previewCloseTimer.Tick += (s, e) =>
+            {
+                _previewCloseTimer.Stop(); _previewCloseTimer.Dispose(); _previewCloseTimer = null;
+                if (_previewForm == null) return;
+                var pt = Cursor.Position;
+                bool inPv = _previewForm.ContainsPoint(pt.X, pt.Y);
+                bool inList = _fnListContainsCursor();
+                if (inPv || inList) { _fnSchedulePreviewClose(); return; }
+                _fnClosePreviewForm();
+            };
+            _previewCloseTimer.Start();
+        }
+
+        private void _fnClosePreviewForm()
+        {
+            if (_previewCloseTimer != null) { _previewCloseTimer.Stop(); _previewCloseTimer.Dispose(); _previewCloseTimer = null; }
+            if (_previewForm == null) return;
+            if (_previewForm.Pinned) { _previewForm = null; return; }
+            try { _previewForm.Close(); _previewForm.Dispose(); } catch { }
+            _previewForm = null;
+        }
+
+        private void _fnShowPreview(EntryRow row)
+        {
+            string full = _previewPath;
+            if (full == null || full != row.Full) return;
+            Task.Run(() =>
+            {
+                try
+                {
+                    var result = PreviewProvider.Generate(full);
+                    if (result == null) return;
+                    try
+                    {
+                        if (IsDisposed) { if (result.Image != null) result.Image.Dispose(); return; }
+                        BeginInvoke((MethodInvoker)delegate()
+                        {
+                            if (full != _previewPath) { if (result.Image != null) result.Image.Dispose(); return; }
+                            _fnClosePreviewForm();
+                            if (result.Kind == PreviewResult.KindEnum.Image)
+                            {
+                                if (result.IsGif)
+                                    _previewForm = new PreviewForm(result.Image, result.DisplayW, result.DisplayH);
+                                else
+                                    _previewForm = new PreviewForm(result.Image);
+                            }
+                            else if (result.Kind == PreviewResult.KindEnum.Media)
+                            {
+                                var ctl = MediaPreview.MediaPlayer(full, result.IsVideo, result.DisplayW, result.DisplayH);
+                                _previewForm = new PreviewForm(ctl, ctl.Width, ctl.Height, result.IsVideo ? "video" : "audio");
+                            }
+                            else if (result.Kind == PreviewResult.KindEnum.SvgHtml)
+                            {
+                                var ctl = MediaPreview.SvgBrowserPanel(full);
+                                _previewForm = new PreviewForm(ctl, ctl.Width, ctl.Height, "svg");
+                            }
+                            else
+                            {
+                                _previewForm = new PreviewForm(result.Text, result.Size);
+                            }
+                            _fnPositionPreview(row);
+                            _previewForm.FilePath = full;
+                            PopupForm.ApplyHeader(_previewForm, full);
+                            _previewForm.Show();
+                            NativeMethods.SetWindowPos(_previewForm.Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+                                NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOACTIVATE);
+                        });
+                    }
+                    catch (Exception ex) { Program.DebugLog("[entry-preview] show fail: " + ex.Message); }
+                }
+                catch (Exception ex) { Program.DebugLog("[entry-preview] generate fail: " + ex.Message); }
+            });
+        }
+
+        private void _fnPositionPreview(EntryRow row)
+        {
+            if (_previewForm == null) return;
+            int lx = Left, rx = Right;
+            int x = rx + 8, y = row.PointToScreen(Point.Empty).Y;
+            int pw = _previewForm.Width, ph = _previewForm.Height;
+            NativeMethods.POINT pt;
+            NativeMethods.GetCursorPos(out pt);
+            var hmon = NativeMethods.MonitorFromPoint(pt, 2);
+            var mi = new NativeMethods.MONITORINFO { cbSize = Marshal.SizeOf(typeof(NativeMethods.MONITORINFO)) };
+            NativeMethods.GetMonitorInfo(hmon, ref mi);
+            int wl = mi.rcWork.Left, wt = mi.rcWork.Top, wr = mi.rcWork.Right, wb = mi.rcWork.Bottom;
+            int maxW = wr - wl - 16, maxH = wb - wt - 16;
+            if (maxW < 120) maxW = 120;
+            if (maxH < 90) maxH = 90;
+            if (pw > maxW) { pw = maxW; _previewForm.ClientSize = new Size(pw, _previewForm.ClientSize.Height); }
+            if (ph > maxH) { ph = maxH; _previewForm.ClientSize = new Size(_previewForm.ClientSize.Width, ph); }
+            if (x + pw > wr)
+            {
+                x = lx - pw - 8;
+                if (x < wl || x + pw > lx - 4)
+                {
+                    int maxPw = lx - wl - 12;
+                    if (maxPw < 120) maxPw = 120;
+                    if (pw > maxPw) { pw = maxPw; _previewForm.ClientSize = new Size(pw, _previewForm.ClientSize.Height); }
+                    x = lx - pw - 8;
+                    if (x < wl) x = wl + 4;
+                }
+            }
+            if (y + ph > wb) y = wb - ph - 4;
+            if (y < wt) y = wt + 4;
+            _previewForm.Location = new Point(x, y);
         }
 
         // ---- 拖拽悬停文件夹（弹簧式）：OLE 拖拽期间 MouseEnter/MouseMove 不触发，
@@ -1048,6 +1203,7 @@ namespace HoverExplorer
 
         protected override void WndProc(ref Message m)
         {
+
             // 圆角描边与自身背景同色：亮色描边压在深色配色上很突兀，同色后只剩 DWM 圆角外形
             if (Win11.WndNcBorder(Handle, ref m, () => BackColor)) return;
             if (m.Msg == 0x84)   // WM_NCHITTEST
@@ -1112,6 +1268,7 @@ namespace HoverExplorer
         protected override void OnShown(EventArgs e)
         {
             base.OnShown(e);
+
             _current = this;
             if (_watchTimer == null)
             {
@@ -1137,6 +1294,7 @@ namespace HoverExplorer
                             && rp.Y >= Config.EntryRectY && rp.Y < Config.EntryRectY + Config.EntryRectH;
                     }
                     if (!inside) inside = PopupForm.InAnyHoverPanelOrPreview(Cursor.Position.X, Cursor.Position.Y);
+                    if (!inside && _previewForm != null && _previewForm.ContainsPoint(Cursor.Position.X, Cursor.Position.Y)) inside = true;
                     if (!inside && Program.EntryCardContainsCursor()) inside = true;   // 折叠卡片在 → 列表由它承接
                     if (inside) { missSince = 0; return; }
                     int now = Environment.TickCount;
@@ -1194,6 +1352,8 @@ namespace HoverExplorer
             if (_watchTimer != null) { _watchTimer.Stop(); _watchTimer.Dispose(); _watchTimer = null; }
             if (_rowHoverTimer != null) { _rowHoverTimer.Stop(); _rowHoverTimer.Dispose(); _rowHoverTimer = null; }
             if (_dragSubTimer != null) { _dragSubTimer.Stop(); _dragSubTimer.Dispose(); _dragSubTimer = null; _dragSubRow = null; }
+            _fnClosePreviewForm();
+            if (_previewTimer != null) { _previewTimer.Stop(); _previewTimer.Dispose(); _previewTimer = null; }
 
             if (_rowEdit != null) { try { _rowEdit.Dispose(); } catch { } _rowEdit = null; _rowEditRow = null; }
             if (_current == this) _current = null;
@@ -1386,6 +1546,7 @@ namespace HoverExplorer
         public event EventHandler<bool> BtnHover;   // 进入按钮区 = 抑制行级联子列表调度
 
         private bool _inStar;
+
         private static readonly Color StarLit = ColorTranslator.FromHtml("#f0b429");
         private readonly Label _btnRename, _btnCopy, _btnPin;
 
@@ -1486,9 +1647,10 @@ namespace HoverExplorer
             base.OnMouseClick(e);
         }
 
-        protected override void OnPaint(PaintEventArgs e)
+        protected override void OnPaint(PaintEventArgs e) { PaintTo(e.Graphics); }
+
+        internal void PaintTo(Graphics g)
         {
-            var g = e.Graphics;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
             var icon = PopupForm.GetEntryIconFor(Full);
             if (icon != null) g.DrawImage(icon, 6, (Height - icon.Height) / 2);
@@ -1641,7 +1803,8 @@ namespace HoverExplorer
     // 双缓冲 Panel（侧栏色块自绘用，避免闪烁）
     internal class SideTab : Panel
     {
-        public SideTab() { DoubleBuffered = true; }
+        // 双缓冲在首次弹出有 AV 崩溃记录（同 EntryListForm/EntryRow），改直绘
+        public SideTab() { DoubleBuffered = false; }
     }
 
     // 简易输入对话框（分组改名用，替代缺失的 InputBox）

@@ -69,6 +69,7 @@
 - **更新提示 / Update badge**: 后台检查 GitHub Releases，有新版时托盘图标显示绿点、悬停提示版本 — Background release check; green dot on tray icon with tooltip when a new version exists
 - **固定文件卡片 / Pin file card**: 预览窗图钉固定为桌面卡片，▶ 执行，中键关闭，右键原生菜单 — Pin preview as desktop card; ▶ to run; middle-click close; right-click native menu
 - **文件列表右键菜单 / List context menu**: 打开/编辑/新窗口/重命名/删除/复制路径·名称/原生菜单 — Open/edit/new window/rename/delete/copy path·name/native menu
+- **历史·收藏文件预览 / History-favorite file preview**: 历史·收藏列表中悬停文件行直接弹出预览窗（与文件列表面板预览一致） — Hover file row in history/favorite list shows preview (same as file panel preview)
 - **预览窗复制菜单 / Preview copy menu**: 复制选中文本/全文/文件/路径，移开自动收起 — Copy selected/all/file/path; auto-dismiss on leave
 - **按钮提示 / Button tooltips**: 悬停显示功能说明于指针上方，可关闭 — Hover shows description above cursor; disableable
 - **预览尺寸记忆 / Preview size memory**: 拖手柄或 `Ctrl+滚轮` 缩放，尺寸自动记住 — Drag handle or `Ctrl+scroll` to resize; size remembered

@@ -901,11 +901,18 @@ internal static class MediaPreview
                 g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
                 var path = new System.Drawing.Drawing2D.GraphicsPath();
                 int r = 4;
-                path.AddArc(0, 0, r * 2, r * 2, 180, 180);
-                path.AddArc(w - r * 2, 0, r * 2, r * 2, 270, 180);
-                path.AddArc(w - r * 2, h - r * 2, r * 2, r * 2, 0, 180);
-                path.AddArc(0, h - r * 2, r * 2, r * 2, 90, 180);
-                path.CloseFigure();
+                if (w >= r * 2 && h >= r * 2)
+                {
+                    path.AddArc(0, 0, r * 2, r * 2, 180, 180);
+                    path.AddArc(w - r * 2, 0, r * 2, r * 2, 270, 180);
+                    path.AddArc(w - r * 2, h - r * 2, r * 2, r * 2, 0, 180);
+                    path.AddArc(0, h - r * 2, r * 2, r * 2, 90, 180);
+                    path.CloseFigure();
+                }
+                else
+                {
+                    path.AddRectangle(new Rectangle(0, 0, w, h));
+                }
                 using (var b = new SolidBrush(Config.BG)) g.FillPath(b, path);
                 using (var p = new Pen(Config.Border)) g.DrawPath(p, path);
                 using (var f = new Font(Config.FontName, 8f))

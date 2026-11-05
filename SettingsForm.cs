@@ -22,8 +22,10 @@ namespace HoverExplorer
         private int _contentW;             // 主区内容宽度（扣除侧栏+滚动条+内边距）
         private int _curPage = -1;          // 当前分页索引（-1 确保首次切换生效）
         private readonly List<Label> _navItems = new List<Label>();
-        private static readonly int[] _boldNavPages = { 0, 3, 4 };
-        private static readonly int[] _indentNavPages = { 1, 2 };
+        private static readonly int[] _boldNavPages = { 0, 2, 3, 4 };
+        private static readonly int[] _indentNavPages = { 1 };
+        // 侧栏显示顺序 → 实际 pageIdx（列表外观上移到预览列表下方，原预览内容下移并改名预览窗口）
+        private static readonly int[] _navDisplayOrder = { 0, 2, 1, 3, 4, 5, 6, 7 };
 
         private readonly List<AccGroup> _groups = new List<AccGroup>();
         private AccGroup _hoverGroup;
@@ -265,7 +267,7 @@ namespace HoverExplorer
             };
             Controls.Add(_sidebar);
             int navY = 14;
-            string[] navLabels = { I18n.T("nav_preview_list"), I18n.T("group_content"), I18n.T("group_appearance"), I18n.T("group_card"), I18n.T("group_entry"), I18n.T("group_advanced"), I18n.T("group_tray"), I18n.T("group_about") };
+            string[] navLabels = { I18n.T("nav_preview_list"), I18n.T("group_appearance"), I18n.T("group_content"), I18n.T("group_card"), I18n.T("group_entry"), I18n.T("group_advanced"), I18n.T("group_tray"), I18n.T("group_about") };
             for (int i = 0; i < navLabels.Length; i++)
             {
                 int idx = i;
@@ -282,9 +284,9 @@ namespace HoverExplorer
                     ForeColor = Config.FG,
                     Tag = "nav",
                 };
-                item.MouseEnter += (s, e) => { if (idx != _curPage) item.BackColor = Config.BG; };
-                item.MouseLeave += (s, e) => { if (idx != _curPage) item.BackColor = Config.BgHover; };
-                item.Click += (s, e) => _fnSwitchPage(idx);
+                item.MouseEnter += (s, e) => { if (_navDisplayOrder[idx] != _curPage) item.BackColor = Config.BG; };
+                item.MouseLeave += (s, e) => { if (_navDisplayOrder[idx] != _curPage) item.BackColor = Config.BgHover; };
+                item.Click += (s, e) => _fnSwitchPage(_navDisplayOrder[idx]);
                 _sidebar.Controls.Add(item);
                 _navItems.Add(item);
                 navY += 34;
@@ -1849,7 +1851,7 @@ namespace HoverExplorer
             // 高亮当前导航项
             for (int i = 0; i < _navItems.Count; i++)
             {
-                bool on = i == idx;
+                bool on = _navDisplayOrder[i] == idx;
                 _navItems[i].BackColor = on ? Config.BG : Config.BgHover;
                 _navItems[i].ForeColor = on ? Config.Accent : Config.FG;
                 bool boldBase = Array.IndexOf(_boldNavPages, i) >= 0;
@@ -1980,7 +1982,7 @@ namespace HoverExplorer
             resetBtn.FlatAppearance.BorderColor = Config.Border;
             resetBtn.FlatAppearance.MouseOverBackColor = Config.BG;
             int pillAreaW = 100;
-            int panelW = toggle.Width + 8 + delBtn.Width + 4 + resetBtn.Width + 8 + pillAreaW;
+            int panelW = toggle.Width + 8 + delBtn.Width + 4 + resetBtn.Width + 8 + Math.Max(pillAreaW, pill.Width);
             var panel = new Panel
             {
                 Size = new Size(panelW, panelH),
@@ -2002,6 +2004,15 @@ namespace HoverExplorer
             };
             pill.SizeChanged += (s, e) =>
             {
+                // pill 宽度随键序列变化：扩大 panel 容纳 pill，保持 panel 右边缘固定（对齐行右），
+                // pill 右对齐到 panel 右边缘——避免 pill 向左延伸覆盖前方的重置/删除按钮
+                int need = toggle.Width + 8 + delBtn.Width + 4 + resetBtn.Width + 8 + Math.Max(pillAreaW, pill.Width);
+                if (need != panel.Width)
+                {
+                    int oldRight = panel.Right;
+                    panel.Width = need;
+                    panel.Left = oldRight - need;
+                }
                 pill.Location = new Point(panel.Width - pill.Width, (panelH - pill.Height) / 2);
             };
             int origY = y;
@@ -3456,6 +3467,7 @@ namespace HoverExplorer
         {
             var path = new GraphicsPath();
             float d = Math.Min(r * 2, Math.Min(w, h));
+            if (d <= 0) { path.AddRectangle(new RectangleF(x, y, w, h)); return path; }
             path.AddArc(x, y, d, d, 180, 90);
             path.AddArc(x + w - d, y, d, d, 270, 90);
             path.AddArc(x + w - d, y + h - d, d, d, 0, 90);
