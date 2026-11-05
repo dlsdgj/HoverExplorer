@@ -116,16 +116,35 @@ namespace HoverExplorer
 
         private static readonly object _dbgLock = new object();
         private static string _logPath;
+        private static readonly List<string> _dbgQueue = new List<string>();
+        private static System.Threading.Timer _dbgFlushTimer;
+        private static DateTime _lastTickSkipLog = DateTime.MinValue;
         public static void DebugLog(string msg)
         {
             if (!Config.DebugLog) return;
+            lock (_dbgLock)
+            {
+                // 热路径（80ms tick、预览播放期间）每条都同步写文件 = UI 线程每秒十几次
+                // 文件 I/O（还要过杀软钩子），视频播放直接被卡出掉帧——攒着每秒刷一次
+                if (_dbgFlushTimer == null)
+                    _dbgFlushTimer = new System.Threading.Timer(delegate { FlushDbg(); }, null, 1000, 1000);
+                _dbgQueue.Add(DateTime.Now.ToString("HH:mm:ss.fff") + " " + msg + Environment.NewLine);
+                if (_dbgQueue.Count >= 500) FlushDbgLocked();
+            }
+        }
+        private static void FlushDbg()
+        {
+            lock (_dbgLock) { FlushDbgLocked(); }
+        }
+        private static void FlushDbgLocked()
+        {
+            if (_dbgQueue.Count == 0) return;
             try
             {
-                lock (_dbgLock)
-                    File.AppendAllText(_logPath ?? (_logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "hover_debug.log")),
-                        DateTime.Now.ToString("HH:mm:ss.fff") + " " + msg + Environment.NewLine);
+                File.AppendAllLines(_logPath ?? (_logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "hover_debug.log")), _dbgQueue);
             }
             catch { }
+            _dbgQueue.Clear();
         }
 
 
@@ -998,7 +1017,12 @@ namespace HoverExplorer
             if (Config.HideTooltip && (inPanel || inPreview || inExtPreview)) HideTooltips();
             if (menuOpen || inPanel || _panels.Any(p => p.MenuOpen) || _panels.Any(p => p.ModalOpen) || _panels.Any(p => p.IsDragging) || inPreview || inExtPreview)
             {
-                if (inPreview || inExtPreview) Program.DebugLog("[tick] mouse in preview, skip mx=" + mx + ",my=" + my + " inPanel=" + inPanel + " inPreview=" + inPreview + " inExtPreview=" + inExtPreview + " panels=" + _panels.Count);
+                // 每 tick 都会走到这里（预览播放期间鼠标就停在预览窗上），只按时间节流记日志
+                if ((inPreview || inExtPreview) && (DateTime.UtcNow - _lastTickSkipLog).TotalMilliseconds > 2000)
+                {
+                    _lastTickSkipLog = DateTime.UtcNow;
+                    Program.DebugLog("[tick] mouse in preview, skip mx=" + mx + ",my=" + my + " inPanel=" + inPanel + " inPreview=" + inPreview + " inExtPreview=" + inExtPreview + " panels=" + _panels.Count);
+                }
                 _closeStart = DateTime.MinValue;
                 return;
             }
