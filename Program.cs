@@ -128,7 +128,7 @@ namespace HoverExplorer
                 // 文件 I/O（还要过杀软钩子），视频播放直接被卡出掉帧——攒着每秒刷一次
                 if (_dbgFlushTimer == null)
                     _dbgFlushTimer = new System.Threading.Timer(delegate { FlushDbg(); }, null, 1000, 1000);
-                _dbgQueue.Add(DateTime.Now.ToString("HH:mm:ss.fff") + " " + msg + Environment.NewLine);
+                _dbgQueue.Add(DateTime.Now.ToString("HH:mm:ss.fff") + " " + msg);   // AppendAllLines 自带换行
                 if (_dbgQueue.Count >= 500) FlushDbgLocked();
             }
         }
@@ -165,6 +165,7 @@ namespace HoverExplorer
         {
             DebugLog("[boot] === HoverExplorer start ===");
             DebugLog("[boot] os=" + Environment.OSVersion.VersionString);
+            try { DebugLog("[boot] wpf-tier=" + (System.Windows.Media.RenderCapability.Tier >> 16) + " (2=硬件加速 0=软件渲染)"); } catch { }
             try { using (var g = Graphics.FromHwnd(IntPtr.Zero)) DebugLog("[boot] dpi=" + g.DpiX); } catch { }
             DebugLog("[boot] theme=" + Config.Theme + " lang=" + Config.Language + " explorer=" + Config.ExplorerEnabled + " preview=" + Config.PreviewFiles + " previewDelay=" + Config.PreviewDelay + " checkInterval=" + Config.CheckInterval + " debugLog=" + Config.DebugLog + " hotkey=" + Config.HotkeyEnabled + "/" + SettingsForm.HotkeyDisplay(Config.HotkeyEnabled, Config.HotkeyModifiers, Config.HotkeyKey));
         }
@@ -529,10 +530,26 @@ namespace HoverExplorer
         private static DateTime _lastSysThemeAt = DateTime.UtcNow;
         private static bool _lastSysDark = Config.SystemDark;
 
+        private static DateTime _lastTickAt = DateTime.MinValue;
         private static void Tick()
         {
+            // 卡顿取证：UI 线程被外物阻塞（gap）或 tick 本身太重（slow）时留痕，
+            // 与媒体播放卡顿对照定位（视频合成与 tick 同在 UI 线程侧的只有输入/布局）
+            var now = DateTime.UtcNow;
+            if (_lastTickAt != DateTime.MinValue)
+            {
+                double gap = (now - _lastTickAt).TotalMilliseconds;
+                if (gap > 300) DebugLog("[tick] gap " + gap.ToString("F0") + "ms (UI 线程被阻塞)");
+            }
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             try { TickImpl(); }
             catch (Exception ex) { Log("[tick异常] " + ex.Message); }
+            finally
+            {
+                sw.Stop();
+                if (sw.ElapsedMilliseconds > 120) DebugLog("[tick] slow " + sw.ElapsedMilliseconds + "ms");
+                _lastTickAt = DateTime.UtcNow;
+            }
         }
 
         private static readonly uint _currentPid = (uint)Process.GetCurrentProcess().Id;
