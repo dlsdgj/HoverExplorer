@@ -482,19 +482,8 @@ namespace HoverExplorer
             y = _pvTypeGroup.AddRow(y, I18n.T("mute_video"), I18n.T("mute_video_desc"), _pvMuteToggle);
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_types_desc"), null, null);
 
-            _pvImageToggle = new ToggleSwitch { On = Config.PreviewImage };
-            _pvImageToggle.Toggled += (s, e) => { _fnApplySettings(false, false); };
-            y = _pvTypeGroup.AddRow(y, I18n.T("pv_type_image"), null, _pvImageToggle);
-
-            _pvVideoToggle = new ToggleSwitch { On = Config.PreviewVideo };
-            _pvVideoToggle.Toggled += (s, e) => { _fnApplySettings(false, false); };
-            y = _pvTypeGroup.AddRow(y, I18n.T("pv_type_video"), null, _pvVideoToggle);
-
-            _pvVideoDelayStepper = new DelayStepper { Value = Config.VideoPreviewDelay };
-            _pvVideoDelayStepper.ValueChanged += (s, e) => { _fnApplySettings(false, false); };
-            y = _pvTypeGroup.AddRow(y, I18n.T("pv_video_delay"), I18n.T("pv_video_delay_desc"), _pvVideoDelayStepper);
-
-            // 文件预览边缘触发：条目中段留给改名/右键/拖拽，只有停在左/右缘才弹预览窗
+            // 全局设置（不分类型）：文件预览的触发位置——条目中段留给改名/右键/拖拽，
+            // 只有停在左/右缘触发区才弹预览窗。放组首，避免被误读成下面某个类型的子设置
             _pvEdgeCombo = new DarkCombo { Font = new Font(Config.FontName, 8.5f), Width = 170, Height = 24 };
             _pvEdgeCombo.Items.AddRange(new object[] {
                 I18n.T("edge_off"), I18n.T("edge_left"), I18n.T("edge_right"), I18n.T("edge_both"),
@@ -506,6 +495,18 @@ namespace HoverExplorer
             _pvEdgeWidthStepper = new MsStepper { Value = Math.Max(50, Config.PreviewEdgeWidth) };
             _pvEdgeWidthStepper.ValueChanged += (s, e) => { _fnApplySettings(false, false); };
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_edge_width"), null, _pvEdgeWidthStepper);
+
+            _pvImageToggle = new ToggleSwitch { On = Config.PreviewImage };
+            _pvImageToggle.Toggled += (s, e) => { _fnApplySettings(false, false); };
+            y = _pvTypeGroup.AddRow(y, I18n.T("pv_type_image"), null, _pvImageToggle);
+
+            _pvVideoToggle = new ToggleSwitch { On = Config.PreviewVideo };
+            _pvVideoToggle.Toggled += (s, e) => { _fnApplySettings(false, false); };
+            y = _pvTypeGroup.AddRow(y, I18n.T("pv_type_video"), null, _pvVideoToggle);
+
+            _pvVideoDelayStepper = new DelayStepper { Value = Config.VideoPreviewDelay };
+            _pvVideoDelayStepper.ValueChanged += (s, e) => { _fnApplySettings(false, false); };
+            y = _pvTypeGroup.AddRow(y, I18n.T("pv_video_delay"), I18n.T("pv_video_delay_desc"), _pvVideoDelayStepper);
 
             _pvAudioToggle = new ToggleSwitch { On = Config.PreviewAudio };
             _pvAudioToggle.Toggled += (s, e) => { _fnApplySettings(false, false); };
