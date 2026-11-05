@@ -1122,6 +1122,19 @@ namespace HoverExplorer
             // 门控只拦各自功能：文件夹被拦不弹面板，预览被拦不弹预览（未拦的一方正常走）
             if (folderSup) hoverFolder = null;
             if (previewSup) hoverFile = null;
+            // 文件预览边缘触发区：条目中段不弹预览窗（留给改名/右键/拖拽），只有停在
+            // 左/右缘触发区才预览。长按预览模式按住左键=主动操作，不受限
+            if (hoverFile != null && Config.PreviewEdgeMode != 0 && !hoverRect.IsEmpty)
+            {
+                bool lpActive = Config.LongPressFor(true) && Config.IsLeftDown();
+                if (!lpActive)
+                {
+                    int w = Math.Max(8, Math.Min(Config.PreviewEdgeWidth, hoverRect.Width / 3));
+                    bool inEdge = ((Config.PreviewEdgeMode & 1) != 0 && mx < hoverRect.Left + w)
+                               || ((Config.PreviewEdgeMode & 2) != 0 && mx >= hoverRect.Right - w);
+                    if (!inEdge) hoverFile = null;
+                }
+            }
             if (hoverPath != null && Config.HideTooltip) HideTooltips();
             if (hoverPath != _lastHoverPath)
             {

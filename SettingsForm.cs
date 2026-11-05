@@ -64,6 +64,8 @@ namespace HoverExplorer
         private ToggleSwitch _pvImageToggle;
         private ToggleSwitch _pvVideoToggle;
         private DelayStepper _pvVideoDelayStepper;  // 视频预览单独触发延时
+        private DarkCombo _pvEdgeCombo;             // 文件预览边缘触发位置
+        private MsStepper _pvEdgeWidthStepper;      // 边缘触发区宽度(px)
         private ToggleSwitch _pvAudioToggle;
         private ToggleSwitch _pvDocToggle;
         private ToggleSwitch _pvTextToggle;
@@ -491,6 +493,19 @@ namespace HoverExplorer
             _pvVideoDelayStepper = new DelayStepper { Value = Config.VideoPreviewDelay };
             _pvVideoDelayStepper.ValueChanged += (s, e) => { _fnApplySettings(false, false); };
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_video_delay"), I18n.T("pv_video_delay_desc"), _pvVideoDelayStepper);
+
+            // 文件预览边缘触发：条目中段留给改名/右键/拖拽，只有停在左/右缘才弹预览窗
+            _pvEdgeCombo = new DarkCombo { Font = new Font(Config.FontName, 8.5f), Width = 170, Height = 24 };
+            _pvEdgeCombo.Items.AddRange(new object[] {
+                I18n.T("edge_off"), I18n.T("edge_left"), I18n.T("edge_right"), I18n.T("edge_both"),
+            });
+            _pvEdgeCombo.SelectedIndex = Math.Max(0, Math.Min(3, Config.PreviewEdgeMode));
+            _pvEdgeCombo.SelectedIndexChanged += (s, e) => { _fnApplySettings(false, false); };
+            y = _pvTypeGroup.AddRow(y, I18n.T("pv_edge"), I18n.T("pv_edge_desc"), _pvEdgeCombo);
+
+            _pvEdgeWidthStepper = new MsStepper { Value = Math.Max(50, Config.PreviewEdgeWidth) };
+            _pvEdgeWidthStepper.ValueChanged += (s, e) => { _fnApplySettings(false, false); };
+            y = _pvTypeGroup.AddRow(y, I18n.T("pv_edge_width"), null, _pvEdgeWidthStepper);
 
             _pvAudioToggle = new ToggleSwitch { On = Config.PreviewAudio };
             _pvAudioToggle.Toggled += (s, e) => { _fnApplySettings(false, false); };
@@ -2199,6 +2214,8 @@ namespace HoverExplorer
             if (_pvImageToggle != null) Config.PreviewImage = _pvImageToggle.On;
             if (_pvVideoToggle != null) Config.PreviewVideo = _pvVideoToggle.On;
             if (_pvVideoDelayStepper != null) Config.VideoPreviewDelay = _pvVideoDelayStepper.Value;
+            if (_pvEdgeCombo != null) Config.PreviewEdgeMode = Math.Max(0, Math.Min(3, _pvEdgeCombo.SelectedIndex));
+            if (_pvEdgeWidthStepper != null) Config.PreviewEdgeWidth = _pvEdgeWidthStepper.Value;
             if (_pvAudioToggle != null) Config.PreviewAudio = _pvAudioToggle.On;
             if (_pvDocToggle != null) Config.PreviewDocument = _pvDocToggle.On;
             if (_pvTextToggle != null) Config.PreviewText = _pvTextToggle.On;
