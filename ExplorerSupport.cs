@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace HoverExplorer
 {
@@ -124,13 +125,39 @@ namespace HoverExplorer
                     _hitRect = rect; _outRect = rect; _hitAt = DateTime.UtcNow;
                     result = fullPath;
                 }
-                else { rect = System.Drawing.Rectangle.Empty; isDir = false; }
+                else
+                {
+                    // "此电脑"页：位置是 shell 命名空间（::{CLSID}）而非文件系统目录，
+                    // 拼路径必失败。驱动器条目名自带盘符（"本地磁盘 (C:)"/"系统 (C:)"）→
+                    // 抽盘符还原成 C:\；其余条目（Shell 文件夹/设备）不覆盖
+                    string drive = ResolveDriveItem(name);
+                    if (drive != null)
+                    {
+                        isDir = true;
+                        _hitHwnd = explorerHwnd; _hitPath = drive; _hitIsDir = true;
+                        _hitRect = rect; _outRect = rect; _hitAt = DateTime.UtcNow;
+                        result = drive;
+                    }
+                    else { rect = System.Drawing.Rectangle.Empty; isDir = false; }
+                }
             }
             _stillHwnd = explorerHwnd; _stillX = mx; _stillY = my;
             _stillPath = result; _stillRect = result != null ? rect : System.Drawing.Rectangle.Empty;
             _stillIsDir = result != null && isDir;
             _stillAt = DateTime.UtcNow;
             return result;
+        }
+
+        private static readonly Regex _driveNameRe = new Regex(@"([A-Za-z]):", RegexOptions.Compiled);
+
+        // "此电脑"的驱动器条目显示名（"本地磁盘 (C:)"）抽盘符 → "C:\"；匹配不到返回 null
+        internal static string ResolveDriveItem(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            Match m = _driveNameRe.Match(name);
+            if (!m.Success) return null;
+            string drive = m.Groups[1].Value.ToUpperInvariant() + ":\\";
+            return Directory.Exists(drive) ? drive : null;
         }
 
         // desktop.ini 显示名 → 真实文件系统路径 的还原缓存（失败的显示名也缓存，免得每次 tick 重扫）
