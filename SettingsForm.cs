@@ -64,6 +64,7 @@ namespace HoverExplorer
         private ToggleSwitch _pvImageToggle;
         private ToggleSwitch _pvVideoToggle;
         private DelayStepper _pvVideoDelayStepper;  // 视频预览单独触发延时
+        private ToggleSwitch _pvVideoDelayToggle;   // 视频预览延时开关
         private DarkCombo _pvEdgeCombo;             // 文件预览边缘触发位置
         private MsStepper _pvEdgeWidthStepper;      // 边缘触发区宽度(px)
         private ToggleSwitch _pvAudioToggle;
@@ -480,7 +481,16 @@ namespace HoverExplorer
             _pvMuteToggle = new ToggleSwitch { On = Config.PreviewMuted };
             _pvMuteToggle.Toggled += (s, e) => _fnApplySettings(false, false);
             y = _pvTypeGroup.AddRow(y, I18n.T("mute_video"), I18n.T("mute_video_desc"), _pvMuteToggle);
-            y = _pvTypeGroup.AddRow(y, I18n.T("pv_types_desc"), null, null);
+
+            // 视频预览延时：独立开关 + 秒数（关掉=视频跟随全局悬停延时；边缘触发开启时也会自动停用）
+            _pvVideoDelayToggle = new ToggleSwitch { On = Config.VideoPreviewDelayEnabled };
+            _pvVideoDelayToggle.Toggled += (s, e) => { _fnApplySettings(false, false); };
+            _pvVideoDelayStepper = new DelayStepper { Value = Config.VideoPreviewDelay };
+            _pvVideoDelayStepper.ValueChanged += (s, e) => { _fnApplySettings(false, false); };
+            var vdRow = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = Padding.Empty, BackColor = _pvTypeGroup.BackColor };
+            vdRow.Controls.Add(_pvVideoDelayToggle);
+            vdRow.Controls.Add(_pvVideoDelayStepper);
+            y = _pvTypeGroup.AddRow(y, I18n.T("pv_video_delay"), I18n.T("pv_video_delay_desc"), vdRow);
 
             // 全局设置（不分类型）：文件预览的触发位置——条目中段留给改名/右键/拖拽，
             // 只有停在左/右缘触发区才弹预览窗。放组首，避免被误读成下面某个类型的子设置
@@ -496,6 +506,9 @@ namespace HoverExplorer
             _pvEdgeWidthStepper.ValueChanged += (s, e) => { _fnApplySettings(false, false); };
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_edge_width"), null, _pvEdgeWidthStepper);
 
+            // 逐类开关要预览的类型（组说明紧贴类型开关区，别和上面的全局设置混在一起）
+            y = _pvTypeGroup.AddRow(y, I18n.T("pv_types_desc"), null, null);
+
             _pvImageToggle = new ToggleSwitch { On = Config.PreviewImage };
             _pvImageToggle.Toggled += (s, e) => { _fnApplySettings(false, false); };
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_type_image"), null, _pvImageToggle);
@@ -503,10 +516,6 @@ namespace HoverExplorer
             _pvVideoToggle = new ToggleSwitch { On = Config.PreviewVideo };
             _pvVideoToggle.Toggled += (s, e) => { _fnApplySettings(false, false); };
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_type_video"), null, _pvVideoToggle);
-
-            _pvVideoDelayStepper = new DelayStepper { Value = Config.VideoPreviewDelay };
-            _pvVideoDelayStepper.ValueChanged += (s, e) => { _fnApplySettings(false, false); };
-            y = _pvTypeGroup.AddRow(y, I18n.T("pv_video_delay"), I18n.T("pv_video_delay_desc"), _pvVideoDelayStepper);
 
             _pvAudioToggle = new ToggleSwitch { On = Config.PreviewAudio };
             _pvAudioToggle.Toggled += (s, e) => { _fnApplySettings(false, false); };
@@ -2225,6 +2234,7 @@ namespace HoverExplorer
             // 预览类型分类开关（关掉的类别不再弹预览窗）
             if (_pvImageToggle != null) Config.PreviewImage = _pvImageToggle.On;
             if (_pvVideoToggle != null) Config.PreviewVideo = _pvVideoToggle.On;
+            if (_pvVideoDelayToggle != null) Config.VideoPreviewDelayEnabled = _pvVideoDelayToggle.On;
             if (_pvVideoDelayStepper != null) Config.VideoPreviewDelay = _pvVideoDelayStepper.Value;
             if (_pvEdgeCombo != null) Config.PreviewEdgeMode = Math.Max(0, Math.Min(3, _pvEdgeCombo.SelectedIndex));
             if (_pvEdgeWidthStepper != null) Config.PreviewEdgeWidth = _pvEdgeWidthStepper.Value;

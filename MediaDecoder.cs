@@ -301,8 +301,9 @@ namespace HoverExplorer
         private double _frameAcc = 0;  // 帧消费累加器
         private DateTime _lastTick = DateTime.MinValue;
 
-        // 音频：视频流本身 -an（FX3/LPCM 等系统解不了的素材才走到本面板），点喇叭才起音频会话。
-        // FfmpegAudioSession 构造即开（waveOut + ffmpeg 进程），在后台线程做，成功后对齐到视频当前位置
+        // 音频：视频流本身 -an（高码流/系统解不了的素材才走到本面板）。
+        // 跟随 Config.PreviewMuted 初始化（与 MediaElement 路径一致），喇叭键随时开关；
+        // 音频会话惰性创建（构造含 waveOut+起 ffmpeg 进程，后台线程做），成功后对齐到视频当前位置
         private FfmpegAudioSession _audio;
         private volatile bool _audioOn;
         private bool _audioOpening;
@@ -395,10 +396,11 @@ namespace HoverExplorer
             ruler.CommitSpeed += delegate(double r) { _speed = r; MediaPreview.UpdateSpeedHint(spdHint, r); ApplySpeedToAudio(); };
             ruler.RestoreSpeed += delegate { _speed = ruler.Committed; MediaPreview.UpdateSpeedHint(spdHint, ruler.Committed); ApplySpeedToAudio(); };
             var cls = MediaPreview.CloseButton(this);
-            // 静音键：ffmpeg 通道默认无声，点喇叭才起音频会话（DoCK 逆序结算 → 落在播放键右侧）
+            // 静音键：跟随默认静音配置初始化（与 MediaElement 路径一致），点喇叭键随时开关
+            _audioOn = !Config.PreviewMuted;
             _muteBtn = new Button
             {
-                Text = "🔇",
+                Text = _audioOn ? "🔊" : "🔇",
                 Width = 32,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
@@ -454,6 +456,8 @@ namespace HoverExplorer
                         UpdateSpecBadge();
                         var hSize = VideoSizeKnown;
                         if (hSize != null) { try { hSize(_info.Width, _info.Height); } catch { } }
+                        // 默认开声（配置未静音）：探测确认有声轨就自动起音频会话，不用手点喇叭
+                        if (_audioOn && _audio == null && !_audioOpening && _info.HasAudio) OpenAudioAsync();
                     }
                 }
                 if (_failFlag) { _failFlag = false; RaiseFailedUi(); }
@@ -786,8 +790,7 @@ namespace HoverExplorer
             if (_audioOn && _audio != null && _audio.IsLoaded) SyncAudioToVideo();
         }
 
-        // 点喇叭：开声。音频会话惰性创建（构造含 waveOut+起 ffmpeg 进程，放后台线程做），
-        // 成功后对齐到视频当前位置；无声轨直接弹回静音
+        // 点喇叭：开声。音频会话惰性创建，成功后对齐到视频当前位置；无声轨直接弹回静音
         private void ToggleAudio()
         {
             _audioOn = !_audioOn;
@@ -796,6 +799,13 @@ namespace HoverExplorer
             if (_audio != null && _audio.IsLoaded) { SyncAudioToVideo(); return; }
             if (_audioOpening) return;
             if (_info == null || !_info.HasAudio) { _audioOn = false; _muteBtn.Text = "🔇"; return; }
+            OpenAudioAsync();
+        }
+
+        // 后台起音频会话（构造含 waveOut+起 ffmpeg 进程）；成功后 UI 线程对齐到视频当前位置
+        private void OpenAudioAsync()
+        {
+            if (_audioOpening) return;
             _audioOpening = true;
             var t = new Thread(delegate()
             {

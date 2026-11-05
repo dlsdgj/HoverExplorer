@@ -141,23 +141,25 @@ namespace HoverExplorer
         // 文件预览触发延时跟随用户的悬停延时设置（秒 -> 毫秒）
         public static int HoverDelayMs { get { return Math.Max(50, (int)(HoverDelay * 1000)); } }
         // 视频预览单独触发延时（秒）：视频起播慢、误触成本高，默认比全局延时长；
-        // 图片/文档等仍用全局 HoverDelay，音频维持面板行里既有的 100ms 提速
+        // 图片/文档等仍用全局 HoverDelay，音频维持面板行里既有的 100ms 提速。
+        // 开关关闭或边缘触发开启时视频不加延时（防误触已由触发区负责）
+        public static bool VideoPreviewDelayEnabled = true;
         public static double VideoPreviewDelay = 0.8;
         // 文件预览边缘触发：0=关(整个条目触发) 1=左缘 2=右缘 3=两侧。
         // 开着时条目中段不弹预览窗（留给改名/右键/拖拽），只有停在边缘触发区才预览
         public static int PreviewEdgeMode = 0;
         public static int PreviewEdgeWidth = 48;
 
-        // 按类型的预览触发延时：视频走 VideoPreviewDelay，其余用全局 HoverDelay
+        // 按类型的预览触发延时：视频走 VideoPreviewDelay（需开关开启），其余用全局 HoverDelay
         // （音频的 100ms 提速在 SchedulePreview 里叠加 min 处理）。
-        // 边缘触发开着时不加视频延时——防误触已由触发区负责，再等 0.8s 纯属双重惩罚
+        // 延时开关关闭、或边缘触发开启时不加视频延时——防误触已由触发区负责，再等 0.8s 纯属双重惩罚
         public static int PreviewDelayMsFor(string full)
         {
             int d = HoverDelayMs;
             try
             {
                 string ext = Path.GetExtension(full ?? "");
-                if (ext.Length > 0 && VideoExts.Contains(ext) && PreviewEdgeMode == 0)
+                if (ext.Length > 0 && VideoExts.Contains(ext) && VideoPreviewDelayEnabled && PreviewEdgeMode == 0)
                     d = Math.Max(50, (int)(VideoPreviewDelay * 1000));
             }
             catch { }
@@ -595,6 +597,7 @@ namespace HoverExplorer
                         case "PreviewImage": PreviewImage = Convert.ToBoolean(v); break;
                         case "PreviewVideo": PreviewVideo = Convert.ToBoolean(v); break;
                         case "VideoPreviewDelay": VideoPreviewDelay = Convert.ToDouble(v); break;
+                        case "VideoPreviewDelayEnabled": VideoPreviewDelayEnabled = Convert.ToBoolean(v); break;
                         case "PreviewVolume": PreviewVolume = Convert.ToDouble(v); break;
                         case "PreviewEdgeMode": PreviewEdgeMode = Convert.ToInt32(v); break;
                         case "PreviewEdgeWidth": PreviewEdgeWidth = Convert.ToInt32(v); break;
@@ -755,6 +758,7 @@ namespace HoverExplorer
                 data["PreviewImage"] = PreviewImage;
                 data["PreviewVideo"] = PreviewVideo;
                 data["VideoPreviewDelay"] = VideoPreviewDelay;
+                data["VideoPreviewDelayEnabled"] = VideoPreviewDelayEnabled;
                 data["PreviewVolume"] = PreviewVolume;
                 data["PreviewEdgeMode"] = PreviewEdgeMode;
                 data["PreviewEdgeWidth"] = PreviewEdgeWidth;
