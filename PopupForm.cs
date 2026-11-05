@@ -4718,7 +4718,16 @@ namespace HoverExplorer
         {
             if (_kbRow != null && !_kbRow.IsDisposed) { _kbRow.Selected = false; ApplySel(_kbRow); }
             _kbRow = r;
-            if (r != null && !r.IsDisposed) { r.Selected = true; ApplySel(r); }
+            if (r != null && !r.IsDisposed) { r.Selected = true; ApplySel(r); ScrollRowIntoView(r); }
+        }
+
+        // 选中行滚出视口时拉回来（列表长、高亮在屏外跟随移动的基础）
+        private void ScrollRowIntoView(RowLabel r)
+        {
+            if (_listPanel == null || r == null || r.IsDisposed || r.Top < 0) return;
+            int top = r.Top - _listPanel.ContentScrollPos;
+            if (top < 0) _listPanel.SetOffset(r.Top);
+            else if (top + r.Height > _listPanel.Height) _listPanel.SetOffset(r.Top + r.Height - _listPanel.Height);
         }
 
         private void ClearKbRow()
@@ -4762,19 +4771,13 @@ namespace HoverExplorer
             return true;
         }
 
-        // 面板行跟随预览切换：选中当前预览的文件所在行，滚出视口时拉回来
+        // 面板行跟随预览切换：选中当前预览的文件所在行并滚入视口（滚动在 SetKbRow 里统一做）
         private void SyncRowToPath(string path)
         {
             foreach (var r in _rows)
             {
                 if (r == null || r.IsDisposed || !string.Equals(r.Full, path, StringComparison.OrdinalIgnoreCase)) continue;
                 SetKbRow(r);
-                if (_listPanel != null && r.Top >= 0)
-                {
-                    int top = r.Top - _listPanel.ContentScrollPos;
-                    if (top < 0) _listPanel.SetOffset(r.Top);
-                    else if (top + r.Height > _listPanel.Height) _listPanel.SetOffset(r.Top + r.Height - _listPanel.Height);
-                }
                 return;
             }
         }
