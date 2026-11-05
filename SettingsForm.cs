@@ -496,9 +496,6 @@ namespace HoverExplorer
             _pvEdgeWidthStepper.ValueChanged += (s, e) => { _fnApplySettings(false, false); };
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_edge_width"), null, _pvEdgeWidthStepper);
 
-            // 面板/预览键盘用法说明（否则没人知道方向键怎么用）
-            y = _pvTypeGroup.AddRow(y, I18n.T("kb_hint"), null, null);
-
             _pvImageToggle = new ToggleSwitch { On = Config.PreviewImage };
             _pvImageToggle.Toggled += (s, e) => { _fnApplySettings(false, false); };
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_type_image"), null, _pvImageToggle);
@@ -606,6 +603,17 @@ namespace HoverExplorer
                 audioHint.MaximumSize = new Size(Math.Max(160, _pvTypeGroup.Width - PadX * 2), 0);
                 audioHint.Location = new Point(PadX, AccGroup.HeadH + ty + 6);
                 _pvTypeGroup.NoticeContentBottom(ty + 6 + audioHint.Height + 4);
+            });
+
+            // 面板/预览键盘用法说明：小字号 + 自动换行（长文案放行内会超框被裁）
+            var kbHint = new Label { Text = I18n.T("kb_hint"), AutoSize = true, MaximumSize = new Size(_pvTypeGroup.Width - PadX * 2, 0), BackColor = Config.ListHdbg, ForeColor = Config.FgDir, Font = new Font(Config.FontName, 7.5f), Padding = new Padding(6, 3, 6, 3), Location = new Point(PadX, AccGroup.HeadH + y + 6), Tag = "tip" };
+            _pvTypeGroup.Controls.Add(kbHint);
+            _pvTypeGroup.ExpandRow(y + 6 + kbHint.Height + 4, 0);
+            _pvTypeGroup.AddTailHook(ty =>
+            {
+                kbHint.MaximumSize = new Size(Math.Max(160, _pvTypeGroup.Width - PadX * 2), 0);
+                kbHint.Location = new Point(PadX, AccGroup.HeadH + ty + 6);
+                _pvTypeGroup.NoticeContentBottom(ty + 6 + kbHint.Height + 4);
             });
 
             _pvTypeGroup.FinishRows();

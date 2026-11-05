@@ -149,14 +149,15 @@ namespace HoverExplorer
         public static int PreviewEdgeWidth = 48;
 
         // 按类型的预览触发延时：视频走 VideoPreviewDelay，其余用全局 HoverDelay
-        // （音频的 100ms 提速在 SchedulePreview 里叠加 min 处理）
+        // （音频的 100ms 提速在 SchedulePreview 里叠加 min 处理）。
+        // 边缘触发开着时不加视频延时——防误触已由触发区负责，再等 0.8s 纯属双重惩罚
         public static int PreviewDelayMsFor(string full)
         {
             int d = HoverDelayMs;
             try
             {
                 string ext = Path.GetExtension(full ?? "");
-                if (ext.Length > 0 && VideoExts.Contains(ext))
+                if (ext.Length > 0 && VideoExts.Contains(ext) && PreviewEdgeMode == 0)
                     d = Math.Max(50, (int)(VideoPreviewDelay * 1000));
             }
             catch { }
