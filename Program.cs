@@ -1920,12 +1920,15 @@ namespace HoverExplorer
                 if (!inSub)
                 {
                     // KeepOnLeave：鼠标已离开所有面板（含面板内预览）= 离开语义 → 级联保持，等点击其他位置；
-                    // 仍悬在其他面板上（一级列表内换行/切换）→ 正常关闭旧级联
+                    // 仍悬在其他面板上（一级列表内换行/切换）→ 正常关闭旧级联。
+                    // 保持的前提是真有子面板（Level > 当前级联层级）——纯主面板也扣住的话，
+                    // 主面板在 KeepOnLeave 下永远不关，与 MaybeClose"只保护深层内容"的策略矛盾
                     if (Config.KeepOnLeave)
                     {
+                        bool deep = _panels.Any(p => !p.IsDisposed && !p.Pinned && p.Level > _subCloseLevel);
                         bool inAny = PopupForm.InAnyHoverPanel(pt.X, pt.Y)
                                   || _panels.Any(p => !p.IsDisposed && p.PreviewContainsPoint(pt.X, pt.Y));
-                        if (!inAny) { DebugLog("[cascade] KeepOnLeave hold, level=" + _subCloseLevel); return; }
+                        if (!inAny && deep) { DebugLog("[cascade] KeepOnLeave hold, level=" + _subCloseLevel); return; }
                     }
                     CloseAfter(_subCloseLevel);
                 }
