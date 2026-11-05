@@ -89,6 +89,7 @@ namespace HoverExplorer
         private DelayStepper _delayStepper;
         private MsStepper _closeDelayStepper;
         private MsStepper _entryDelayStepper;
+        private MsStepper _pauseDelayStepper;
 
         private DarkCombo _cornerCombo;
         private DarkCombo _tcSortCombo;
@@ -193,7 +194,8 @@ namespace HoverExplorer
             catch { }
             var titleLbl = new Label
             {
-                Text = I18n.T("settings"),
+                // 顶部标题带版本号（原"设置"+副标题说明合并为一行）
+                Text = "HoverExplorer v" + Program.Version + " " + I18n.T("settings"),
                 Location = new Point(PadX + 34, 12),
                 AutoSize = true,
                 Font = new Font(Config.FontName, 13f, FontStyle.Bold),
@@ -201,19 +203,6 @@ namespace HoverExplorer
             };
             titleLbl.MouseDown += (s, e) => _fnDrag(e);
             Controls.Add(titleLbl);
-
-            var subLbl = new Label
-            {
-                Text = I18n.T("settings_subtitle"),
-                Location = new Point(PadX, 40),
-                AutoSize = true,
-                ForeColor = Config.PlaceholderFg,
-                Font = new Font(Config.FontName, 8.5f),
-                Tag = "sub",
-                BackColor = Config.BgHover
-            };
-            subLbl.MouseDown += (s, e) => _fnDrag(e);
-            Controls.Add(subLbl);
 
             _closeBtn = new Label
             {
@@ -338,7 +327,7 @@ namespace HoverExplorer
                 () => { _hoverPill.SetHotkey(0, 0); _hoverMods = 0; _hoverKey = 0; _fnApplySettings(true, false); });
 
             // 暂停触控区：独立框选矩形（设置方式复制触发区域那套：框选按钮+清除+矩形标签+桌面标识块）。
-            // 鼠标驻留该区域 0.3s 切换悬停启用/暂停；未框选时仅剩快捷键 Ctrl+Alt+Q
+            // 鼠标驻留该区域 PauseRectDelayMs 后切换悬停启用/暂停；未框选时仅剩快捷键 Ctrl+Alt+Q
             int pauseRowY = y;
             y = _hoverGroup.AddRow(y, I18n.T("pause_zone_row"), null, null);
             _pauseRectLbl = new Label
@@ -398,14 +387,28 @@ namespace HoverExplorer
                 _pauseClearBtn.Location = new Point(_pausePickBtn.Left - _pauseClearBtn.Width - 8, AccGroup.HeadH + py);
             });
 
+            // 暂停触控区驻留延时：紧跟暂停触控区行，与收藏·历史触发区域的延时相互独立
+            _pauseDelayStepper = new MsStepper { Value = Config.PauseRectDelayMs };
+            _pauseDelayStepper.ValueChanged += (s, e) => _fnApplySettings(false, false);
+            y = _hoverGroup.AddRow(y, I18n.T("pause_delay_row"), I18n.T("pause_delay_desc"), _pauseDelayStepper);
+
             _delayStepper = new DelayStepper { Value = Config.HoverDelay };
             _delayStepper.ValueChanged += (s, e) => { _fnRefreshChips(); _fnApplySettings(false, false); };
             y = _hoverGroup.AddRow(y, I18n.T("delay_row"), I18n.T("hover_delay_desc"), _delayStepper);
 
-            // 触发区域（收藏·历史入口）独立的悬停延时，不随文件夹悬停延时联动
-            _entryDelayStepper = new MsStepper { Value = Config.EntryRectDelayMs };
-            _entryDelayStepper.ValueChanged += (s, e) => _fnApplySettings(false, false);
-            y = _hoverGroup.AddRow(y, I18n.T("entry_delay_row"), I18n.T("entry_delay_desc"), _entryDelayStepper);
+            // 悬停浏览（桌面/资源管理器）与文件预览：各一个下拉搞定——关闭 / 总是 / 按住某键 / 长按才触发。
+            // 即改即生效，ApplySettingsLive 会把托盘勾选态同步（原在"行为"组，归入"触发"更贴切）
+            _modeExplorer = _fnMakeModeCombo(ModeFromConfig(Config.ExplorerEnabled, Config.FolderGateEnabled, Config.FolderGateMods));
+            _modeExplorer.SelectedIndexChanged += (s, e) => _fnApplySettings(false, false);
+            y = _hoverGroup.AddRow(y, I18n.T("explorer_hover"), I18n.T("mode_desc"), _modeExplorer, out _modeExplorerDesc);
+
+            _modePreview = _fnMakeModeCombo(ModeFromConfig(Config.PreviewFiles, Config.PreviewGateEnabled, Config.PreviewGateMods));
+            _modePreview.SelectedIndexChanged += (s, e) => _fnApplySettings(false, false);
+            y = _hoverGroup.AddRow(y, I18n.T("file_preview"), I18n.T("mode_desc"), _modePreview, out _modePreviewDesc);
+
+            _longPressStepper = new LongPressStepper { Value = Config.LongPressDelayMs };
+            _longPressStepper.ValueChanged += (s, e) => _fnApplySettings(false, false);
+            y = _hoverGroup.AddRow(y, I18n.T("long_press_delay"), I18n.T("long_press_delay_desc"), _longPressStepper);
 
             _hoverGroup.FinishRows();
 
@@ -422,20 +425,6 @@ namespace HoverExplorer
             _keepToggle = new ToggleSwitch { On = Config.KeepOnLeave };
             _keepToggle.Toggled += (s, e) => _fnApplySettings(false, false);
             yw = _windowGroup.AddRow(yw, I18n.T("keep_open"), I18n.T("keep_open_desc"), _keepToggle);
-
-            // 悬停浏览（桌面/资源管理器）与文件预览：各一个下拉搞定——关闭 / 总是 / 按住某键 / 长按才触发。
-            // 即改即生效，ApplySettingsLive 会把托盘勾选态同步
-            _modeExplorer = _fnMakeModeCombo(ModeFromConfig(Config.ExplorerEnabled, Config.FolderGateEnabled, Config.FolderGateMods));
-            _modeExplorer.SelectedIndexChanged += (s, e) => _fnApplySettings(false, false);
-            yw = _windowGroup.AddRow(yw, I18n.T("explorer_hover"), I18n.T("mode_desc"), _modeExplorer, out _modeExplorerDesc);
-
-            _modePreview = _fnMakeModeCombo(ModeFromConfig(Config.PreviewFiles, Config.PreviewGateEnabled, Config.PreviewGateMods));
-            _modePreview.SelectedIndexChanged += (s, e) => _fnApplySettings(false, false);
-            yw = _windowGroup.AddRow(yw, I18n.T("file_preview"), I18n.T("mode_desc"), _modePreview, out _modePreviewDesc);
-
-            _longPressStepper = new LongPressStepper { Value = Config.LongPressDelayMs };
-            _longPressStepper.ValueChanged += (s, e) => _fnApplySettings(false, false);
-            yw = _windowGroup.AddRow(yw, I18n.T("long_press_delay"), I18n.T("long_press_delay_desc"), _longPressStepper);
 
             // 默认排序（原独立"排序"组并入行为组）：文件夹列表的排列方式
             _sortCombo = new DarkCombo { Font = new Font(Config.FontName, 8.5f), Width = 170, Height = 24 };
@@ -1289,8 +1278,13 @@ namespace HoverExplorer
                 _areaColorBlock.Location = new Point(_areaClearBtn.Left - _areaColorBlock.Width - 8, AccGroup.HeadH + ay);
             });
 
+            // 触发区域驻留延时：紧跟触发区域行，与暂停触控区的延时相互独立
+            _entryDelayStepper = new MsStepper { Value = Config.EntryRectDelayMs };
+            _entryDelayStepper.ValueChanged += (s, e) => _fnApplySettings(false, false);
+            y = _entryGroup.AddRow(y, I18n.T("entry_delay_row"), I18n.T("entry_delay_desc"), _entryDelayStepper);
+
             // 收藏列表功能说明（黄底黑字常显）
-            int favHintY = areaRowY + Math.Max(RowH, 19 + _areaLbl.PreferredHeight + 8) + 6;
+            int favHintY = y + 6;
             var favHint = new Label { Text = I18n.T("hint_fav_features"), AutoSize = true, MaximumSize = new Size(_entryGroup.Width - PadX * 2, 0), BackColor = Color.FromArgb(0xFF, 0xF5, 0x9C), ForeColor = Color.Black, Font = new Font(Config.FontName, 8f), Padding = new Padding(6, 3, 6, 3), Location = new Point(PadX, AccGroup.HeadH + favHintY), Tag = "tip" };
             _entryGroup.Controls.Add(favHint);
             _entryGroup.ExpandRow(favHintY + favHint.Height + 4, 0);
@@ -2175,6 +2169,7 @@ namespace HoverExplorer
             Config.HoverDelay = _delayStepper.Value;
             Config.CloseDelay = _closeDelayStepper.Value / 1000.0;
             Config.EntryRectDelayMs = _entryDelayStepper.Value;
+            Config.PauseRectDelayMs = _pauseDelayStepper.Value;
             Config.CardHotkeyEnabled = _cardToggle.On;
             Config.CardHotkeyModifiers = _cardMods;
             Config.CardHotkeyKey = _cardKey;

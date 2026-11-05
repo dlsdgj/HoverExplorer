@@ -13,7 +13,7 @@ namespace HoverExplorer
 {
     internal static class Program
     {
-        public const string Version = "1.1.3";
+        public const string Version = "1.1.4";
 
         private static string _desktopPath;
         private static string _publicDesktopPath;
@@ -826,7 +826,7 @@ namespace HoverExplorer
         }
 
         // 暂停触控区 = 独立框选矩形（设置里框选/清除）：
-        // 鼠标驻留该区域 300ms 切换悬停启用/暂停（浮层+声音，与全局热键 Ctrl+Alt+Q 同效）。
+        // 鼠标驻留该区域 PauseRectDelayMs（默认300ms，设置里可调）切换悬停启用/暂停（浮层+声音，与全局热键 Ctrl+Alt+Q 同效）。
         // 放在 TickImpl 里 _hoverEnabled 提前返回之前：暂停状态下也要能靠区域恢复。
         // 触发区域不再承担“悬停弹 收藏·历史 列表”（列表走其快捷键 Ctrl+Alt+E）；
         // 拖拽进入触发区域时仍会立即弹列表接收拖放（见 TickImpl 左键按住分支）
@@ -848,7 +848,7 @@ namespace HoverExplorer
             {
                 if (_pzArmed && _pzTimer == null)
                 {
-                    _pzTimer = new System.Windows.Forms.Timer { Interval = 300 };
+                    _pzTimer = new System.Windows.Forms.Timer { Interval = Math.Max(100, Config.PauseRectDelayMs) };
                     _pzTimer.Tick += (s, e) =>
                     {
                         var t = _pzTimer;
@@ -1420,8 +1420,9 @@ namespace HoverExplorer
         private static void CloseAll()
         {
             var toClose = _panels.Where(p => !p.Pinned).ToList();
-            var toKeep = _panels.Where(p => p.Pinned).ToList();
-            DebugLog("[cascade] CloseAll 关闭面板 close=" + toClose.Count + " keep(pinned)=" + toKeep.Count);
+            var toKeep = _panels.Where(p => p.Pinned && !p.IsDisposed).ToList();   // 已销毁的面板不留作僵尸
+            DebugLog("[cascade] CloseAll 关闭面板 close=" + toClose.Count + " keep(pinned)=" + toKeep.Count
+                     + (toKeep.Count > 0 ? " [" + string.Join(";", toKeep.Select(p => "L" + p.Level)) + "]" : ""));
             HideHighlight();
             if (_subCloseTimer != null) { _subCloseTimer.Stop(); _subCloseTimer.Dispose(); _subCloseTimer = null; }
             foreach (var p in toClose) p.ClosePanel();

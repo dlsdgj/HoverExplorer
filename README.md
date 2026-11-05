@@ -56,7 +56,7 @@
 - **深浅主题 / Light/Dark theme**: 深色/浅色/跟随系统三选一；跟随系统时 Windows 切换深浅色（含 PowerToys 等自动切换）面板即时跟上 — Dark/light/follow-system; in follow-system mode panels switch instantly when Windows (incl. PowerToys schedulers) flips its app theme
 - **卡片配色（逐张独立）/ Per-card color scheme**: 11 套标签带方案；滚轮切换该卡片配色，实时高亮，~1s 消失 — 11 label-band schemes; scroll to cycle per-card, live highlight, ~1s fade
 - **拖拽弹簧式文件夹 / Drag-spring folders**: 拖文件悬停任意文件夹即弹内容，子文件夹逐层展开导航，松手放入 — Drag file over any folder to pop contents; navigate subfolders; drop at target level
-- **暂停触控区 / Pause zone**: 框选屏幕区域，驻留 0.3s 切换启用/暂停，与快捷键等效 — Screen region; dwell 0.3s to toggle pause, equivalent to hotkey
+- **暂停触控区 / Pause zone**: 框选屏幕区域，驻留可调时长切换启用/暂停（与收藏·历史触发区域的延时相互独立），与快捷键等效 — Screen region; dwell for an adjustable time to toggle pause (independent of the favorites/history trigger delay), equivalent to hotkey
 - **MP3 秒开秒停 / MP3 instant play**: MCI 毫秒级打开，VBR 按 Xing 头校正时长；识别假 MP3 并超时保护 — MCI millisecond open; VBR corrected by Xing header; fake MP3 detection with timeout
 - **MP3 修复工具 / MP3 fixer**: `Mp3Fixer.exe` 批量把容器型假 MP3 转真 MP3，ffmpeg 自动探测/下载 — `Mp3Fixer.exe` batch-converts fake MP3 to real; ffmpeg auto-detect/download
 - **ffmpeg 一键下载 / One-click ffmpeg download**: 设置里可一键下载官方构建（gyan.dev），自动落到程序能探测到的位置，高规格视频兜底解码开箱即用 — One-click download of the official build (gyan.dev) from settings; lands where the app auto-detects it, so fallback decoding works out of the box

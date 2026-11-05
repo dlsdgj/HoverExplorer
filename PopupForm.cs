@@ -2753,6 +2753,8 @@ namespace HoverExplorer
         private RowLabel _hlRow;
         private RowLabel _contextRow;
         private bool _pinned;
+        private Timer _unpinCloseTimer;  // 取消固定后：光标离开面板即自动关闭（与预览窗 TogglePin 同语义）
+        private int _lastUnpinTick;      // 最近一次取消固定时刻：短暂抑制"拖动即固定"，避免取消固定后顺手挪一下又被静默固定
         private Label _pinBtn;
         private Label _refreshBtn;  // 表头 ↻ 手动刷新（仅固定面板显示）
         private Label _pinCardBtn;   // 面板顶部"钉为桌面卡片"按钮
@@ -2864,6 +2866,13 @@ namespace HoverExplorer
         {
             base.OnResize(e);
 
+            if (_resizeFreeze != null)
+            {
+                // 拖动全程冻结：只让快照盖满新客户区（扩边处露快照底色），不做逐行重排——
+                // 逐帧 SyncWidth（逐行改宽+计数测量+筛选标签重排）叠加子控件异步重绘正是拖动卡顿根源
+                _resizeFreeze.Bounds = new Rectangle(Point.Empty, ClientSize);
+                return;
+            }
             // 拖动右下角手柄改宽度后同步顶部与行宽度（只同步宽度，不重排行高）
             if (ClientSize.Width != _panelW) SyncWidth(ClientSize.Width);
             if (_pinBtn != null) _pinBtn.BringToFront();
@@ -2873,14 +2882,17 @@ namespace HoverExplorer
         private PictureBox _resizeFreeze;
         private Image _resizeFreezeImg;
 
-        // 拖动尺寸时冻结列表：快照盖住客户区 + 隐藏几百行 Label（AutoScroll 容器每次 WM_SIZE
+        // 拖动尺寸时冻结列表：快照盖住客户区 + 隐藏几百行 Label（每次 WM_SIZE
         // 都要对全部子行重算布局+重绘，文件多时每帧都卡）。拖动全程系统只画这张静态图。
-        private void _fnBeginResizeFreeze()
+        // force=true 用于手动 resize：行数少也要冻结——卡顿不只来自行多，
+        // 还来自每帧整窗重排/重绘与 DWM 合成未绘制新暴露区的黑条伪影
+        private void _fnBeginResizeFreeze(bool force)
         {
             try
             {
                 _fnEndResizeFreeze();
-                if (_listPanel == null || ((SlimScrollPanel)_listPanel).ContentCount <= 40) return;
+                if (_listPanel == null) return;
+                if (!force && ((SlimScrollPanel)_listPanel).ContentCount <= 40) return;
                 if (!Visible || ClientSize.Width <= 0 || ClientSize.Height <= 0) return;
                 var src = PointToScreen(Point.Empty);
                 var img = new Bitmap(ClientSize.Width, ClientSize.Height);
@@ -2928,7 +2940,7 @@ namespace HoverExplorer
                     _ppResizeSY = (short)((lp >> 16) & 0xFFFF);
                     _ppResizeSW = Width;
                     _ppResizeSH = Height;
-                    _fnBeginResizeFreeze();
+                    _fnBeginResizeFreeze(true);
                     Capture = true;
                     return;
                 }
@@ -2937,8 +2949,15 @@ namespace HoverExplorer
             {
                 var lp = m.LParam.ToInt64();
                 var sp = PointToScreen(new Point((short)(lp & 0xFFFF), (short)((lp >> 16) & 0xFFFF)));
-                if ((_ppResizeMode & 1) != 0) Height = Math.Max(60, _ppResizeSH + (sp.Y - _ppResizeSY));
-                if ((_ppResizeMode & 2) != 0) Width = Math.Max(120, _ppResizeSW + (sp.X - _ppResizeSX));
+                // 单次 SetBounds 代替 Width/Height 各设一次（各触发一次 SetWindowPos/布局）
+                int nw = (_ppResizeMode & 2) != 0 ? Math.Max(120, _ppResizeSW + (sp.X - _ppResizeSX)) : Width;
+                int nh = (_ppResizeMode & 1) != 0 ? Math.Max(60, _ppResizeSH + (sp.Y - _ppResizeSY)) : Height;
+                if (nw != Width || nh != Height)
+                {
+                    SetBounds(Location.X, Location.Y, nw, nh);
+                    // 同步刷出快照：DWM 永远合成已绘制的帧，消除扩边处黑条伪影
+                    if (_resizeFreeze != null) _resizeFreeze.Update();
+                }
                 return;
             }
             else if (_ppResize && m.Msg == 0x202)   // WM_LBUTTONUP
@@ -2946,6 +2965,8 @@ namespace HoverExplorer
                 _ppResize = false;
                 Capture = false;
                 _fnEndResizeFreeze();
+                // 冻结期间 OnResize 跳过了 SyncWidth，松手后按最终宽度一次重排到位
+                if (ClientSize.Width != _panelW) SyncWidth(ClientSize.Width);
                 Config.PanelWidth = ClientSize.Width;
                 Config.PanelHeight = ClientSize.Height;
                 Config.PanelSizeAuto = false;
@@ -2954,10 +2975,12 @@ namespace HoverExplorer
                 Program.DebugLog("[panel-size] resize-end " + ClientSize.Width + "x" + ClientSize.Height);
                 return;
             }
-            else if (m.Msg == 0x231) { _sizeMoveStart = ClientSize; _fnBeginResizeFreeze(); }
+            else if (m.Msg == 0x231) { _sizeMoveStart = ClientSize; _fnBeginResizeFreeze(false); }
             else if (m.Msg == 0x232)
             {
                 _fnEndResizeFreeze();
+                // 冻结期间 OnResize 跳过了 SyncWidth，结束后按最终宽度补一次重排
+                if (ClientSize.Width != _panelW) SyncWidth(ClientSize.Width);
                 if (ClientSize != _sizeMoveStart)
                 {
                     Config.PanelWidth = ClientSize.Width;
@@ -2976,6 +2999,7 @@ namespace HoverExplorer
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
             CancelDragSub();
+            if (_unpinCloseTimer != null) { _unpinCloseTimer.Stop(); _unpinCloseTimer.Dispose(); _unpinCloseTimer = null; }
             base.OnFormClosed(e);
         }
 
@@ -3171,7 +3195,9 @@ namespace HoverExplorer
                 if (_fnHeaderDoubleClick()) { _fnOpenInExplorer(); return; }
                 var before = Location;
                 NativeMethods.ReleaseCapture(); NativeMethods.SendMessage(Handle, 0xA1, 0x2, 0);
-                if (Location != before && !_pinned) TogglePinPopup();
+                // 拖动即固定；但刚取消固定后的 1.2s 内不回钉——用户取消固定后顺手挪正位置的
+                // 二次拖动会被静默重新固定，表现为"取消了固定窗口却迟迟不自动关闭"
+                if (Location != before && !_pinned && Environment.TickCount - _lastUnpinTick > 1200) TogglePinPopup();
             };
             // 顶部区域空白处右键 = 选项菜单
             MouseEventHandler blankMenu = (s, e) => { if (e.Button == MouseButtons.Right && Program.TrayMenu != null) { _menuOpen = true; Program.TrayMenu.Show(Cursor.Position); } };
@@ -3811,7 +3837,8 @@ namespace HoverExplorer
                     _statusDragging = true;
                     var before = Location;
                     NativeMethods.ReleaseCapture(); NativeMethods.SendMessage(Handle, 0xA1, 0x2, 0);
-                    if (Location != before && !_pinned) TogglePinPopup();
+                    // 同 3198：刚取消固定后的 1.2s 内拖动不回钉
+                    if (Location != before && !_pinned && Environment.TickCount - _lastUnpinTick > 1200) TogglePinPopup();
                 }
             };
             _statusLbl.Click += (s, e) => { if (!_statusDragging) ToggleSearch(); };
@@ -5498,6 +5525,7 @@ namespace HoverExplorer
         public void ClosePanel()
         {
             Program.DebugLog("[panel] ClosePanel level=" + _level + " path=" + _path + " pinned=" + _pinned);
+            if (_unpinCloseTimer != null) _unpinCloseTimer.Stop();
             if (_pinned) return;
             CancelHover();
 
@@ -5599,11 +5627,39 @@ namespace HoverExplorer
         private void TogglePinPopup()
         {
             _pinned = !_pinned;
+            Program.DebugLog("[panel] TogglePinPopup level=" + _level + " path=" + _path + " pinned=" + _pinned);
             if (_pinBtn != null) _pinBtn.Image = PreviewForm.PinIcon(_pinned, Config.ListFg);
             if (_refreshBtn != null) _refreshBtn.Visible = _pinned;   // 刷新按钮只在固定面板出现
             // 固定瞬间锁住当前尺寸，取消固定后回到内容自适应
-            if (_pinned) { _pinnedW = ClientSize.Width; _pinnedH = ClientSize.Height; }
-            else { _pinnedW = 0; _pinnedH = 0; }
+            if (_pinned)
+            {
+                _pinnedW = ClientSize.Width; _pinnedH = ClientSize.Height;
+                if (_unpinCloseTimer != null) _unpinCloseTimer.Stop();   // 重新固定：终止"离开即关"
+            }
+            else
+            {
+                _pinnedW = 0; _pinnedH = 0;
+                _lastUnpinTick = Environment.TickCount;
+                // 取消固定后自动关闭：只靠主循环 MaybeClose 会在鼠标停在其他面板/预览上时无限期不关，
+                // 用户感知就是"取消了固定窗口却不自动关闭"。200ms 轮询，光标一离开本面板立即关
+                if (_unpinCloseTimer == null)
+                {
+                    _unpinCloseTimer = new Timer { Interval = 200 };
+                    _unpinCloseTimer.Tick += (s, e) =>
+                    {
+                        if (IsDisposed || !IsHandleCreated || !Visible || _pinned) { _unpinCloseTimer.Stop(); return; }
+                        NativeMethods.POINT pt;
+                        NativeMethods.GetCursorPos(out pt);
+                        if (!ContainsPoint(pt.X, pt.Y))
+                        {
+                            _unpinCloseTimer.Stop();
+                            Program.DebugLog("[panel] unpin auto-close level=" + _level + " path=" + _path);
+                            ClosePanel();
+                        }
+                    };
+                }
+                _unpinCloseTimer.Start();
+            }
         }
 
         // 统一保顶：先恢复丢失的 WS_EX_TOPMOST（Show/Focus 激活会清），再按需提顶。

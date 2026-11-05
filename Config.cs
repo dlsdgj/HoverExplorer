@@ -146,6 +146,8 @@ namespace HoverExplorer
         public static int CloseDelayMs { get { return Math.Max(50, (int)Math.Round(CloseDelay * 1000)); } }
         // 触发区域（收藏·历史入口）悬停延时（毫秒），独立于文件夹悬停延时
         public static int EntryRectDelayMs = 300;
+        // 暂停触控区驻留延时（毫秒）：驻留多久切换悬停启用/暂停，与收藏·历史触发区域延时相互独立
+        public static int PauseRectDelayMs = 300;
         // 暂停触控区：鼠标驻留屏幕角落切换悬停启用/暂停（0=关 1=左上 2=右上 3=左下 4=右下）
         public static int CheckInterval = 80;
         public static int PopupOffset = 16;
@@ -554,6 +556,7 @@ namespace HoverExplorer
 
                         case "WindowCorners": WindowCorners = Convert.ToInt32(v); break;
                         case "EntryRectDelayMs": EntryRectDelayMs = Convert.ToInt32(v); break;
+                        case "PauseRectDelayMs": PauseRectDelayMs = Convert.ToInt32(v); break;
                         case "PreviewMaxRatio": PreviewMaxRatio = Convert.ToDouble(v); break;
                         case "PanelWidth": PanelWidth = Convert.ToInt32(v); break;
                         case "PanelHeight": PanelHeight = Convert.ToInt32(v); break;
@@ -823,6 +826,7 @@ namespace HoverExplorer
 
                 data["WindowCorners"] = WindowCorners;
                 data["EntryRectDelayMs"] = EntryRectDelayMs;
+                data["PauseRectDelayMs"] = PauseRectDelayMs;
                 data["PreviewMaxRatio"] = PreviewMaxRatio;
                 data["PanelWidth"] = PanelWidth;
                 data["PanelHeight"] = PanelHeight;
