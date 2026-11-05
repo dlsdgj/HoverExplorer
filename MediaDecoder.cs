@@ -525,11 +525,12 @@ namespace HoverExplorer
                 // 这样播放速率完全由我们取帧的节奏决定，倍速（>1×）才做得到——
                 // -re 会把输入钉在 1× 实时，源帧率以下根本取不到更多帧。
                 sb.Append("-hide_banner -loglevel error -nostdin");
+                sb.Append(" -threads 2");                                 // 解码线程上限：全速解码烧 CPU（背压只管队列深度，不管单帧成本）
                 if (fromSec > 0.05) sb.Append(" -ss ").Append(fromSec.ToString("F2"));
                 sb.Append(" -i \"").Append(_path).Append("\"");
-                sb.Append(" -an");                                        // 只取画面
+                sb.Append(" -an");                                        // 只取画面（声音由喇叭键起的 FfmpegAudioSession 负责）
                 sb.Append(" -vf scale=").Append(w).Append(":-2");
-                sb.Append(" -q:v 4 -f image2pipe -vcodec mjpeg -");
+                sb.Append(" -threads 1 -q:v 4 -f image2pipe -vcodec mjpeg -");   // MJPEG 编码单线程
 
                 var psi = new ProcessStartInfo
                 {

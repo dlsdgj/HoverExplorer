@@ -219,6 +219,8 @@ namespace HoverExplorer
         // 关掉某类后该类文件悬停不再弹预览窗（CanPreview 直接判否，不占延时也不弹空窗）
         public static bool PreviewImage = true;
         public static bool PreviewVideo = true;
+        // 视频预览音量（0-100）：音量条调过就记住，下次预览直接用它（静音键独立于音量）
+        public static double PreviewVolume = 100;
         public static bool PreviewAudio = true;
         public static bool PreviewDocument = true;
         public static bool PreviewText = true;
@@ -592,6 +594,7 @@ namespace HoverExplorer
                         case "PreviewImage": PreviewImage = Convert.ToBoolean(v); break;
                         case "PreviewVideo": PreviewVideo = Convert.ToBoolean(v); break;
                         case "VideoPreviewDelay": VideoPreviewDelay = Convert.ToDouble(v); break;
+                        case "PreviewVolume": PreviewVolume = Convert.ToDouble(v); break;
                         case "PreviewEdgeMode": PreviewEdgeMode = Convert.ToInt32(v); break;
                         case "PreviewEdgeWidth": PreviewEdgeWidth = Convert.ToInt32(v); break;
                         case "PreviewAudio": PreviewAudio = Convert.ToBoolean(v); break;
@@ -751,6 +754,7 @@ namespace HoverExplorer
                 data["PreviewImage"] = PreviewImage;
                 data["PreviewVideo"] = PreviewVideo;
                 data["VideoPreviewDelay"] = VideoPreviewDelay;
+                data["PreviewVolume"] = PreviewVolume;
                 data["PreviewEdgeMode"] = PreviewEdgeMode;
                 data["PreviewEdgeWidth"] = PreviewEdgeWidth;
                 data["PreviewAudio"] = PreviewAudio;

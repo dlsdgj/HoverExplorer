@@ -499,8 +499,22 @@ internal static class MediaPreview
                 try { m = !session.WpfMedia.IsMuted; session.WpfMedia.IsMuted = m; } catch { }
                 muteBtn.Text = m ? "🔇" : "🔊";
             };
-            // bar：[播放][静音][进度][时间][关闭]——muteBtn 最先 Add（Dock 逆序结算，落在播放键右侧）
+            // 音量条：点击设值（与进度条同交互）；调过就记住（Config.PreviewVolume），下次预览直接用
+            var volBar = new SeekBar { Width = 64, Dock = DockStyle.Left };
+            double vol0 = Math.Max(0.0, Math.Min(1.0, Config.PreviewVolume / 100.0));
+            volBar.Ratio = vol0;
+            session.Volume = vol0;
+            volBar.Seek += delegate(double r)
+            {
+                r = Math.Max(0.0, Math.Min(1.0, r));
+                session.Volume = r;
+                volBar.Ratio = r;
+                Config.PreviewVolume = Math.Round(r * 100);
+                Config.Save();
+            };
+            // bar：[播放][静音][音量][进度][时间][关闭]——muteBtn 最先 Add（Dock 逆序结算，落在播放键右侧）
             bar.Controls.Add(muteBtn);
+            bar.Controls.Add(volBar);
             bar.Controls.Add(prog);
             bar.Controls.Add(btn);
             bar.Controls.Add(lblTime);
@@ -1109,6 +1123,13 @@ internal static class MediaPreview
         {
             get { try { return _me.SpeedRatio; } catch { return 1.0; } }
             set { try { _me.SpeedRatio = value; } catch { } }
+        }
+
+        // 音量（0-1）：音量条记忆用（Config.PreviewVolume 0-100）
+        public double Volume
+        {
+            get { try { return _me.Volume; } catch { return 1.0; } }
+            set { try { _me.Volume = Math.Max(0.0, Math.Min(1.0, value)); } catch { } }
         }
 
         public void Play()

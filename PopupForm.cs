@@ -1660,7 +1660,11 @@ namespace HoverExplorer
                     && Math.Abs(curPos.Y - _pvHdrLastPos.Y) <= SystemInformation.DoubleClickSize.Height / 2;
                 _pvHdrLastTick = dbl ? 0 : nowTick;
                 _pvHdrLastPos = curPos;
-                if (dbl && !string.IsNullOrEmpty(FilePath)) { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(System.IO.Path.GetDirectoryName(FilePath)) { UseShellExecute = true }); } catch { } return; }
+                if (dbl && !string.IsNullOrEmpty(FilePath))
+                {
+                    if ((Control)s == _nameLbl) { BeginFileRename(); return; }   // 双击文件名 = 就地改名
+                    try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(System.IO.Path.GetDirectoryName(FilePath)) { UseShellExecute = true }); } catch { } return;
+                }
                 var sp = ((Control)s).PointToScreen(e.Location);
                 int hit = GetResizeHit(sp.X, sp.Y);
                 if (hit != 0) { NativeMethods.ReleaseCapture(); NativeMethods.SendMessage(Handle, 0xA1, hit, 0); return; }
@@ -2033,10 +2037,56 @@ namespace HoverExplorer
         // 图片预览原地换图（滚轮）：仅图片类预览可走
         internal bool IsImagePreview { get { return _content is PictureBox && _img != null; } }
 
+        // ===== 就地改名：双击文件名 → 行内编辑框（Enter 提交 / Esc 或失焦取消）。
+        // 提交走 PopupForm.RenamePath：释放被预览占用的句柄 → File.Move → 按新路径恢复内容与标题 =====
+        private TextBox _renameBox;
+
+        private void BeginFileRename()
+        {
+            if (_renameBox != null || string.IsNullOrEmpty(FilePath) || IsDisposed) return;
+            string cur = System.IO.Path.GetFileName(FilePath);
+            _renameBox = new TextBox
+            {
+                Font = new Font(Config.FontName, 9f),
+                ForeColor = Config.FG,
+                BackColor = Config.BG,
+                BorderStyle = BorderStyle.FixedSingle,
+                Text = cur,
+            };
+            // 覆在文件名标签的位置（窗体坐标，工具栏高度不够放编辑框）
+            var scr = _toolbar.RectangleToScreen(_nameLbl.Bounds);
+            var fb = RectangleToClient(scr);
+            _renameBox.SetBounds(fb.X, fb.Y - 2, Math.Max(140, fb.Width + 8), fb.Height + 6);
+            Controls.Add(_renameBox);
+            _renameBox.BringToFront();
+            _nameLbl.Visible = false;
+            _renameBox.Focus();
+            int extLen = System.IO.Path.GetExtension(cur).Length;
+            _renameBox.Select(0, Math.Max(0, cur.Length - extLen));   // 选中主名，扩展名不选（与 Explorer F2 一致）
+            _renameBox.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; EndFileRename(true); }
+                else if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; EndFileRename(false); }
+            };
+            _renameBox.LostFocus += (s, e) => EndFileRename(false);
+        }
+
+        private void EndFileRename(bool commit)
+        {
+            if (_renameBox == null) return;
+            var box = _renameBox; _renameBox = null;
+            string nn = commit ? box.Text.Trim() : null;
+            box.Dispose();
+            if (_nameLbl != null && !_nameLbl.IsDisposed) _nameLbl.Visible = true;
+            if (!commit || string.IsNullOrEmpty(nn)) return;
+            if (string.Equals(nn, System.IO.Path.GetFileName(FilePath), StringComparison.Ordinal)) return;
+            if (!PopupForm.RenamePath(FilePath, nn)) ShowToast(I18n.T("rename_fail"));
+            // 成功时 RenamePath → RestorePreviewOf 已按新路径恢复内容并刷新标题（含 FilePath）
+        }
+
         internal void SwitchFile(int dir)
         {
-            if (string.IsNullOrEmpty(FilePath)) return;
-            string dir0 = Path.GetDirectoryName(FilePath);
+            if (string.IsNullOrEmpty(FilePath)) return;            string dir0 = Path.GetDirectoryName(FilePath);
             if (string.IsNullOrEmpty(dir0)) return;
             var imgs = GetSortedFiles(dir0, f => Config.ImgExts.Contains(Path.GetExtension(f)) || Config.IcoExts.Contains(Path.GetExtension(f)));
             if (imgs.Count == 0) return;
@@ -3992,6 +4042,9 @@ namespace HoverExplorer
             // 固定项存的是路径，改名后要同步，否则固定卡片/面板指向失效路径
             var pi = Config.PinnedItems.Find(p => string.Equals(p.Path, src, StringComparison.OrdinalIgnoreCase));
             if (pi != null) { pi.Path = dst; Config.Save(); }
+            // 正被外部悬停/预览引用的旧路径同步改掉，否则悬停状态与新路径错位（预览残留/重复调度）
+            if (string.Equals(_extPreviewPath, src, StringComparison.OrdinalIgnoreCase)) _extPreviewPath = dst;
+            if (string.Equals(Program._extHoverFile, src, StringComparison.OrdinalIgnoreCase)) Program._extHoverFile = dst;
             Program.RefreshPanelsShowing(dir, null);
             Program.DebugLog("[rename] " + src + " -> " + dst);
             return true;

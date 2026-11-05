@@ -52,7 +52,7 @@ namespace HoverExplorer
         }
 
         private static string _hoverFolder;
-        private static string _extHoverFile;
+        internal static string _extHoverFile;   // 改名后同步（RenamePath 里按旧路径更新，避免悬停状态错位）
         private static string _lastHoverPath;
         // 指针静止时的候选目标 + 稳定起点：目标被连续检测到满 HoverDelay 也算真实悬停
         // （缩略图视图下检测会抖，"mouseMoved + 目标稳定"的 tick 可能永不对齐，见上游 issue #4）
