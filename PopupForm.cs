@@ -3177,6 +3177,7 @@ namespace HoverExplorer
             }
 
             _hlRow = null;
+            _kbRow = null;   // 重建销毁行控件，键盘选中行引用一并作废
             _rows.Clear();
             _sortBtns.Clear();
             _rowEdit = null;   // 重建会销毁编辑框，清掉死引用（rename 按钮才会恢复显示）
@@ -4695,6 +4696,73 @@ namespace HoverExplorer
             return _previewForm != null && _previewForm.ContainsPoint(x, y);
         }
 
+        // ===== 键盘导航（全局键盘钩子路由）：↑/↓ 移动选中行，Enter 打开，F2 弹原生菜单（含重命名），
+        // Del 送回收站，Esc 取消。选中态复用行的 Selected；面板重建时随行销毁一并作废 =====
+        private RowLabel _kbRow;
+
+        internal bool KbNavActive()
+        {
+            return _kbRow != null && !_kbRow.IsDisposed;
+        }
+
+        internal bool KbNavigate(int dir)
+        {
+            if (_rows.Count == 0) return false;
+            int idx = KbNavActive() ? _rows.IndexOf(_kbRow) : -1;
+            idx = idx < 0 ? (dir > 0 ? 0 : _rows.Count - 1) : Math.Max(0, Math.Min(_rows.Count - 1, idx + dir));
+            SetKbRow(_rows[idx]);
+            return true;
+        }
+
+        private void SetKbRow(RowLabel r)
+        {
+            if (_kbRow != null && !_kbRow.IsDisposed) { _kbRow.Selected = false; ApplySel(_kbRow); }
+            _kbRow = r;
+            if (r != null && !r.IsDisposed) { r.Selected = true; ApplySel(r); }
+        }
+
+        private void ClearKbRow()
+        {
+            if (_kbRow != null && !_kbRow.IsDisposed) { _kbRow.Selected = false; ApplySel(_kbRow); }
+            _kbRow = null;
+        }
+
+        internal bool KbAction(Keys k)
+        {
+            if (!KbNavActive()) return false;
+            var row = _kbRow;
+            switch (k)
+            {
+                case Keys.Enter: ClearKbRow(); OpenPath(row.Full); return true;
+                case Keys.F2: ShowShellMenu(row); return true;   // 原生菜单自带重命名，不重造行内编辑框
+                case Keys.Delete: ClearKbRow(); RecycleRows(new List<RowLabel> { row }); return true;
+                case Keys.Escape: ClearKbRow(); return true;
+            }
+            return false;
+        }
+
+        // ←/→ 切换同文件夹文件（键盘钩子路由入口）：图片走预览窗原地换图，其余按原窗位置重建
+        internal bool NavigatePreview(int dir)
+        {
+            var pf = _previewForm;
+            if (pf == null || pf.IsDisposed || string.IsNullOrEmpty(pf.FilePath)) return false;
+            if (pf.IsImagePreview) { pf.SwitchFile(dir); return true; }
+            string cur = pf.FilePath;
+            string dir0 = Path.GetDirectoryName(cur);
+            if (string.IsNullOrEmpty(dir0)) return false;
+            var files = PreviewForm.GetSortedFiles(dir0, f => PreviewProvider.CanPreview(f));
+            if (files.Count < 2) return false;
+            int idx = files.FindIndex(f => string.Equals(f, cur, StringComparison.OrdinalIgnoreCase));
+            if (idx < 0) idx = 0;
+            int next = (idx + dir + files.Count) % files.Count;
+            var keep = new Rectangle(pf.Left, pf.Top, pf.Width, pf.Height);
+            ClosePreviewForm();
+            _previewPath = files[next];
+            ShowPreviewCore(files[next], null, keep);
+            Program.DebugLog("[panel-preview] navigate " + dir + " -> " + files[next]);
+            return true;
+        }
+
         // 本面板是否有内嵌预览在显示
         internal bool HasInnerPreview()
         {
@@ -4762,6 +4830,31 @@ namespace HoverExplorer
         public static bool FilePreviewContainsPoint(int x, int y)
         {
             return _extPreviewForm != null && _extPreviewForm.ContainsPoint(x, y);
+        }
+
+        // 外部直接预览存活（键盘钩子据此决定是否装钩/路由 ←→）
+        internal static bool ExtPreviewActive()
+        {
+            return _extPreviewForm != null && !_extPreviewForm.IsDisposed && !string.IsNullOrEmpty(_extPreviewForm.FilePath);
+        }
+
+        // 外部预览 ←/→ 切换：图片原地换图，其余按鼠标当前位置重建（LoadFilePreview 自带定位）
+        internal static void NavigateExtPreview(int dir)
+        {
+            var pf = _extPreviewForm;
+            if (pf == null || pf.IsDisposed || string.IsNullOrEmpty(pf.FilePath)) return;
+            if (pf.IsImagePreview) { pf.SwitchFile(dir); return; }
+            string cur = pf.FilePath;
+            string dir0 = Path.GetDirectoryName(cur);
+            if (string.IsNullOrEmpty(dir0)) return;
+            var files = PreviewForm.GetSortedFiles(dir0, f => PreviewProvider.CanPreview(f));
+            if (files.Count < 2) return;
+            int idx = files.FindIndex(f => string.Equals(f, cur, StringComparison.OrdinalIgnoreCase));
+            if (idx < 0) idx = 0;
+            int next = (idx + dir + files.Count) % files.Count;
+            NativeMethods.POINT pt; NativeMethods.GetCursorPos(out pt);
+            LoadFilePreview(files[next], new Point(pt.X, pt.Y));
+            Program.DebugLog("[preview] navigate " + dir + " -> " + files[next]);
         }
 
         // 预览显示期间保持 TOPMOST（不激活）：防止被前台窗口盖住。

@@ -445,8 +445,75 @@ namespace HoverExplorer
                         || (NativeMethods.GetAsyncKeyState(NativeMethods.VK_MENU) & 0x8000) != 0;
                     if (!mod && RoutePageKey(hs.vkCode == NativeMethods.VK_NEXT ? 1 : -1)) return (IntPtr)1;
                 }
+                // 面板键盘导航 / 预览窗文件切换：仅裸键，且前台不在输入态（Explorer 重命名/搜索框不能被抢键）
+                int vk = (int)hs.vkCode;
+                bool nav = vk == VK_UP || vk == VK_DOWN || vk == VK_LEFT || vk == VK_RIGHT
+                    || vk == VK_RETURN || vk == VK_ESCAPE || vk == VK_DELETE || vk == VK_F2;
+                if (nav)
+                {
+                    bool mod = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_SHIFT) & 0x8000) != 0
+                        || (NativeMethods.GetAsyncKeyState(NativeMethods.VK_CONTROL) & 0x8000) != 0
+                        || (NativeMethods.GetAsyncKeyState(NativeMethods.VK_MENU) & 0x8000) != 0;
+                    if (!mod && !IsEditingInForeground() && RoutePanelKeys(vk)) return (IntPtr)1;
+                }
             }
             return NativeMethods.CallNextHookEx(_kbHook, nCode, wParam, lParam);
+        }
+
+        // 面板键盘导航/预览切换用（钩子内裸键判定）
+        private const int VK_LEFT = 0x25, VK_UP = 0x26, VK_RIGHT = 0x27, VK_DOWN = 0x28;
+        private const int VK_RETURN = 0x0D, VK_ESCAPE = 0x1B, VK_DELETE = 0x2E, VK_F2 = 0x71;
+
+        // 面板/预览键盘路由：↑↓/Enter/F2/Del/Esc 归键盘选中行所在面板；没有选中行时，
+        // 第一次 ↑/↓ 在鼠标压着的（或最近的）可见面板里开始选中——旧版要求"先有选中行才
+        // 进路由"，第一次按键永远进不来，导航死活不启动（上一轮返工的根因）。
+        // ←/→ 归预览窗文件切换（面板内预览 > 外部直接预览）。返回 false = 无人消费，键透传
+        private static bool RoutePanelKeys(int vk)
+        {
+            Keys k = (Keys)vk;
+            PopupForm kbPanel = null;
+            for (int i = _panels.Count - 1; i >= 0; i--)
+            {
+                var p = _panels[i];
+                if (p == null || p.IsDisposed || !p.Visible) continue;
+                if (p.KbNavActive()) { kbPanel = p; break; }
+            }
+            if (kbPanel != null)
+            {
+                if (vk == VK_UP) return kbPanel.KbNavigate(-1);
+                if (vk == VK_DOWN) return kbPanel.KbNavigate(1);
+                if (k == Keys.Enter || k == Keys.F2 || k == Keys.Delete || k == Keys.Escape) return kbPanel.KbAction(k);
+            }
+            else if (vk == VK_UP || vk == VK_DOWN)
+            {
+                NativeMethods.POINT pt; NativeMethods.GetCursorPos(out pt);
+                PopupForm target = null;
+                for (int i = _panels.Count - 1; i >= 0; i--)
+                {
+                    var p = _panels[i];
+                    if (p == null || p.IsDisposed || !p.Visible) continue;
+                    if (p.ContainsPoint(pt.X, pt.Y)) { target = p; break; }
+                }
+                if (target == null)
+                    for (int i = _panels.Count - 1; i >= 0; i--)
+                    {
+                        var p = _panels[i];
+                        if (p != null && !p.IsDisposed && p.Visible) { target = p; break; }
+                    }
+                if (target != null && target.KbNavigate(vk == VK_DOWN ? 1 : -1)) return true;
+            }
+            if (vk == VK_LEFT || vk == VK_RIGHT)
+            {
+                int dir = vk == VK_RIGHT ? 1 : -1;
+                for (int i = _panels.Count - 1; i >= 0; i--)
+                {
+                    var p = _panels[i];
+                    if (p == null || p.IsDisposed || !p.Visible) continue;
+                    if (p.NavigatePreview(dir)) return true;
+                }
+                if (PopupForm.ExtPreviewActive()) { PopupForm.NavigateExtPreview(dir); return true; }
+            }
+            return false;
         }
 
         // 翻页键路由：指针压在哪个面板上就翻哪个（最顶层优先）；不在面板上不拦截，
@@ -931,7 +998,7 @@ namespace HoverExplorer
                 var p = _panels[i];
                 if (p != null && !p.IsDisposed && p.Visible) { anyPanelVis = true; break; }
             }
-            SyncKeyboardHook(anyPanelVis);
+            SyncKeyboardHook(anyPanelVis || PopupForm.ExtPreviewActive());   // 外部预览存活时也要装钩（无面板时 ←→ 才收得到）
             bool menuOpen = ShellMenuOpen || IsSystemMenuOpen();
             // shell 原生菜单模态期间 WM_TIMER 照常派发（Tick 仍在跑）：
             // 此期间任何 SetWindowPos 提顶都可能把卡片/面板提到菜单上面 → 菜单被盖、点击失效。
