@@ -13,7 +13,7 @@ namespace HoverExplorer
 {
     internal static class Program
     {
-        public const string Version = "1.1.4";
+        public const string Version = "1.1.5";
 
         private static string _desktopPath;
         private static string _publicDesktopPath;
@@ -1161,6 +1161,7 @@ namespace HoverExplorer
             string hoverPath = null;
             bool hoverIsDir = false;
             Rectangle hoverRect = Rectangle.Empty;
+            bool hoverIsDesktop = false;
 
             // 打开的资源管理器窗口/标签 → 历史列表（2.5s 节流；RecordRecent 顶部相同跳过）
             if ((DateTime.UtcNow - _lastExplorerPathAt).TotalMilliseconds >= 2500)
@@ -1213,6 +1214,7 @@ namespace HoverExplorer
                 if (NativeMethods.PointOnDesktop(mx, my))
                 {
                     hoverPath = ResolveHiddenExt(DetectDesktopItem(mx, my, out hoverRect, out hoverIsDir));
+                    hoverIsDesktop = hoverPath != null;
                 }
                 else if (Config.ExplorerEnabled || Config.TcEnabled || Config.PerchEnabled)
                 {
@@ -1243,17 +1245,19 @@ namespace HoverExplorer
             if (folderSup) hoverFolder = null;
             if (previewSup) hoverFile = null;
             // 文件预览边缘触发区：条目中段不弹预览窗（留给改名/右键/拖拽），只有停在
-            // 左/右缘触发区才预览。长按预览模式按住左键=主动操作，不受限
-            if (hoverFile != null && Config.PreviewEdgeMode != 0 && !hoverRect.IsEmpty)
+            // 左/右缘触发区才预览。长按预览模式按住左键=主动操作，不受限。
+            // 桌面图标是垂直布局（图标上文字下），X 方向窄，边缘分区无意义 → 跳过
+            if (hoverFile != null && Config.PreviewEdgeMode != 0 && !hoverIsDesktop)
             {
                 bool lpActive = Config.LongPressFor(true) && Config.IsLeftDown();
-                if (!lpActive)
+                bool inEdge = false;
+                if (!hoverRect.IsEmpty && !lpActive)
                 {
                     int w = Math.Max(8, Math.Min(Config.PreviewEdgeWidth, hoverRect.Width / 3));
-                    bool inEdge = ((Config.PreviewEdgeMode & 1) != 0 && mx < hoverRect.Left + w)
-                               || ((Config.PreviewEdgeMode & 2) != 0 && mx >= hoverRect.Right - w);
-                    if (!inEdge) hoverFile = null;
+                    inEdge = ((Config.PreviewEdgeMode & 1) != 0 && mx < hoverRect.Left + w)
+                          || ((Config.PreviewEdgeMode & 2) != 0 && mx >= hoverRect.Right - w);
                 }
+                if (!inEdge) hoverFile = null;
             }
             if (hoverPath != null && Config.HideTooltip) HideTooltips();
             if (hoverPath != _lastHoverPath)
@@ -1426,6 +1430,7 @@ namespace HoverExplorer
 
             isDir = Directory.Exists(full);
             rect = reader.GetItemRect(idx);
+
             return full;
         }
 

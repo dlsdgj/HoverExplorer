@@ -163,6 +163,20 @@ namespace HoverExplorer
     {
         public static List<CardPalette> All = new List<CardPalette>();
 
+        // 出厂预设方案（仅新安装用户没有任何方案时注入；老用户的自建方案不受影响）。
+        // 格式：首行名称，其余 key=value（与配色编辑器/导入文本同一套语法）
+        private static readonly string[] Presets = new string[]
+        {
+            "清爽浅蓝\nbg=rgba(248,249,250,245)\nfg=rgba(32,34,40,255)\nbadge_bg=rgba(65,113,204,237)\nbadge_fg=rgba(255,255,255,255)\nstrip=rgba(65,113,204,255)\nstrip_w=2\nfont=Microsoft YaHei UI\nfont_size=9.5\nradius=6",
+            "极简白\nbg=rgba(255,255,255,248)\nfg=rgba(28,28,34,255)\nbadge_bg=rgba(28,28,34,255)\nbadge_fg=rgba(255,255,255,255)\nstrip=rgba(28,28,34,255)\nstrip_w=3\nfont=Microsoft YaHei UI\nfont_size=9.5\nradius=6",
+            "墨绿纸感\nbg=rgba(246,241,231,230)\nfg=rgba(38,36,33,255)\nbadge_bg=rgba(153,57,43,235)\nbadge_fg=rgba(255,255,255,255)\nstrip=rgba(153,57,43,255)\nstrip_w=3\nfont=Microsoft YaHei UI\nfont_size=9\nradius=6",
+            "樱花粉白\nbg=rgba(250,184,235,235)\nfg=rgba(37,34,37,255)\nbadge_bg=rgba(255,255,255,230)\nbadge_fg=rgba(28,23,27,255)\nstrip=rgba(233,32,140,255)\nstrip_w=3\nfont=Microsoft YaHei UI\nfont_size=10\nradius=8",
+            "深空蓝玻璃\nbg=rgba(21,23,29,240)\nfg=rgba(232,233,237,255)\nbadge_bg=rgba(67,72,87,240)\nbadge_fg=rgba(241,242,243,255)\nstrip=rgba(67,221,252,255)\nstrip_w=4\nfont=Segoe UI\nfont_size=10\nradius=8",
+            "青蓝深海\nbg=rgba(10,44,55,225)\nfg=rgba(232,235,237,255)\nbadge_bg=rgba(58,203,251,220)\nbadge_fg=rgba(15,15,15,255)\nstrip=rgba(58,203,251,255)\nstrip_w=4\nfont=Consolas\nfont_size=10\nradius=8",
+            "森林绿\nbg=rgba(27,50,41,235)\nfg=rgba(234,235,235,255)\nbadge_bg=rgba(87,210,165,252)\nbadge_fg=rgba(15,15,15,255)\nstrip=rgba(87,210,165,255)\nstrip_w=3\nfont=Segoe UI\nfont_size=11\nradius=6",
+            "暖橙琥珀\nbg=rgba(47,23,14,237)\nfg=rgba(236,234,233,255)\nbadge_bg=rgba(240,99,51,252)\nbadge_fg=rgba(255,255,255,255)\nstrip=rgba(240,99,51,255)\nstrip_w=5\nfont=Microsoft YaHei UI\nfont_size=10\nradius=6",
+        };
+
         // 从 Config.CardPalettesData 加载（格式：每行 name=escapedText，\n→\\n、=→\\e）
         public static void Load()
         {
@@ -181,7 +195,17 @@ namespace HoverExplorer
                     All.Add(CardPalette.Parse(text, name));
                 }
             }
-            if (All.Count == 0) All.Add(CardPalette.Default());
+            if (All.Count == 0)
+            {
+                // 新安装用户：注入默认高对比 + 一组出厂预设，保证开箱即有方案可用
+                All.Add(CardPalette.Default());
+                foreach (var t in Presets)
+                {
+                    int nl = t.IndexOf('\n');
+                    if (nl <= 0) continue;
+                    All.Add(CardPalette.Parse(t.Substring(nl + 1), t.Substring(0, nl)));
+                }
+            }
             if (Config.CardPaletteIndex < 0 || Config.CardPaletteIndex >= All.Count)
                 Config.CardPaletteIndex = 0;
         }
@@ -200,7 +224,7 @@ namespace HoverExplorer
 
         public static CardPalette Get(int index)
         {
-            if (All.Count == 0) return null;
+            if (All.Count == 0) All.Add(CardPalette.Default());   // 兜底：任何时刻不返回 null，卡片永远打得开
             if (index < 0 || index >= All.Count) index = 0;
             return All[index];
         }

@@ -502,7 +502,7 @@ namespace HoverExplorer
             _pvEdgeCombo.SelectedIndexChanged += (s, e) => { _fnApplySettings(false, false); };
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_edge"), I18n.T("pv_edge_desc"), _pvEdgeCombo);
 
-            _pvEdgeWidthStepper = new MsStepper { Value = Math.Max(50, Config.PreviewEdgeWidth) };
+            _pvEdgeWidthStepper = new MsStepper { Value = Math.Max(50, Config.PreviewEdgeWidth), Unit = "px" };
             _pvEdgeWidthStepper.ValueChanged += (s, e) => { _fnApplySettings(false, false); };
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_edge_width"), null, _pvEdgeWidthStepper);
 
@@ -603,26 +603,21 @@ namespace HoverExplorer
                 return by + 20;
             });
 
-            // 音频卡片滚轮提示（黄底黑字常显）
+            // 音频卡片滚轮提示（黄底黑字常显）+ 键盘用法说明：两段提示纵向串排，共用一个链尾钩子避免重叠
             var audioHint = new Label { Text = I18n.T("hint_audio_wheel"), AutoSize = true, MaximumSize = new Size(_pvTypeGroup.Width - PadX * 2, 0), BackColor = Color.FromArgb(0xFF, 0xF5, 0x9C), ForeColor = Color.Black, Font = new Font(Config.FontName, 8f), Padding = new Padding(6, 3, 6, 3), Location = new Point(PadX, AccGroup.HeadH + y + 6), Tag = "tip" };
+            var kbHint = new Label { Text = I18n.T("kb_hint"), AutoSize = true, MaximumSize = new Size(_pvTypeGroup.Width - PadX * 2, 0), BackColor = Config.ListHdbg, ForeColor = Config.FgDir, Font = new Font(Config.FontName, 7.5f), Padding = new Padding(6, 3, 6, 3), Location = new Point(PadX, AccGroup.HeadH + y + 6 + audioHint.Height + 12), Tag = "tip" };
             _pvTypeGroup.Controls.Add(audioHint);
-            _pvTypeGroup.ExpandRow(y + 6 + audioHint.Height + 4, 0);
+            _pvTypeGroup.Controls.Add(kbHint);
+            _pvTypeGroup.ExpandRow(y + 6 + audioHint.Height + 12 + 6 + kbHint.Height + 4, 0);
             _pvTypeGroup.AddTailHook(ty =>
             {
                 audioHint.MaximumSize = new Size(Math.Max(160, _pvTypeGroup.Width - PadX * 2), 0);
                 audioHint.Location = new Point(PadX, AccGroup.HeadH + ty + 6);
-                _pvTypeGroup.NoticeContentBottom(ty + 6 + audioHint.Height + 4);
-            });
-
-            // 面板/预览键盘用法说明：小字号 + 自动换行（长文案放行内会超框被裁）
-            var kbHint = new Label { Text = I18n.T("kb_hint"), AutoSize = true, MaximumSize = new Size(_pvTypeGroup.Width - PadX * 2, 0), BackColor = Config.ListHdbg, ForeColor = Config.FgDir, Font = new Font(Config.FontName, 7.5f), Padding = new Padding(6, 3, 6, 3), Location = new Point(PadX, AccGroup.HeadH + y + 6), Tag = "tip" };
-            _pvTypeGroup.Controls.Add(kbHint);
-            _pvTypeGroup.ExpandRow(y + 6 + kbHint.Height + 4, 0);
-            _pvTypeGroup.AddTailHook(ty =>
-            {
+                // 第二段提示接在第一段下方（随第一段实际高度排布，不固定间距）
+                int ky = ty + 6 + audioHint.Height + 8;
                 kbHint.MaximumSize = new Size(Math.Max(160, _pvTypeGroup.Width - PadX * 2), 0);
-                kbHint.Location = new Point(PadX, AccGroup.HeadH + ty + 6);
-                _pvTypeGroup.NoticeContentBottom(ty + 6 + kbHint.Height + 4);
+                kbHint.Location = new Point(PadX, AccGroup.HeadH + ky + 6);
+                _pvTypeGroup.NoticeContentBottom(ky + 6 + kbHint.Height + 4);
             });
 
             _pvTypeGroup.FinishRows();
@@ -3449,6 +3444,7 @@ namespace HoverExplorer
         private class MsStepper : Control
         {
             private int _val = 350;
+            public string Unit = "ms";   // 数值单位后缀：默认毫秒，边缘触发区宽度用 px
 
             public event EventHandler ValueChanged;
 
@@ -3493,7 +3489,7 @@ namespace HoverExplorer
                 {
                     TextRenderer.DrawText(g, "−", f, new Rectangle(0, 0, 22, Height), Config.FG, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                     TextRenderer.DrawText(g, "+", f, new Rectangle(Width - 22, 0, 22, Height), Config.FG, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-                    TextRenderer.DrawText(g, _val + " ms", f, new Rectangle(22, 0, Width - 44, Height), Config.FG, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+                    TextRenderer.DrawText(g, _val + " " + Unit, f, new Rectangle(22, 0, Width - 44, Height), Config.FG, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
                 }
                 using (var p = new Pen(Config.Border))
                 {

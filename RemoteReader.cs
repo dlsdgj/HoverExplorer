@@ -135,12 +135,18 @@ namespace HoverExplorer
 
         public Rectangle GetItemRect(int itemIndex)
         {
+            return GetItemRect(itemIndex, 1);   // 默认 LVIR_ICON：图标图形矩形（高亮描边用）
+        }
+
+        // portion=LVM_GETITEMRECT 的取值：0=LVIR_BOUNDS(整个条目含图标+名称) 1=LVIR_ICON(仅图标图形)
+        public Rectangle GetItemRect(int itemIndex, int portion)
+        {
             int size = Marshal.SizeOf(typeof(NativeMethods.RECT));
             IntPtr remote = Alloc((uint)size);
             if (remote == IntPtr.Zero) return Rectangle.Empty;
             try
             {
-                var local = new NativeMethods.RECT { Left = 1 };
+                var local = new NativeMethods.RECT { Left = portion };
                 Write(remote, StructureToBytes(local), (uint)size);
                 NativeMethods.SendMsg(_hwnd, (uint)NativeMethods.LVM_GETITEMRECT, (IntPtr)itemIndex, remote);
                 var outBuf = new byte[size];
