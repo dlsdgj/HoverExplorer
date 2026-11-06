@@ -347,6 +347,47 @@ internal static class MediaPreview
             return pb;
         }
 
+        // 刻度尺"悬停试速"统一接线：提示浮层即时显示（便宜），实际 SpeedRatio 变更
+        // 驻留 180ms 才应用——MF 改速率要重建播放拓扑、ffmpeg 路径要重建 atempo 滤镜链，
+        // 划过刻度尺去拉进度条时逐格应用会把播放卡出一串顿挫（用户实测卡顿源）
+        internal static void AttachSpeedRuler(SpeedRuler ruler, IMediaSession session, Label hint)
+        {
+            System.Windows.Forms.Timer debounce = null;
+            double pending = double.NaN;
+            Action apply = delegate
+            {
+                if (debounce != null) debounce.Stop();
+                if (double.IsNaN(pending) || session == null) return;
+                double r = pending; pending = double.NaN;
+                try { if (Math.Abs(session.SpeedRatio - r) > 0.001) session.SpeedRatio = r; } catch { }
+            };
+            ruler.PreviewSpeed += delegate(double r)
+            {
+                UpdateSpeedHint(hint, r);
+                pending = r;
+                if (debounce == null)
+                {
+                    debounce = new System.Windows.Forms.Timer { Interval = 180 };
+                    debounce.Tick += delegate { apply(); };
+                }
+                debounce.Stop(); debounce.Start();   // 重启计时 = 驻留判定
+            };
+            ruler.CommitSpeed += delegate(double r)
+            {
+                if (debounce != null) debounce.Stop();
+                pending = double.NaN;
+                if (session != null) { try { session.SpeedRatio = r; } catch { } }
+                UpdateSpeedHint(hint, r);
+            };
+            ruler.RestoreSpeed += delegate
+            {
+                if (debounce != null) debounce.Stop();
+                pending = double.NaN;
+                if (session != null) { try { if (Math.Abs(session.SpeedRatio - ruler.Committed) > 0.001) session.SpeedRatio = ruler.Committed; } catch { } }
+                UpdateSpeedHint(hint, ruler.Committed);
+            };
+        }
+
         // ===== WPF MediaElement 播放器（音频+视频统一，Media Foundation 解码，零部署）=====
         private static bool _wpfInited;
         internal static void EnsureWpf()
@@ -442,9 +483,7 @@ internal static class MediaPreview
             panel.Controls.Add(specBadge);
             specBadge.BringToFront();   // 压在画面上层；Label 挡不挡鼠标无所谓（悬停交互在 WPF 宿主里）
             var ruler = new SpeedRuler { Dock = DockStyle.Bottom };
-            ruler.PreviewSpeed += delegate(double r) { try { session.SpeedRatio = r; } catch { } UpdateSpeedHint(spdHint, r); };
-            ruler.CommitSpeed += delegate(double r) { try { session.SpeedRatio = r; } catch { } UpdateSpeedHint(spdHint, r); };
-            ruler.RestoreSpeed += delegate { try { session.SpeedRatio = ruler.Committed; } catch { } UpdateSpeedHint(spdHint, ruler.Committed); };
+            AttachSpeedRuler(ruler, session, spdHint);
             var cls = CloseButton(panel);
             // 静音键：默认静音开关（Config.PreviewMuted 时视频起始即为静音态）
             bool startMuted = false;
@@ -460,8 +499,22 @@ internal static class MediaPreview
                 try { m = !session.WpfMedia.IsMuted; session.WpfMedia.IsMuted = m; } catch { }
                 muteBtn.Text = m ? "🔇" : "🔊";
             };
-            // bar：[播放][静音][进度][时间][关闭]——muteBtn 最先 Add（Dock 逆序结算，落在播放键右侧）
+            // 音量条：点击设值（与进度条同交互）；调过就记住（Config.PreviewVolume），下次预览直接用
+            var volBar = new SeekBar { Width = 64, Dock = DockStyle.Left };
+            double vol0 = Math.Max(0.0, Math.Min(1.0, Config.PreviewVolume / 100.0));
+            volBar.Ratio = vol0;
+            session.Volume = vol0;
+            volBar.Seek += delegate(double r)
+            {
+                r = Math.Max(0.0, Math.Min(1.0, r));
+                session.Volume = r;
+                volBar.Ratio = r;
+                Config.PreviewVolume = Math.Round(r * 100);
+                Config.Save();
+            };
+            // bar：[播放][静音][音量][进度][时间][关闭]——muteBtn 最先 Add（Dock 逆序结算，落在播放键右侧）
             bar.Controls.Add(muteBtn);
+            bar.Controls.Add(volBar);
             bar.Controls.Add(prog);
             bar.Controls.Add(btn);
             bar.Controls.Add(lblTime);
@@ -973,7 +1026,9 @@ internal static class MediaPreview
             IsVideo = isVideo;
             MediaPreview.EnsureWpf();
             _ctx = System.Threading.SynchronizationContext.Current;
-            _host = new ElementHost { BackColorTransparent = true };
+            // BackColorTransparent 必须关：它逼 WPF 空域走透明合成，视频帧合成路径变重（播放掉帧）。
+            // 视频区被画面+黑边铺满、音频宿主只有 1×1，都不需要透出 WinForms 底色
+            _host = new ElementHost { BackColorTransparent = false };
             _me = new MediaElement
             {
                 LoadedBehavior = MediaState.Manual,
@@ -1068,6 +1123,13 @@ internal static class MediaPreview
         {
             get { try { return _me.SpeedRatio; } catch { return 1.0; } }
             set { try { _me.SpeedRatio = value; } catch { } }
+        }
+
+        // 音量（0-1）：音量条记忆用（Config.PreviewVolume 0-100）
+        public double Volume
+        {
+            get { try { return _me.Volume; } catch { return 1.0; } }
+            set { try { _me.Volume = Math.Max(0.0, Math.Min(1.0, value)); } catch { } }
         }
 
         public void Play()

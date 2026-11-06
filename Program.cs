@@ -52,7 +52,7 @@ namespace HoverExplorer
         }
 
         private static string _hoverFolder;
-        private static string _extHoverFile;
+        internal static string _extHoverFile;   // 改名后同步（RenamePath 里按旧路径更新，避免悬停状态错位）
         private static string _lastHoverPath;
         // 指针静止时的候选目标 + 稳定起点：目标被连续检测到满 HoverDelay 也算真实悬停
         // （缩略图视图下检测会抖，"mouseMoved + 目标稳定"的 tick 可能永不对齐，见上游 issue #4）
@@ -116,16 +116,35 @@ namespace HoverExplorer
 
         private static readonly object _dbgLock = new object();
         private static string _logPath;
+        private static readonly List<string> _dbgQueue = new List<string>();
+        private static System.Threading.Timer _dbgFlushTimer;
+        private static DateTime _lastTickSkipLog = DateTime.MinValue;
         public static void DebugLog(string msg)
         {
             if (!Config.DebugLog) return;
+            lock (_dbgLock)
+            {
+                // 热路径（80ms tick、预览播放期间）每条都同步写文件 = UI 线程每秒十几次
+                // 文件 I/O（还要过杀软钩子），视频播放直接被卡出掉帧——攒着每秒刷一次
+                if (_dbgFlushTimer == null)
+                    _dbgFlushTimer = new System.Threading.Timer(delegate { FlushDbg(); }, null, 1000, 1000);
+                _dbgQueue.Add(DateTime.Now.ToString("HH:mm:ss.fff") + " " + msg);   // AppendAllLines 自带换行
+                if (_dbgQueue.Count >= 500) FlushDbgLocked();
+            }
+        }
+        private static void FlushDbg()
+        {
+            lock (_dbgLock) { FlushDbgLocked(); }
+        }
+        private static void FlushDbgLocked()
+        {
+            if (_dbgQueue.Count == 0) return;
             try
             {
-                lock (_dbgLock)
-                    File.AppendAllText(_logPath ?? (_logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "hover_debug.log")),
-                        DateTime.Now.ToString("HH:mm:ss.fff") + " " + msg + Environment.NewLine);
+                File.AppendAllLines(_logPath ?? (_logPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "hover_debug.log")), _dbgQueue);
             }
             catch { }
+            _dbgQueue.Clear();
         }
 
 
@@ -146,6 +165,7 @@ namespace HoverExplorer
         {
             DebugLog("[boot] === HoverExplorer start ===");
             DebugLog("[boot] os=" + Environment.OSVersion.VersionString);
+            try { DebugLog("[boot] wpf-tier=" + (System.Windows.Media.RenderCapability.Tier >> 16) + " (2=硬件加速 0=软件渲染)"); } catch { }
             try { using (var g = Graphics.FromHwnd(IntPtr.Zero)) DebugLog("[boot] dpi=" + g.DpiX); } catch { }
             DebugLog("[boot] theme=" + Config.Theme + " lang=" + Config.Language + " explorer=" + Config.ExplorerEnabled + " preview=" + Config.PreviewFiles + " previewDelay=" + Config.PreviewDelay + " checkInterval=" + Config.CheckInterval + " debugLog=" + Config.DebugLog + " hotkey=" + Config.HotkeyEnabled + "/" + SettingsForm.HotkeyDisplay(Config.HotkeyEnabled, Config.HotkeyModifiers, Config.HotkeyKey));
         }
@@ -425,8 +445,87 @@ namespace HoverExplorer
                         || (NativeMethods.GetAsyncKeyState(NativeMethods.VK_MENU) & 0x8000) != 0;
                     if (!mod && RoutePageKey(hs.vkCode == NativeMethods.VK_NEXT ? 1 : -1)) return (IntPtr)1;
                 }
+                // 面板键盘导航 / 预览窗文件切换：仅裸键，且前台不在输入态（Explorer 重命名/搜索框不能被抢键）。
+                // F2/Del 不路由（用户实测后砍掉）：重命名/删除交给资源管理器自己，导航只管选中和打开
+                int vk = (int)hs.vkCode;
+                bool nav = vk == VK_UP || vk == VK_DOWN || vk == VK_LEFT || vk == VK_RIGHT
+                    || vk == VK_RETURN || vk == VK_ESCAPE;
+                if (nav)
+                {
+                    bool mod = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_SHIFT) & 0x8000) != 0
+                        || (NativeMethods.GetAsyncKeyState(NativeMethods.VK_CONTROL) & 0x8000) != 0
+                        || (NativeMethods.GetAsyncKeyState(NativeMethods.VK_MENU) & 0x8000) != 0;
+                    if (!mod && !IsEditingInForeground() && RoutePanelKeys(vk)) return (IntPtr)1;
+                }
             }
             return NativeMethods.CallNextHookEx(_kbHook, nCode, wParam, lParam);
+        }
+
+        // 面板键盘导航/预览切换用（钩子内裸键判定）
+        private const int VK_LEFT = 0x25, VK_UP = 0x26, VK_RIGHT = 0x27, VK_DOWN = 0x28;
+        private const int VK_RETURN = 0x0D, VK_ESCAPE = 0x1B, VK_DELETE = 0x2E, VK_F2 = 0x71;
+
+        // 面板/预览键盘路由——分工明确（用户实测定稿）：
+        // ↑/↓ 只管面板行选中（Enter 打开，Esc 取消，选中行自动滚入视口）；
+        // ←/→ 只管预览窗文件切换（↑↓ 不碰预览——按住会自动重复，逐个重建视频预览会风暴，
+        // 实测表现为 navigate 循环、预览窗反复 SHOW/CLOSE 关不掉）。只拦裸键；输入态透传
+        private static bool RoutePanelKeys(int vk)
+        {
+            Keys k = (Keys)vk;
+            if (vk == VK_UP || vk == VK_DOWN)
+            {
+                PopupForm kbPanel = null;
+                for (int i = _panels.Count - 1; i >= 0; i--)
+                {
+                    var p = _panels[i];
+                    if (p == null || p.IsDisposed || !p.Visible) continue;
+                    if (p.KbNavActive()) { kbPanel = p; break; }
+                }
+                if (kbPanel != null) return kbPanel.KbNavigate(vk == VK_DOWN ? 1 : -1);
+                // 尚无选中行：第一次按键在鼠标压着的（或最近的）可见面板开始选中
+                // （旧版要求"先有选中行才进路由"，第一次按键永远进不来——上上轮返工的根因）
+                NativeMethods.POINT pt; NativeMethods.GetCursorPos(out pt);
+                PopupForm target = null;
+                for (int i = _panels.Count - 1; i >= 0; i--)
+                {
+                    var p = _panels[i];
+                    if (p == null || p.IsDisposed || !p.Visible) continue;
+                    if (p.ContainsPoint(pt.X, pt.Y)) { target = p; break; }
+                }
+                if (target == null)
+                    for (int i = _panels.Count - 1; i >= 0; i--)
+                    {
+                        var p = _panels[i];
+                        if (p != null && !p.IsDisposed && p.Visible) { target = p; break; }
+                    }
+                return target != null && target.KbNavigate(vk == VK_DOWN ? 1 : -1);
+            }
+            if (vk == VK_RETURN || vk == VK_ESCAPE)
+            {
+                for (int i = _panels.Count - 1; i >= 0; i--)
+                {
+                    var p = _panels[i];
+                    if (p == null || p.IsDisposed || !p.Visible) continue;
+                    if (p.KbNavActive())
+                    {
+                        if (k == Keys.Enter || k == Keys.Escape) return p.KbAction(k);
+                        break;
+                    }
+                }
+                return false;
+            }
+            if (vk == VK_LEFT || vk == VK_RIGHT)
+            {
+                int dir = vk == VK_RIGHT ? 1 : -1;
+                for (int i = _panels.Count - 1; i >= 0; i--)
+                {
+                    var p = _panels[i];
+                    if (p == null || p.IsDisposed || !p.Visible) continue;
+                    if (p.NavigatePreview(dir)) return true;
+                }
+                if (PopupForm.ExtPreviewActive()) { PopupForm.NavigateExtPreview(dir); return true; }
+            }
+            return false;
         }
 
         // 翻页键路由：指针压在哪个面板上就翻哪个（最顶层优先）；不在面板上不拦截，
@@ -510,10 +609,26 @@ namespace HoverExplorer
         private static DateTime _lastSysThemeAt = DateTime.UtcNow;
         private static bool _lastSysDark = Config.SystemDark;
 
+        private static DateTime _lastTickAt = DateTime.MinValue;
         private static void Tick()
         {
+            // 卡顿取证：UI 线程被外物阻塞（gap）或 tick 本身太重（slow）时留痕，
+            // 与媒体播放卡顿对照定位（视频合成与 tick 同在 UI 线程侧的只有输入/布局）
+            var now = DateTime.UtcNow;
+            if (_lastTickAt != DateTime.MinValue)
+            {
+                double gap = (now - _lastTickAt).TotalMilliseconds;
+                if (gap > 300) DebugLog("[tick] gap " + gap.ToString("F0") + "ms (UI 线程被阻塞)");
+            }
+            var sw = System.Diagnostics.Stopwatch.StartNew();
             try { TickImpl(); }
             catch (Exception ex) { Log("[tick异常] " + ex.Message); }
+            finally
+            {
+                sw.Stop();
+                if (sw.ElapsedMilliseconds > 120) DebugLog("[tick] slow " + sw.ElapsedMilliseconds + "ms");
+                _lastTickAt = DateTime.UtcNow;
+            }
         }
 
         private static readonly uint _currentPid = (uint)Process.GetCurrentProcess().Id;
@@ -895,7 +1010,7 @@ namespace HoverExplorer
                 var p = _panels[i];
                 if (p != null && !p.IsDisposed && p.Visible) { anyPanelVis = true; break; }
             }
-            SyncKeyboardHook(anyPanelVis);
+            SyncKeyboardHook(anyPanelVis || PopupForm.ExtPreviewActive());   // 外部预览存活时也要装钩（无面板时 ←→ 才收得到）
             bool menuOpen = ShellMenuOpen || IsSystemMenuOpen();
             // shell 原生菜单模态期间 WM_TIMER 照常派发（Tick 仍在跑）：
             // 此期间任何 SetWindowPos 提顶都可能把卡片/面板提到菜单上面 → 菜单被盖、点击失效。
@@ -998,7 +1113,12 @@ namespace HoverExplorer
             if (Config.HideTooltip && (inPanel || inPreview || inExtPreview)) HideTooltips();
             if (menuOpen || inPanel || _panels.Any(p => p.MenuOpen) || _panels.Any(p => p.ModalOpen) || _panels.Any(p => p.IsDragging) || inPreview || inExtPreview)
             {
-                if (inPreview || inExtPreview) Program.DebugLog("[tick] mouse in preview, skip mx=" + mx + ",my=" + my + " inPanel=" + inPanel + " inPreview=" + inPreview + " inExtPreview=" + inExtPreview + " panels=" + _panels.Count);
+                // 每 tick 都会走到这里（预览播放期间鼠标就停在预览窗上），只按时间节流记日志
+                if ((inPreview || inExtPreview) && (DateTime.UtcNow - _lastTickSkipLog).TotalMilliseconds > 2000)
+                {
+                    _lastTickSkipLog = DateTime.UtcNow;
+                    Program.DebugLog("[tick] mouse in preview, skip mx=" + mx + ",my=" + my + " inPanel=" + inPanel + " inPreview=" + inPreview + " inExtPreview=" + inExtPreview + " panels=" + _panels.Count);
+                }
                 _closeStart = DateTime.MinValue;
                 return;
             }
@@ -1122,6 +1242,19 @@ namespace HoverExplorer
             // 门控只拦各自功能：文件夹被拦不弹面板，预览被拦不弹预览（未拦的一方正常走）
             if (folderSup) hoverFolder = null;
             if (previewSup) hoverFile = null;
+            // 文件预览边缘触发区：条目中段不弹预览窗（留给改名/右键/拖拽），只有停在
+            // 左/右缘触发区才预览。长按预览模式按住左键=主动操作，不受限
+            if (hoverFile != null && Config.PreviewEdgeMode != 0 && !hoverRect.IsEmpty)
+            {
+                bool lpActive = Config.LongPressFor(true) && Config.IsLeftDown();
+                if (!lpActive)
+                {
+                    int w = Math.Max(8, Math.Min(Config.PreviewEdgeWidth, hoverRect.Width / 3));
+                    bool inEdge = ((Config.PreviewEdgeMode & 1) != 0 && mx < hoverRect.Left + w)
+                               || ((Config.PreviewEdgeMode & 2) != 0 && mx >= hoverRect.Right - w);
+                    if (!inEdge) hoverFile = null;
+                }
+            }
             if (hoverPath != null && Config.HideTooltip) HideTooltips();
             if (hoverPath != _lastHoverPath)
             {
@@ -1787,12 +1920,15 @@ namespace HoverExplorer
                 if (!inSub)
                 {
                     // KeepOnLeave：鼠标已离开所有面板（含面板内预览）= 离开语义 → 级联保持，等点击其他位置；
-                    // 仍悬在其他面板上（一级列表内换行/切换）→ 正常关闭旧级联
+                    // 仍悬在其他面板上（一级列表内换行/切换）→ 正常关闭旧级联。
+                    // 保持的前提是真有子面板（Level > 当前级联层级）——纯主面板也扣住的话，
+                    // 主面板在 KeepOnLeave 下永远不关，与 MaybeClose"只保护深层内容"的策略矛盾
                     if (Config.KeepOnLeave)
                     {
+                        bool deep = _panels.Any(p => !p.IsDisposed && !p.Pinned && p.Level > _subCloseLevel);
                         bool inAny = PopupForm.InAnyHoverPanel(pt.X, pt.Y)
                                   || _panels.Any(p => !p.IsDisposed && p.PreviewContainsPoint(pt.X, pt.Y));
-                        if (!inAny) { DebugLog("[cascade] KeepOnLeave hold, level=" + _subCloseLevel); return; }
+                        if (!inAny && deep) { DebugLog("[cascade] KeepOnLeave hold, level=" + _subCloseLevel); return; }
                     }
                     CloseAfter(_subCloseLevel);
                 }

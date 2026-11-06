@@ -60,6 +60,10 @@ namespace HoverExplorer
         private static bool _stillIsDir;
         private static DateTime _stillAt = DateTime.MinValue;
 
+        // miss 节流状态：上次全量检测未命中的窗口与时刻
+        private static IntPtr _missHwnd;
+        private static DateTime _missAt = DateTime.MinValue;
+
         public static string DetectHoverItem(int mx, int my, out System.Drawing.Rectangle rect, out bool isDir)
         {
             rect = System.Drawing.Rectangle.Empty;
@@ -77,6 +81,13 @@ namespace HoverExplorer
                 cur = NativeMethods.GetParent(cur);
             }
             if (explorerHwnd == IntPtr.Zero) return null;
+
+            // miss 节流：Win11 新版 Explorer 的 UIA 全量检测一次 130-500ms（44 条目的
+            // FindAll+逐条矩形），鼠标移动时每 tick 都 miss 都全量跑 → UI 线程饱和
+            // （实测 tick slow 527ms，关闭逻辑被饿死、置顶窗僵死）。上次未命中且还在
+            // 节流窗口内 → 直接判空；悬停延时本来 ≥150ms，感知无损
+            if (_missHwnd == explorerHwnd && (DateTime.UtcNow - _missAt).TotalMilliseconds < 250)
+                return null;
 
             if (_stillHwnd == explorerHwnd && mx == _stillX && my == _stillY
                 && (DateTime.UtcNow - _stillAt).TotalMilliseconds < 250)
@@ -130,6 +141,9 @@ namespace HoverExplorer
             _stillPath = result; _stillRect = result != null ? rect : System.Drawing.Rectangle.Empty;
             _stillIsDir = result != null && isDir;
             _stillAt = DateTime.UtcNow;
+            // 记录 miss（供节流）；命中则清掉，别让成功后的偶发 miss 被误节流
+            if (result == null) { _missHwnd = explorerHwnd; _missAt = DateTime.UtcNow; }
+            else _missHwnd = IntPtr.Zero;
             return result;
         }
 

@@ -301,6 +301,16 @@ namespace HoverExplorer
         private double _frameAcc = 0;  // 帧消费累加器
         private DateTime _lastTick = DateTime.MinValue;
 
+        // 音频：视频流本身 -an（高码流/系统解不了的素材才走到本面板）。
+        // 跟随 Config.PreviewMuted 初始化（与 MediaElement 路径一致），喇叭键随时开关；
+        // 音频会话惰性创建（构造含 waveOut+起 ffmpeg 进程，后台线程做），成功后对齐到视频当前位置
+        private FfmpegAudioSession _audio;
+        private volatile bool _audioOn;
+        private bool _audioOpening;
+        private double _audioPendingSpeed = double.NaN;
+        private Timer _audioSpeedDebounce;
+        private readonly Button _muteBtn;
+
         /// <summary>首帧就绪（可用于让缩略图让位）</summary>
         internal event Action FirstFrameReady;
         /// <summary>拿到真实宽高（预览窗按宽高比校正）</summary>
@@ -382,11 +392,28 @@ namespace HoverExplorer
             // 倍速刻度尺：改的是"消费帧率"，ffmpeg 进程不用重启
             var spdHint = MediaPreview.CreateSpeedHint(this, 4);
             var ruler = new MediaPreview.SpeedRuler { Dock = DockStyle.Bottom };
-            ruler.PreviewSpeed += delegate(double r) { _speed = r; MediaPreview.UpdateSpeedHint(spdHint, r); };
-            ruler.CommitSpeed += delegate(double r) { _speed = r; MediaPreview.UpdateSpeedHint(spdHint, r); };
-            ruler.RestoreSpeed += delegate { _speed = ruler.Committed; MediaPreview.UpdateSpeedHint(spdHint, ruler.Committed); };
+            ruler.PreviewSpeed += delegate(double r) { _speed = r; MediaPreview.UpdateSpeedHint(spdHint, r); ApplySpeedToAudio(); };
+            ruler.CommitSpeed += delegate(double r) { _speed = r; MediaPreview.UpdateSpeedHint(spdHint, r); ApplySpeedToAudio(); };
+            ruler.RestoreSpeed += delegate { _speed = ruler.Committed; MediaPreview.UpdateSpeedHint(spdHint, ruler.Committed); ApplySpeedToAudio(); };
             var cls = MediaPreview.CloseButton(this);
-            // bar：[播放][进度][时间][关闭]
+            // 静音键：跟随默认静音配置初始化（与 MediaElement 路径一致），点喇叭键随时开关
+            _audioOn = !Config.PreviewMuted;
+            _muteBtn = new Button
+            {
+                Text = _audioOn ? "🔊" : "🔇",
+                Width = 32,
+                Dock = DockStyle.Left,
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = Config.FG,
+                BackColor = Config.BG,
+                Font = new Font("Microsoft YaHei", 9)
+            };
+            _muteBtn.FlatAppearance.BorderSize = 0;
+            _muteBtn.FlatAppearance.MouseOverBackColor = Config.BgHover;
+            _muteBtn.FlatAppearance.MouseDownBackColor = Config.BgHover;
+            _muteBtn.Click += delegate { ToggleAudio(); };
+            // bar：[播放][静音][进度][时间][关闭]
+            bar.Controls.Add(_muteBtn);
             bar.Controls.Add(_prog);
             bar.Controls.Add(_btn);
             bar.Controls.Add(_lbl);
@@ -403,12 +430,14 @@ namespace HoverExplorer
                 savedSpd = _speed;
                 _speed = 3.0;
                 MediaPreview.UpdateSpeedHint(spdHint, 3.0);
+                ApplySpeedToAudio();
             };
             _pb.MouseUp += delegate
             {
                 if (!Config.SpeedToggle) return;
                 _speed = savedSpd;
                 MediaPreview.UpdateSpeedHint(spdHint, savedSpd);
+                ApplySpeedToAudio();
             };
 
             _btn.Click += delegate { TogglePlay(); };
@@ -427,6 +456,8 @@ namespace HoverExplorer
                         UpdateSpecBadge();
                         var hSize = VideoSizeKnown;
                         if (hSize != null) { try { hSize(_info.Width, _info.Height); } catch { } }
+                        // 默认开声（配置未静音）：探测确认有声轨就自动起音频会话，不用手点喇叭
+                        if (_audioOn && _audio == null && !_audioOpening && _info.HasAudio) OpenAudioAsync();
                     }
                 }
                 if (_failFlag) { _failFlag = false; RaiseFailedUi(); }
@@ -498,11 +529,12 @@ namespace HoverExplorer
                 // 这样播放速率完全由我们取帧的节奏决定，倍速（>1×）才做得到——
                 // -re 会把输入钉在 1× 实时，源帧率以下根本取不到更多帧。
                 sb.Append("-hide_banner -loglevel error -nostdin");
+                sb.Append(" -threads 2");                                 // 解码线程上限：全速解码烧 CPU（背压只管队列深度，不管单帧成本）
                 if (fromSec > 0.05) sb.Append(" -ss ").Append(fromSec.ToString("F2"));
                 sb.Append(" -i \"").Append(_path).Append("\"");
-                sb.Append(" -an");                                        // 只取画面
+                sb.Append(" -an");                                        // 只取画面（声音由喇叭键起的 FfmpegAudioSession 负责）
                 sb.Append(" -vf scale=").Append(w).Append(":-2");
-                sb.Append(" -q:v 4 -f image2pipe -vcodec mjpeg -");
+                sb.Append(" -threads 1 -q:v 4 -f image2pipe -vcodec mjpeg -");   // MJPEG 编码单线程
 
                 var psi = new ProcessStartInfo
                 {
@@ -733,6 +765,10 @@ namespace HoverExplorer
                 _btn.Text = "▶";
                 KillStream();
             }
+            if (_audioOn && _audio != null && _audio.IsLoaded)
+            {
+                try { if (_paused || _oneShot) _audio.Pause(); else _audio.Play(); } catch { }
+            }
         }
 
         private void SeekTo(double ratio)
@@ -751,6 +787,80 @@ namespace HoverExplorer
             {
                 StartStream(_pos, false);
             }
+            if (_audioOn && _audio != null && _audio.IsLoaded) SyncAudioToVideo();
+        }
+
+        // 点喇叭：开声。音频会话惰性创建，成功后对齐到视频当前位置；无声轨直接弹回静音
+        private void ToggleAudio()
+        {
+            _audioOn = !_audioOn;
+            _muteBtn.Text = _audioOn ? "🔊" : "🔇";
+            if (!_audioOn) { try { if (_audio != null) _audio.Pause(); } catch { } return; }
+            if (_audio != null && _audio.IsLoaded) { SyncAudioToVideo(); return; }
+            if (_audioOpening) return;
+            if (_info == null || !_info.HasAudio) { _audioOn = false; _muteBtn.Text = "🔇"; return; }
+            OpenAudioAsync();
+        }
+
+        // 后台起音频会话（构造含 waveOut+起 ffmpeg 进程）；成功后 UI 线程对齐到视频当前位置
+        private void OpenAudioAsync()
+        {
+            if (_audioOpening) return;
+            _audioOpening = true;
+            var t = new Thread(delegate()
+            {
+                var a = new FfmpegAudioSession(_path);
+                if (a.HasFailed || !a.IsLoaded)
+                {
+                    _audioOpening = false;
+                    SafeUi(delegate { _audioOn = false; try { _muteBtn.Text = "🔇"; } catch { } });
+                    return;
+                }
+                _audio = a;
+                _audioOpening = false;
+                SafeUi(SyncAudioToVideo);
+            });
+            t.IsBackground = true;
+            t.Start();
+        }
+
+        // 音频对齐到视频当前位置并跟随播放状态（预览级同步：seek/倍速时重对齐，平时各自走钟）
+        private void SyncAudioToVideo()
+        {
+            try
+            {
+                if (_audio == null || !_audio.IsLoaded) return;
+                if (_info != null && _info.DurationSec > 0)
+                    _audio.SeekRatio(Math.Max(0.0, Math.Min(0.999, _pos / _info.DurationSec)));
+                if (Math.Abs(_audio.SpeedRatio - _speed) > 0.001) _audio.SpeedRatio = _speed;
+                if (_paused || _oneShot) _audio.Pause(); else _audio.Play();
+            }
+            catch { }
+        }
+
+        // 倍速变化 → 音频 atempo 重建很贵，驻留 200ms 才应用（与刻度尺试速的防抖同理）
+        private void ApplySpeedToAudio()
+        {
+            if (!_audioOn || _audio == null || !_audio.IsLoaded) return;
+            _audioPendingSpeed = _speed;
+            if (_audioSpeedDebounce == null)
+            {
+                _audioSpeedDebounce = new Timer { Interval = 200 };
+                _audioSpeedDebounce.Tick += delegate
+                {
+                    _audioSpeedDebounce.Stop();
+                    if (_audio == null || double.IsNaN(_audioPendingSpeed)) return;
+                    try { if (Math.Abs(_audio.SpeedRatio - _audioPendingSpeed) > 0.001) _audio.SpeedRatio = _audioPendingSpeed; } catch { }
+                    _audioPendingSpeed = double.NaN;
+                };
+            }
+            _audioSpeedDebounce.Stop(); _audioSpeedDebounce.Start();
+        }
+
+        private void SafeUi(Action a)
+        {
+            if (_disposed || !IsHandleCreated) return;
+            try { BeginInvoke(a); } catch { }
         }
 
         private void KillStream()
@@ -782,6 +892,8 @@ namespace HoverExplorer
             {
                 _disposed = true;
                 KillStream();
+                try { if (_audio != null) _audio.Close(); } catch { }
+                try { if (_audioSpeedDebounce != null) { _audioSpeedDebounce.Stop(); _audioSpeedDebounce.Dispose(); } } catch { }
                 try { if (_tick != null) { _tick.Stop(); _tick.Dispose(); } } catch { }
                 lock (_frameLock)
                 {

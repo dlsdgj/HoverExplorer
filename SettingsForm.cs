@@ -63,6 +63,10 @@ namespace HoverExplorer
         // 预览类型分类开关（图片/视频/音频/文档/文本/压缩包/字体/其他）
         private ToggleSwitch _pvImageToggle;
         private ToggleSwitch _pvVideoToggle;
+        private DelayStepper _pvVideoDelayStepper;  // 视频预览单独触发延时
+        private ToggleSwitch _pvVideoDelayToggle;   // 视频预览延时开关
+        private DarkCombo _pvEdgeCombo;             // 文件预览边缘触发位置
+        private MsStepper _pvEdgeWidthStepper;      // 边缘触发区宽度(px)
         private ToggleSwitch _pvAudioToggle;
         private ToggleSwitch _pvDocToggle;
         private ToggleSwitch _pvTextToggle;
@@ -477,6 +481,32 @@ namespace HoverExplorer
             _pvMuteToggle = new ToggleSwitch { On = Config.PreviewMuted };
             _pvMuteToggle.Toggled += (s, e) => _fnApplySettings(false, false);
             y = _pvTypeGroup.AddRow(y, I18n.T("mute_video"), I18n.T("mute_video_desc"), _pvMuteToggle);
+
+            // 视频预览延时：独立开关 + 秒数（关掉=视频跟随全局悬停延时；边缘触发开启时也会自动停用）
+            _pvVideoDelayToggle = new ToggleSwitch { On = Config.VideoPreviewDelayEnabled };
+            _pvVideoDelayToggle.Toggled += (s, e) => { _fnApplySettings(false, false); };
+            _pvVideoDelayStepper = new DelayStepper { Value = Config.VideoPreviewDelay };
+            _pvVideoDelayStepper.ValueChanged += (s, e) => { _fnApplySettings(false, false); };
+            var vdRow = new FlowLayoutPanel { FlowDirection = FlowDirection.LeftToRight, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, WrapContents = false, Margin = Padding.Empty, BackColor = _pvTypeGroup.BackColor };
+            vdRow.Controls.Add(_pvVideoDelayToggle);
+            vdRow.Controls.Add(_pvVideoDelayStepper);
+            y = _pvTypeGroup.AddRow(y, I18n.T("pv_video_delay"), I18n.T("pv_video_delay_desc"), vdRow);
+
+            // 全局设置（不分类型）：文件预览的触发位置——条目中段留给改名/右键/拖拽，
+            // 只有停在左/右缘触发区才弹预览窗。放组首，避免被误读成下面某个类型的子设置
+            _pvEdgeCombo = new DarkCombo { Font = new Font(Config.FontName, 8.5f), Width = 170, Height = 24 };
+            _pvEdgeCombo.Items.AddRange(new object[] {
+                I18n.T("edge_off"), I18n.T("edge_left"), I18n.T("edge_right"), I18n.T("edge_both"),
+            });
+            _pvEdgeCombo.SelectedIndex = Math.Max(0, Math.Min(3, Config.PreviewEdgeMode));
+            _pvEdgeCombo.SelectedIndexChanged += (s, e) => { _fnApplySettings(false, false); };
+            y = _pvTypeGroup.AddRow(y, I18n.T("pv_edge"), I18n.T("pv_edge_desc"), _pvEdgeCombo);
+
+            _pvEdgeWidthStepper = new MsStepper { Value = Math.Max(50, Config.PreviewEdgeWidth) };
+            _pvEdgeWidthStepper.ValueChanged += (s, e) => { _fnApplySettings(false, false); };
+            y = _pvTypeGroup.AddRow(y, I18n.T("pv_edge_width"), null, _pvEdgeWidthStepper);
+
+            // 逐类开关要预览的类型（组说明紧贴类型开关区，别和上面的全局设置混在一起）
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_types_desc"), null, null);
 
             _pvImageToggle = new ToggleSwitch { On = Config.PreviewImage };
@@ -582,6 +612,17 @@ namespace HoverExplorer
                 audioHint.MaximumSize = new Size(Math.Max(160, _pvTypeGroup.Width - PadX * 2), 0);
                 audioHint.Location = new Point(PadX, AccGroup.HeadH + ty + 6);
                 _pvTypeGroup.NoticeContentBottom(ty + 6 + audioHint.Height + 4);
+            });
+
+            // 面板/预览键盘用法说明：小字号 + 自动换行（长文案放行内会超框被裁）
+            var kbHint = new Label { Text = I18n.T("kb_hint"), AutoSize = true, MaximumSize = new Size(_pvTypeGroup.Width - PadX * 2, 0), BackColor = Config.ListHdbg, ForeColor = Config.FgDir, Font = new Font(Config.FontName, 7.5f), Padding = new Padding(6, 3, 6, 3), Location = new Point(PadX, AccGroup.HeadH + y + 6), Tag = "tip" };
+            _pvTypeGroup.Controls.Add(kbHint);
+            _pvTypeGroup.ExpandRow(y + 6 + kbHint.Height + 4, 0);
+            _pvTypeGroup.AddTailHook(ty =>
+            {
+                kbHint.MaximumSize = new Size(Math.Max(160, _pvTypeGroup.Width - PadX * 2), 0);
+                kbHint.Location = new Point(PadX, AccGroup.HeadH + ty + 6);
+                _pvTypeGroup.NoticeContentBottom(ty + 6 + kbHint.Height + 4);
             });
 
             _pvTypeGroup.FinishRows();
@@ -2193,6 +2234,10 @@ namespace HoverExplorer
             // 预览类型分类开关（关掉的类别不再弹预览窗）
             if (_pvImageToggle != null) Config.PreviewImage = _pvImageToggle.On;
             if (_pvVideoToggle != null) Config.PreviewVideo = _pvVideoToggle.On;
+            if (_pvVideoDelayToggle != null) Config.VideoPreviewDelayEnabled = _pvVideoDelayToggle.On;
+            if (_pvVideoDelayStepper != null) Config.VideoPreviewDelay = _pvVideoDelayStepper.Value;
+            if (_pvEdgeCombo != null) Config.PreviewEdgeMode = Math.Max(0, Math.Min(3, _pvEdgeCombo.SelectedIndex));
+            if (_pvEdgeWidthStepper != null) Config.PreviewEdgeWidth = _pvEdgeWidthStepper.Value;
             if (_pvAudioToggle != null) Config.PreviewAudio = _pvAudioToggle.On;
             if (_pvDocToggle != null) Config.PreviewDocument = _pvDocToggle.On;
             if (_pvTextToggle != null) Config.PreviewText = _pvTextToggle.On;

@@ -808,9 +808,7 @@ namespace HoverExplorer
 
             // 倍速刻度尺（常显在标题栏上方，与视频一致）+ 关闭
             _audioRuler = new MediaPreview.SpeedRuler();
-            _audioRuler.PreviewSpeed += delegate(double r) { if (_audio != null) _audio.SpeedRatio = r; MediaPreview.UpdateSpeedHint(_audioSpdHint, r); };
-            _audioRuler.CommitSpeed += delegate(double r) { if (_audio != null) _audio.SpeedRatio = r; MediaPreview.UpdateSpeedHint(_audioSpdHint, r); };
-            _audioRuler.RestoreSpeed += delegate { if (_audio != null) _audio.SpeedRatio = _audioRuler.Committed; MediaPreview.UpdateSpeedHint(_audioSpdHint, _audioRuler.Committed); };
+            MediaPreview.AttachSpeedRuler(_audioRuler, _audio, _audioSpdHint);
             Controls.Add(_audioRuler);
             _audioSpdHint = MediaPreview.CreateSpeedHint(_scrollPanel, 2);
 
@@ -1662,7 +1660,11 @@ namespace HoverExplorer
                     && Math.Abs(curPos.Y - _pvHdrLastPos.Y) <= SystemInformation.DoubleClickSize.Height / 2;
                 _pvHdrLastTick = dbl ? 0 : nowTick;
                 _pvHdrLastPos = curPos;
-                if (dbl && !string.IsNullOrEmpty(FilePath)) { try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(System.IO.Path.GetDirectoryName(FilePath)) { UseShellExecute = true }); } catch { } return; }
+                if (dbl && !string.IsNullOrEmpty(FilePath))
+                {
+                    if ((Control)s == _nameLbl) { BeginFileRename(); return; }   // 双击文件名 = 就地改名
+                    try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(System.IO.Path.GetDirectoryName(FilePath)) { UseShellExecute = true }); } catch { } return;
+                }
                 var sp = ((Control)s).PointToScreen(e.Location);
                 int hit = GetResizeHit(sp.X, sp.Y);
                 if (hit != 0) { NativeMethods.ReleaseCapture(); NativeMethods.SendMessage(Handle, 0xA1, hit, 0); return; }
@@ -2035,10 +2037,56 @@ namespace HoverExplorer
         // 图片预览原地换图（滚轮）：仅图片类预览可走
         internal bool IsImagePreview { get { return _content is PictureBox && _img != null; } }
 
+        // ===== 就地改名：双击文件名 → 行内编辑框（Enter 提交 / Esc 或失焦取消）。
+        // 提交走 PopupForm.RenamePath：释放被预览占用的句柄 → File.Move → 按新路径恢复内容与标题 =====
+        private TextBox _renameBox;
+
+        private void BeginFileRename()
+        {
+            if (_renameBox != null || string.IsNullOrEmpty(FilePath) || IsDisposed) return;
+            string cur = System.IO.Path.GetFileName(FilePath);
+            _renameBox = new TextBox
+            {
+                Font = new Font(Config.FontName, 9f),
+                ForeColor = Config.FG,
+                BackColor = Config.BG,
+                BorderStyle = BorderStyle.FixedSingle,
+                Text = cur,
+            };
+            // 覆在文件名标签的位置（窗体坐标，工具栏高度不够放编辑框）
+            var scr = _toolbar.RectangleToScreen(_nameLbl.Bounds);
+            var fb = RectangleToClient(scr);
+            _renameBox.SetBounds(fb.X, fb.Y - 2, Math.Max(140, fb.Width + 8), fb.Height + 6);
+            Controls.Add(_renameBox);
+            _renameBox.BringToFront();
+            _nameLbl.Visible = false;
+            _renameBox.Focus();
+            int extLen = System.IO.Path.GetExtension(cur).Length;
+            _renameBox.Select(0, Math.Max(0, cur.Length - extLen));   // 选中主名，扩展名不选（与 Explorer F2 一致）
+            _renameBox.KeyDown += (s, e) =>
+            {
+                if (e.KeyCode == Keys.Enter) { e.SuppressKeyPress = true; EndFileRename(true); }
+                else if (e.KeyCode == Keys.Escape) { e.SuppressKeyPress = true; EndFileRename(false); }
+            };
+            _renameBox.LostFocus += (s, e) => EndFileRename(false);
+        }
+
+        private void EndFileRename(bool commit)
+        {
+            if (_renameBox == null) return;
+            var box = _renameBox; _renameBox = null;
+            string nn = commit ? box.Text.Trim() : null;
+            box.Dispose();
+            if (_nameLbl != null && !_nameLbl.IsDisposed) _nameLbl.Visible = true;
+            if (!commit || string.IsNullOrEmpty(nn)) return;
+            if (string.Equals(nn, System.IO.Path.GetFileName(FilePath), StringComparison.Ordinal)) return;
+            if (!PopupForm.RenamePath(FilePath, nn)) ShowToast(I18n.T("rename_fail"));
+            // 成功时 RenamePath → RestorePreviewOf 已按新路径恢复内容并刷新标题（含 FilePath）
+        }
+
         internal void SwitchFile(int dir)
         {
-            if (string.IsNullOrEmpty(FilePath)) return;
-            string dir0 = Path.GetDirectoryName(FilePath);
+            if (string.IsNullOrEmpty(FilePath)) return;            string dir0 = Path.GetDirectoryName(FilePath);
             if (string.IsNullOrEmpty(dir0)) return;
             var imgs = GetSortedFiles(dir0, f => Config.ImgExts.Contains(Path.GetExtension(f)) || Config.IcoExts.Contains(Path.GetExtension(f)));
             if (imgs.Count == 0) return;
@@ -3179,6 +3227,7 @@ namespace HoverExplorer
             }
 
             _hlRow = null;
+            _kbRow = null;   // 重建销毁行控件，键盘选中行引用一并作废
             _rows.Clear();
             _sortBtns.Clear();
             _rowEdit = null;   // 重建会销毁编辑框，清掉死引用（rename 按钮才会恢复显示）
@@ -3993,6 +4042,9 @@ namespace HoverExplorer
             // 固定项存的是路径，改名后要同步，否则固定卡片/面板指向失效路径
             var pi = Config.PinnedItems.Find(p => string.Equals(p.Path, src, StringComparison.OrdinalIgnoreCase));
             if (pi != null) { pi.Path = dst; Config.Save(); }
+            // 正被外部悬停/预览引用的旧路径同步改掉，否则悬停状态与新路径错位（预览残留/重复调度）
+            if (string.Equals(_extPreviewPath, src, StringComparison.OrdinalIgnoreCase)) _extPreviewPath = dst;
+            if (string.Equals(Program._extHoverFile, src, StringComparison.OrdinalIgnoreCase)) Program._extHoverFile = dst;
             Program.RefreshPanelsShowing(dir, null);
             Program.DebugLog("[rename] " + src + " -> " + dst);
             return true;
@@ -4548,9 +4600,8 @@ namespace HoverExplorer
             // 异步生成完（解码波形等耗时）才在 ShowPreview 里被关，出现“新卡片已出、旧还在响”
             if (_previewForm != null && !_previewForm.Pinned) ClosePreviewForm();
             _previewPath = row.Full;
-            // 音频预览出声要快：缩短触发延迟（图片等较重预览仍用常规防误触延迟），
-            // 让 MediaElement 更早开始打开文件；剩余延迟来自 WPF 打开大/无索引 MP3 本身
-            int previewDelay = Config.HoverDelayMs;
+            // 按类型延时：视频单独延迟（起播慢、误触成本高），音频提速，其余全局
+            int previewDelay = Config.PreviewDelayMsFor(row.Full);
             foreach (var e in Config.AudioExts)
                 if (row.Full.EndsWith(e, StringComparison.OrdinalIgnoreCase)) { previewDelay = Math.Min(previewDelay, 100); break; }
             _previewTimer = new Timer { Interval = previewDelay };
@@ -4698,6 +4749,127 @@ namespace HoverExplorer
             return _previewForm != null && _previewForm.ContainsPoint(x, y);
         }
 
+        // ===== 键盘导航（全局键盘钩子路由）：↑/↓ 移动选中行，Enter 打开，F2 弹原生菜单（含重命名），
+        // Del 送回收站，Esc 取消。选中态复用行的 Selected；面板重建时随行销毁一并作废 =====
+        private RowLabel _kbRow;
+
+        internal bool KbNavActive()
+        {
+            return _kbRow != null && !_kbRow.IsDisposed;
+        }
+
+        internal bool KbNavigate(int dir)
+        {
+            if (_rows.Count == 0) return false;
+            int idx = KbNavActive() ? _rows.IndexOf(_kbRow) : -1;
+            idx = idx < 0 ? (dir > 0 ? 0 : _rows.Count - 1) : Math.Max(0, Math.Min(_rows.Count - 1, idx + dir));
+            SetKbRow(_rows[idx]);
+            ShowKbHintOnce();
+            return true;
+        }
+
+        // 首次用键盘导航时面板底部浮出一条用法提示（每次会话只出现一次），几秒后自灭
+        private static bool _kbHintShown;
+        private Label _kbHint;
+        private Timer _kbHintTimer;
+
+        private void ShowKbHintOnce()
+        {
+            if (_kbHintShown || IsDisposed) return;
+            _kbHintShown = true;
+            try
+            {
+                _kbHint = new Label
+                {
+                    Text = I18n.T("kb_hint"),
+                    Dock = DockStyle.Bottom,
+                    Height = 22,
+                    BackColor = Config.ListHdbg,
+                    ForeColor = Config.FgDir,
+                    Font = new Font(Config.FontName, 8f),
+                    TextAlign = ContentAlignment.MiddleCenter,
+                };
+                Controls.Add(_kbHint);
+                _kbHint.BringToFront();
+                _kbHintTimer = new Timer { Interval = 4000 };
+                _kbHintTimer.Tick += delegate
+                {
+                    try { if (_kbHint != null) { _kbHint.Dispose(); _kbHint = null; } } catch { }
+                    try { if (_kbHintTimer != null) { _kbHintTimer.Stop(); _kbHintTimer.Dispose(); _kbHintTimer = null; } } catch { }
+                };
+                _kbHintTimer.Start();
+            }
+            catch { }
+        }
+
+        private void SetKbRow(RowLabel r)
+        {
+            if (_kbRow != null && !_kbRow.IsDisposed) { _kbRow.Selected = false; ApplySel(_kbRow); }
+            _kbRow = r;
+            if (r != null && !r.IsDisposed) { r.Selected = true; ApplySel(r); ScrollRowIntoView(r); }
+        }
+
+        // 选中行滚出视口时拉回来（列表长、高亮在屏外跟随移动的基础）
+        private void ScrollRowIntoView(RowLabel r)
+        {
+            if (_listPanel == null || r == null || r.IsDisposed || r.Top < 0) return;
+            int top = r.Top - _listPanel.ContentScrollPos;
+            if (top < 0) _listPanel.SetOffset(r.Top);
+            else if (top + r.Height > _listPanel.Height) _listPanel.SetOffset(r.Top + r.Height - _listPanel.Height);
+        }
+
+        private void ClearKbRow()
+        {
+            if (_kbRow != null && !_kbRow.IsDisposed) { _kbRow.Selected = false; ApplySel(_kbRow); }
+            _kbRow = null;
+        }
+
+        internal bool KbAction(Keys k)
+        {
+            if (!KbNavActive()) return false;
+            var row = _kbRow;
+            switch (k)
+            {
+                case Keys.Enter: ClearKbRow(); OpenPath(row.Full); return true;
+                case Keys.Escape: ClearKbRow(); return true;
+            }
+            return false;
+        }
+
+        // ←/→ 切换同文件夹文件（键盘钩子路由入口）：图片走预览窗原地换图，其余按原窗位置重建
+        internal bool NavigatePreview(int dir)
+        {
+            var pf = _previewForm;
+            if (pf == null || pf.IsDisposed || string.IsNullOrEmpty(pf.FilePath)) return false;
+            if (pf.IsImagePreview) { pf.SwitchFile(dir); return true; }
+            string cur = pf.FilePath;
+            string dir0 = Path.GetDirectoryName(cur);
+            if (string.IsNullOrEmpty(dir0)) return false;
+            var files = PreviewForm.GetSortedFiles(dir0, f => PreviewProvider.CanPreview(f));
+            if (files.Count < 2) return false;
+            int idx = files.FindIndex(f => string.Equals(f, cur, StringComparison.OrdinalIgnoreCase));
+            if (idx < 0) idx = 0;
+            int next = (idx + dir + files.Count) % files.Count;
+            var keep = new Rectangle(pf.Left, pf.Top, pf.Width, pf.Height);
+            ClosePreviewForm();
+            _previewPath = files[next];
+            ShowPreviewCore(files[next], null, keep);
+            SyncRowToPath(files[next]);   // 面板行跟随：高亮当前预览的文件并滚到可见
+            Program.DebugLog("[panel-preview] navigate " + dir + " -> " + files[next]);
+            return true;
+        }
+
+        // 面板行跟随预览切换：选中当前预览的文件所在行并滚入视口（滚动在 SetKbRow 里统一做）
+        private void SyncRowToPath(string path)
+        {
+            foreach (var r in _rows)
+            {
+                if (r == null || r.IsDisposed || !string.Equals(r.Full, path, StringComparison.OrdinalIgnoreCase)) continue;
+                SetKbRow(r);
+                return;
+            }
+        }
+
         // 本面板是否有内嵌预览在显示
         internal bool HasInnerPreview()
         {
@@ -4744,7 +4916,7 @@ namespace HoverExplorer
             _extRetryCount = 0;
             _extPreviewPath = full;
             Program.DebugLog("[preview] schedule " + full);
-            _extPreviewTimer = new Timer { Interval = Config.LongPressFor(true) ? Config.LongPressDelayMs : Config.HoverDelayMs };
+            _extPreviewTimer = new Timer { Interval = Config.LongPressFor(true) ? Config.LongPressDelayMs : Config.PreviewDelayMsFor(full) };
             _extPreviewTimer.Tick += delegate(object s, EventArgs e)
             {
                 ((Timer)s).Stop(); ((Timer)s).Dispose(); _extPreviewTimer = null;
@@ -4765,6 +4937,37 @@ namespace HoverExplorer
         public static bool FilePreviewContainsPoint(int x, int y)
         {
             return _extPreviewForm != null && _extPreviewForm.ContainsPoint(x, y);
+        }
+
+        // 外部直接预览存活（键盘钩子据此决定是否装钩/路由 ←→）
+        internal static bool ExtPreviewActive()
+        {
+            return _extPreviewForm != null && !_extPreviewForm.IsDisposed && !string.IsNullOrEmpty(_extPreviewForm.FilePath);
+        }
+
+        // 外部预览 ←/→ 切换：图片原地换图，其余按鼠标当前位置重建（LoadFilePreview 自带定位）
+        internal static void NavigateExtPreview(int dir)
+        {
+            var pf = _extPreviewForm;
+            if (pf == null || pf.IsDisposed || string.IsNullOrEmpty(pf.FilePath)) return;
+            if (pf.IsImagePreview) { pf.SwitchFile(dir); return; }
+            string cur = pf.FilePath;
+            string dir0 = Path.GetDirectoryName(cur);
+            if (string.IsNullOrEmpty(dir0)) return;
+            var files = PreviewForm.GetSortedFiles(dir0, f => PreviewProvider.CanPreview(f));
+            if (files.Count < 2) return;
+            int idx = files.FindIndex(f => string.Equals(f, cur, StringComparison.OrdinalIgnoreCase));
+            if (idx < 0) idx = 0;
+            int next = (idx + dir + files.Count) % files.Count;
+            NativeMethods.POINT pt; NativeMethods.GetCursorPos(out pt);
+            LoadFilePreview(files[next], new Point(pt.X, pt.Y));
+            // 打开着同目录面板时行跟随（高亮 + 滚动到可见）
+            foreach (var p in Program.Panels)
+            {
+                if (p == null || p.IsDisposed || !p.Visible) continue;
+                if (string.Equals(p.CurrentPath, dir0, StringComparison.OrdinalIgnoreCase)) p.SyncRowToPath(files[next]);
+            }
+            Program.DebugLog("[preview] navigate " + dir + " -> " + files[next]);
         }
 
         // 预览显示期间保持 TOPMOST（不激活）：防止被前台窗口盖住。
