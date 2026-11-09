@@ -49,17 +49,34 @@ namespace HoverExplorer
             BackColor = Config.BG;
             Font = new Font(Config.FontName, 9f);
 
-            int n = CardPalettes.All.Count;
             Width = 232;
-            Height = PadY * 2 + n * RowH;
+            _fnSyncSize();
 
             _timer = new Timer { Interval = PollInterval };
             _timer.Tick += (s, e) => _fnCheckHover();
 
-            MouseClick += (s, e) =>
+            MouseDown += (s, e) =>
             {
                 int i = HitRow(e.Location);
                 if (i < 0) return;
+                if (e.Button == MouseButtons.Middle)
+                {
+                    // 中键删除该方案，列表保持打开：不 Hide、不 Dispose，也先不收缩 Height，
+                    // 否则光标会落到变矮后的窗口外，被 _fnCheckHover 当作"离开"而自动关闭。
+                    if (CardPalettes.All.Count <= 1) return;
+                    CardPalettes.All.RemoveAt(i);
+                    int n = CardPalettes.All.Count;
+                    if (_index > i) _index--;
+                    if (_index >= n) _index = n - 1;
+                    if (_index < 0) _index = 0;
+                    CardPalettes.Save();
+                    Program.ApplyThemeChange();     // 内含 Config.Save()，让所有卡片重绘
+                    if (_owner != null && !_owner.IsDisposed) _owner.SetPalette(_index, true);
+                    _leaveSince = DateTime.MinValue;
+                    Invalidate();
+                    return;
+                }
+                if (e.Button != MouseButtons.Left) return;
                 if (_owner != null && !_owner.IsDisposed) _owner.SetPalette(i, true);
                 _index = i;
                 Invalidate();
@@ -79,10 +96,29 @@ namespace HoverExplorer
             f._owner = card;
             f._index = index;
             f._leaveSince = DateTime.MinValue;
+            f._fnSyncSize();   // 方案数可能已变（批量导入/删除），单例高度不能沿用构造时的值
             f._fnPlace(anchor);
             if (!f.Visible) f.Show();
             f.Invalidate();
             f._timer.Start();
+        }
+
+        // 高度按当前方案数重算；_fnPlace 依赖 Height，必须先同步再定位
+        private void _fnSyncSize()
+        {
+            Height = PadY * 2 + Math.Max(1, CardPalettes.All.Count) * RowH;
+        }
+
+        // 设置面板里保存/删除/批量导入后即时通知浮层，不必等下次滚轮或重启进程
+        public static void RefreshSchemes()
+        {
+            var f = Instance;
+            if (f == null) return;
+            int n = CardPalettes.All.Count;
+            if (f._index >= n) f._index = Math.Max(0, n - 1);
+            f._fnSyncSize();
+            f._leaveSince = DateTime.MinValue;
+            f.Invalidate();
         }
 
         public static void HideNow()

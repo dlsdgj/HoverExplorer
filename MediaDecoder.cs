@@ -420,13 +420,13 @@ namespace HoverExplorer
             bar.Controls.Add(cls);
             Controls.Add(ruler);
             Controls.Add(bar);
-            if (!Config.SpeedToggle) ruler.Hide();
+            if (!Config.VideoSpeedToggle) ruler.Hide();
 
             // 长按画面加速到 3×，释放恢复
             double savedSpd = 1.0;
             _pb.MouseDown += delegate
             {
-                if (!Config.SpeedToggle) return;
+                if (!Config.VideoSpeedToggle) return;
                 savedSpd = _speed;
                 _speed = 3.0;
                 MediaPreview.UpdateSpeedHint(spdHint, 3.0);
@@ -434,7 +434,7 @@ namespace HoverExplorer
             };
             _pb.MouseUp += delegate
             {
-                if (!Config.SpeedToggle) return;
+                if (!Config.VideoSpeedToggle) return;
                 _speed = savedSpd;
                 MediaPreview.UpdateSpeedHint(spdHint, savedSpd);
                 ApplySpeedToAudio();
@@ -461,6 +461,8 @@ namespace HoverExplorer
                     }
                 }
                 if (_failFlag) { _failFlag = false; RaiseFailedUi(); }
+                // 设置里切换信息栏开关时即时同步左上角规格角标
+                if (_spec != null && _spec.Text.Length > 0) _spec.Visible = !Config.PreviewInfoBar;
                 PumpFrames();
                 UpdateTime();
             };
@@ -481,7 +483,10 @@ namespace HoverExplorer
                 : "";
             string dur = _info.DurationSec > 0 ? " · " + MediaPreview.Fmt(TimeSpan.FromSeconds(_info.DurationSec)) : "";
             _spec.Text = _info.Width + "×" + _info.Height + " · " + fps + dur + " · " + (_info.HasAudio ? "🔊" : "🔇");
-            _spec.Visible = true;
+            _spec.Visible = !Config.PreviewInfoBar;   // 信息栏开启时由信息栏承载规格
+            // 同步给预览窗信息栏（宽度够时才显示）
+            var pf = _spec.FindForm() as PreviewForm;
+            if (pf != null) pf.SetMediaSpec(_spec.Text);
         }
 
         // 后台：探测 → 起 ffmpeg → 等首帧

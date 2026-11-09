@@ -179,10 +179,13 @@ namespace HoverExplorer
         public static int SubGap = 4;
         public static int MaxItems = 400;   // 200 会在几百条的目录（如 D:\下载）截掉中文名条目
         public static int PreviewMinWidth = 240;
-        public static bool PreviewOriginalSize = false;
+        public static bool PreviewOriginalSize = true;
         // 记住的图片预览窗口尺寸（右下角手柄拖拽 / Ctrl+滚轮 调整后写入）；0 = 未设置，走自动尺寸
         public static int PreviewImgW = 0;
         public static int PreviewImgH = 0;
+        // 记住的文本预览窗口尺寸（右下角手柄拖拽 / Ctrl+滚轮）；0 = 未设置，按内容自动算
+        public static int PreviewTextW = 0;
+        public static int PreviewTextH = 0;
         // 记住的自定义面板预览窗口尺寸，视频/音频分开记（两者形态差异大，不能共用）
         // PreviewMedia* 用于 SVG 面板；0 = 未设置，走自动尺寸
         public static int PreviewMediaW = 0;
@@ -207,7 +210,7 @@ namespace HoverExplorer
         public static int PanelHeight = 0;
         // 面板高度自动适配内容（条目多时面板长高）；用户手动拖过尺寸后转纯记忆模式
         public static bool PanelSizeAuto = true;
-        public static bool ExplorerEnabled = false;
+        public static bool ExplorerEnabled = true;   // 新装默认开启资源管理器悬停（配合下方 FolderGateEnabled=false → 模式“总是”）
         // Total Commander 悬停检测（TC 11.x LCL 界面，文件列表类名 "L"）。
         // 2026-10-22 暂停：排序对齐不可靠（ini 是退出快照、临时排序错位）、HintWindow 阴影残留
         // 未彻底解决，代码保留待后续处理。要启用：config.json 设 TcEnabled=true（排序声明用设置里的"TC 排序"）
@@ -230,7 +233,16 @@ namespace HoverExplorer
         public static bool PreviewArchive = true;
         public static bool PreviewFont = true;
         public static bool PreviewOther = true;
-        public static bool SpeedToggle = true;
+        // 倍速刻度尺：视频、音频各自独立开关（设置面板分别挂在「视频」「音频」类型开关下）
+        public static bool VideoSpeedToggle = true;
+        public static bool AudioSpeedToggle = true;
+        // 兼容别名：旧 config.json 的 SpeedToggle 键与旧 WinForms 设置面板读写它时，
+        // 同时映射到上面两个新开关；新配置以两个独立键为准。
+        public static bool SpeedToggle
+        {
+            get { return VideoSpeedToggle || AudioSpeedToggle; }
+            set { VideoSpeedToggle = value; AudioSpeedToggle = value; }
+        }
         public static bool WaveformEnabled = true;   // 音频波形图开关（解码占 CPU）
         public static bool SpectrumEnabled = false;  // 频谱显示（波形图关闭时可选）
         // ffmpeg 可执行文件路径（留空=自动探测）：用于解码 Media Foundation 解不了的
@@ -266,7 +278,7 @@ namespace HoverExplorer
         public static int EntryRectX = 0, EntryRectY = 0, EntryRectW = 0, EntryRectH = 0;
         // 触发区域的 RGBA 标识色（ARGB）：桌面穿透色块 + 设置面板色块预览
         public static int EntryRectColor = 0x283B8EEA;   // 蓝 ≈16% 透明度
-        // 暂停触控区：独立框选矩形（设置方式复制触发区域那套），屏幕绝对坐标；W/H<20=未启用
+        // 暂停触控区：独立框选矩形（设置方式复制触发区域那套），屏幕绝对坐标；W/H<5=未启用
         public static int PauseRectX = 0, PauseRectY = 0, PauseRectW = 0, PauseRectH = 0;
         // 收藏文件夹（用户手动）与最近打开（自动 MRU，上限 EntryRecentMax）
         // FavoriteFolders 保留作旧格式兼容读取；新数据走 FavoriteGroups（多分组）
@@ -290,12 +302,19 @@ namespace HoverExplorer
         public static bool PreviewGateEnabled = false;
         public static int PreviewGateMods = 2;
         // 长按触发阈值（毫秒）：长按模式下悬停超过此时长才弹面板/预览
-        public static int LongPressDelayMs = 1500;
+        public static int LongPressDelayMs = 300;
         // 视频预览默认静音（办公室友好）：悬停触发的视频先无声播放，点控制条喇叭键恢复
-        public static bool PreviewMuted = true;
+        // 新装默认关闭该开关（即视频预览默认带声音）
+        public static bool PreviewMuted = false;
+        // 文件预览窗口：标题栏下方显示信息 + 操作栏（类型/大小/行数/时间与复制操作）
+        public static bool PreviewInfoBar = true;
+        // 信息/操作栏固定字号（pt）；字段名沿用旧配置键，兼容已保存的 config.json
+        public static float PreviewInfoBarFontMax = 10f;
+        // 信息/操作栏字体族（下拉可选系统字体），默认等宽中文
+        public static string PreviewInfoBarFontName = "Microsoft YaHei Mono";
         // 文件夹列表排列方式（全局）：name/size/date + 升降序，切换排序按钮时更新
-        public static string SortMode = "name";
-        public static bool SortDesc = false;
+        public static string SortMode = "date";
+        public static bool SortDesc = true;
         public static string Language = "zh";
         public static string Theme = "light";
         // 桌面卡片配色索引（独立于 Theme：面板主题不影响卡片；卡片上滚轮可循环切换）
@@ -307,17 +326,20 @@ namespace HoverExplorer
         public static List<PinnedItem> PinnedItems = new List<PinnedItem>();
         public static readonly string FontName = "Microsoft YaHei UI";
         public static readonly float FontSize = 10f;
+        // 列表面板默认字体：微软雅黑 Mono（等宽，文件名/大小对齐更整齐）；
+        // ListFont() 会在该字体未安装时自动回退全局 FontName
+        public static readonly string ListFontName = "Microsoft YaHei Mono";
         // ===== 列表面板分区字体：表头/标题/行文本/格式标签/数量·大小信息 =====
         // 默认回退全局 FontName/FontSize；字号默认=各区域现状（见 PopupForm）
-        public static string ListHeaderFontName = FontName;
+        public static string ListHeaderFontName = ListFontName;
         public static float ListHeaderFontSize = FontSize;                       // 表头排序栏：现状 FontSize
-        public static string ListTitleFontName = FontName;
+        public static string ListTitleFontName = ListFontName;
         public static float ListTitleFontSize = FontSize;                        // 标题行文件夹名：现状 FontSize
-        public static string ListItemFontName = FontName;
+        public static string ListItemFontName = ListFontName;
         public static float ListItemFontSize = FontSize;                         // 列表行文本：现状 FontSize
-        public static string ListChipFontName = FontName;
+        public static string ListChipFontName = ListFontName;
         public static float ListChipFontSize = Math.Max(7f, FontSize - 1);       // 状态栏格式标签：现状 FontSize-1
-        public static string ListMetaFontName = FontName;
+        public static string ListMetaFontName = ListFontName;
         public static float ListMetaFontSize = Math.Max(6.5f, FontSize - 2);     // 大小/计数小字：现状 FontSize-2
 
         // 生成分区字体：保存的字体名未安装（或创建失败）时回退全局 FontName。
@@ -571,6 +593,8 @@ namespace HoverExplorer
                         case "PreviewOriginalSize": PreviewOriginalSize = Convert.ToBoolean(v); break;
                         case "PreviewImgW": PreviewImgW = Convert.ToInt32(v); break;
                         case "PreviewImgH": PreviewImgH = Convert.ToInt32(v); break;
+                        case "PreviewTextW": PreviewTextW = Convert.ToInt32(v); break;
+                        case "PreviewTextH": PreviewTextH = Convert.ToInt32(v); break;
                         case "PreviewMediaW": PreviewMediaW = Convert.ToInt32(v); break;
                         case "PreviewMediaH": PreviewMediaH = Convert.ToInt32(v); break;
                         case "PreviewVideoW": PreviewVideoW = Convert.ToInt32(v); break;
@@ -607,7 +631,16 @@ namespace HoverExplorer
                         case "PreviewArchive": PreviewArchive = Convert.ToBoolean(v); break;
                         case "PreviewFont": PreviewFont = Convert.ToBoolean(v); break;
                         case "PreviewOther": PreviewOther = Convert.ToBoolean(v); break;
-                        case "SpeedToggle": SpeedToggle = Convert.ToBoolean(v); break;
+                        // 旧版单开关迁移：新键不存在时才用旧值初始化，避免覆盖用户分别设置的视频/音频倍速
+                        case "SpeedToggle":
+                            {
+                                bool legacy = Convert.ToBoolean(v);
+                                if (!data.ContainsKey("VideoSpeedToggle")) VideoSpeedToggle = legacy;
+                                if (!data.ContainsKey("AudioSpeedToggle")) AudioSpeedToggle = legacy;
+                                break;
+                            }
+                        case "VideoSpeedToggle": VideoSpeedToggle = Convert.ToBoolean(v); break;
+                        case "AudioSpeedToggle": AudioSpeedToggle = Convert.ToBoolean(v); break;
                         case "WaveformEnabled": WaveformEnabled = Convert.ToBoolean(v); break;
                         case "SpectrumEnabled": SpectrumEnabled = Convert.ToBoolean(v); break;
                         case "FfmpegPath": FfmpegPath = Convert.ToString(v); break;
@@ -700,6 +733,14 @@ namespace HoverExplorer
                         case "PreviewGateMods": PreviewGateMods = Convert.ToInt32(v); break;
                         case "LongPressDelayMs": LongPressDelayMs = Convert.ToInt32(v); break;
                         case "PreviewMuted": PreviewMuted = Convert.ToBoolean(v); break;
+                        case "PreviewInfoBar": PreviewInfoBar = Convert.ToBoolean(v); break;
+                        case "PreviewInfoBarFontMax": PreviewInfoBarFontMax = (float)Convert.ToDouble(v); break;
+                        case "PreviewInfoBarFontName":
+                            {
+                                string s = Convert.ToString(v);
+                                if (!string.IsNullOrEmpty(s)) PreviewInfoBarFontName = s;
+                                break;
+                            }
                         case "ListPalette": ListPalette = Convert.ToString(v); break;
                         case "ListPalettesData": ListPalettesData = Convert.ToString(v); break;
                         case "CardPalettesData": CardPalettesData = Convert.ToString(v); break;
@@ -768,7 +809,9 @@ namespace HoverExplorer
                 data["PreviewArchive"] = PreviewArchive;
                 data["PreviewFont"] = PreviewFont;
                 data["PreviewOther"] = PreviewOther;
-                data["SpeedToggle"] = SpeedToggle;
+                data["SpeedToggle"] = SpeedToggle;   // 保留旧键，供旧版本/旧面板回退读取
+                data["VideoSpeedToggle"] = VideoSpeedToggle;
+                data["AudioSpeedToggle"] = AudioSpeedToggle;
                 data["WaveformEnabled"] = WaveformEnabled;
                 data["SpectrumEnabled"] = SpectrumEnabled;
                 data["FfmpegPath"] = FfmpegPath;
@@ -824,6 +867,9 @@ namespace HoverExplorer
                 data["PreviewGateMods"] = PreviewGateMods;
                 data["LongPressDelayMs"] = LongPressDelayMs;
                 data["PreviewMuted"] = PreviewMuted;
+                data["PreviewInfoBar"] = PreviewInfoBar;
+                data["PreviewInfoBarFontMax"] = PreviewInfoBarFontMax;
+                data["PreviewInfoBarFontName"] = PreviewInfoBarFontName;
                 data["ListPalette"] = ListPalette;
                 data["ListPalettesData"] = ListPalettesData;
                 data["SortMode"] = SortMode;
@@ -851,6 +897,8 @@ namespace HoverExplorer
                 data["PreviewOriginalSize"] = PreviewOriginalSize;
                 data["PreviewImgW"] = PreviewImgW;
                 data["PreviewImgH"] = PreviewImgH;
+                data["PreviewTextW"] = PreviewTextW;
+                data["PreviewTextH"] = PreviewTextH;
                 data["PreviewMediaW"] = PreviewMediaW;
                 data["PreviewMediaH"] = PreviewMediaH;
                 data["PreviewVideoW"] = PreviewVideoW;

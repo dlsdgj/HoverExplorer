@@ -1,0 +1,208 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:c="clr-namespace:HoverExplorer.Wpf;assembly=HoverExplorer">
+
+    <!-- ============ 预览列表 ============ -->
+    <DataTemplate x:Key="TriggerPage">
+        <StackPanel>
+            <HeaderedContentControl Header="触发" c:Cfg.I18n="group_trigger" Style="{DynamicResource Card}">
+                <StackPanel>
+                    <c:SettingRow c:Cfg.I18n="hotkey_row" c:Cfg.Desc="hotkey_desc">
+                        <StackPanel Orientation="Horizontal">
+                            <ToggleButton c:Cfg.Key="HotkeyEnabled" Style="{DynamicResource Switch}" Margin="0,0,10,0"/>
+                            <Button c:Cfg.I18n="hotkey_delete" c:Cfg.Action="hk:main:del" Margin="0,0,6,0"/>
+                            <Button c:Cfg.I18n="hotkey_reset" c:Cfg.Action="hk:main:reset" Margin="0,0,12,0"/>
+                            <StackPanel Orientation="Horizontal" c:Cfg.ShowIf="HotkeyOn">
+                                <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkMain:0" Text="Ctrl" HorizontalAlignment="Center"/></Border>
+                                <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkMain:1" Text="Alt" HorizontalAlignment="Center"/></Border>
+                                <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkMain:2" Text="Q" HorizontalAlignment="Center"/></Border>
+                            </StackPanel>
+                        </StackPanel>
+                    </c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pause_zone_row" c:Cfg.Key="PauseRectInfo">
+                        <StackPanel Orientation="Horizontal">
+                            <Button c:Cfg.I18n="area_clear" c:Cfg.Action="pause:clear" Margin="0,0,6,0"/>
+                            <Button c:Cfg.I18n="area_pick" c:Cfg.Action="pause:pick"/>
+                        </StackPanel>
+                    </c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pause_delay_row" c:Cfg.Desc="pause_delay_desc" c:Cfg.ShowIf="PauseRectSet">
+                        <c:Stepper c:Cfg.Key="PauseRectDelayMs" Value="200" Min="0" Max="2000" Step="50" Suffix=" ms"/>
+                    </c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="delay_row" c:Cfg.Desc="hover_delay_desc">
+                        <c:Stepper c:Cfg.Key="HoverDelay" Value="0.3" Min="0" Max="5" Step="0.05" Format="0.00" Suffix=" 秒"/>
+                    </c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="explorer_hover" c:Cfg.Desc="mode_desc">
+                        <ComboBox c:Cfg.Key="ExplorerMode" SelectedIndex="0">
+                            <ComboBoxItem c:Cfg.I18n="mode_off"/>
+                            <ComboBoxItem c:Cfg.I18n="mode_always"/>
+                            <ComboBoxItem c:Cfg.I18n="mode_ctrl"/>
+                            <ComboBoxItem c:Cfg.I18n="mode_shift"/>
+                            <ComboBoxItem c:Cfg.I18n="mode_alt"/>
+                            <ComboBoxItem c:Cfg.I18n="mode_long_press"/>
+                        </ComboBox>
+                    </c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="file_preview" c:Cfg.Desc="mode_desc">
+                        <ComboBox c:Cfg.Key="PreviewMode" SelectedIndex="0">
+                            <ComboBoxItem c:Cfg.I18n="mode_off"/>
+                            <ComboBoxItem c:Cfg.I18n="mode_always"/>
+                            <ComboBoxItem c:Cfg.I18n="mode_ctrl"/>
+                            <ComboBoxItem c:Cfg.I18n="mode_shift"/>
+                            <ComboBoxItem c:Cfg.I18n="mode_alt"/>
+                            <ComboBoxItem c:Cfg.I18n="mode_long_press"/>
+                        </ComboBox>
+                    </c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="long_press_delay" c:Cfg.Desc="long_press_delay_desc" c:Cfg.ShowIf="LongPressOn">
+                        <c:Stepper c:Cfg.Key="LongPressDelayMs" Value="300" Min="50" Max="3000" Step="50" Suffix=" ms"/>
+                    </c:SettingRow>
+                </StackPanel>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Header="行为" c:Cfg.I18n="group_window" Style="{DynamicResource Card}">
+                <StackPanel>
+                    <c:SettingRow c:Cfg.I18n="close_delay_row" c:Cfg.Desc="close_delay_desc">
+                        <c:Stepper c:Cfg.Key="CloseDelay" c:Cfg.Scale="1000" Value="350" Min="0" Max="2000" Step="10" Suffix=" ms"/>
+                    </c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="keep_open" c:Cfg.Desc="keep_open_desc">
+                        <ToggleButton c:Cfg.Key="KeepOnLeave" Style="{DynamicResource Switch}"/>
+                    </c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="sort_default" c:Cfg.Desc="sort_default_desc">
+                        <ComboBox c:Cfg.Key="SortIndex" c:Cfg.Mode="Sort" SelectedIndex="0"/>
+                    </c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="row_swap" c:Cfg.Desc="row_swap_desc">
+                        <ToggleButton c:Cfg.Key="RowSwapSides" Style="{DynamicResource Switch}"/>
+                    </c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="status_filter" c:Cfg.Desc="status_filter_desc">
+                        <ToggleButton c:Cfg.Key="StatusFilter" Style="{DynamicResource Switch}" IsChecked="True"/>
+                    </c:SettingRow>
+                    <Border Style="{DynamicResource Hint}"><TextBlock c:Cfg.I18n="hint_dbl_click" Foreground="{DynamicResource HintTextBrush}"/></Border>
+                    <Border Style="{DynamicResource Hint}"><TextBlock c:Cfg.I18n="hint_ctrl_wheel" Foreground="{DynamicResource HintTextBrush}"/></Border>
+                    <Border Style="{DynamicResource Hint}"><TextBlock c:Cfg.I18n="kb_hint" Foreground="{DynamicResource HintTextBrush}"/></Border>
+                </StackPanel>
+            </HeaderedContentControl>
+        </StackPanel>
+    </DataTemplate>
+
+    <!-- ============ 列表外观 ============ -->
+    <DataTemplate x:Key="ListLookPage">
+        <StackPanel>
+            <HeaderedContentControl Header="自定义颜色" c:Cfg.I18n="list_palette" Style="{DynamicResource Card}">
+                <StackPanel>
+                    <TextBlock Style="{DynamicResource Desc}" Margin="14,0,14,6" c:Cfg.I18n="list_palette_desc"/>
+                    <c:SettingRow c:Cfg.I18n="palette_scheme">
+                        <StackPanel Orientation="Horizontal">
+                            <ComboBox x:Name="ListSchemeCombo" Width="130" Margin="0,0,6,0"/>
+                            <Button c:Cfg.I18n="del_scheme" c:Cfg.Action="palette:del" Margin="0,0,6,0"/>
+                            <Button c:Cfg.I18n="save_as" c:Cfg.Action="palette:save"/>
+                        </StackPanel>
+                    </c:SettingRow>
+                    <StackPanel Orientation="Horizontal" Margin="14,4,14,8">
+                        <Button c:Cfg.I18n="warm_zebra" c:Cfg.Action="palette:warm" Margin="0,0,6,0"/>
+                        <Button c:Cfg.I18n="clear" c:Cfg.Action="palette:clear" Margin="0,0,6,0"/>
+                        <Button c:Cfg.I18n="wallpaper_pick" c:Cfg.Action="palette:wallpaper"/>
+                    </StackPanel>
+                    <c:ColorRow c:Cfg.Key="pal:bg" c:Cfg.I18n="pal_lbl_bg" Label="行背景(奇)" Text="F6FBFB"/>
+                    <c:ColorRow c:Cfg.Key="pal:zb" c:Cfg.I18n="pal_lbl_zb" Label="斑马(偶)" Text="EDF6F7"/>
+                    <c:ColorRow x:Name="PalFg" c:Cfg.Key="pal:fg" c:Cfg.I18n="pal_lbl_fg" Label="名称文字" Text="12303F"/>
+                    <c:ColorRow x:Name="PalMu" c:Cfg.Key="pal:mu" c:Cfg.I18n="pal_lbl_mu" Label="大小/数量" Text="4F7080"/>
+                    <c:ColorRow c:Cfg.Key="pal:hv" c:Cfg.I18n="pal_lbl_hv" Label="悬停高亮" Text="DCEFF2"/>
+                    <c:ColorRow x:Name="PalSel" c:Cfg.Key="pal:sel" c:Cfg.I18n="pal_lbl_sel" Label="选中背景" Text="0E7C93"/>
+                    <c:ColorRow x:Name="PalSelfg" c:Cfg.Key="pal:selfg" c:Cfg.I18n="pal_lbl_selfg" Label="选中文字" Text="FFFFFF"/>
+                    <c:ColorRow c:Cfg.Key="pal:bar" c:Cfg.I18n="pal_lbl_bar" Label="大小背景条" Text="A9D3DA"/>
+                    <c:ColorRow c:Cfg.Key="pal:bd" c:Cfg.I18n="pal_lbl_bd" Label="边框分隔线" Text="C5DDE2"/>
+                    <c:ColorRow c:Cfg.Key="pal:btnhv" c:Cfg.I18n="pal_lbl_btnhv" Label="按钮悬停" Text="D0E8ED"/>
+                    <c:ColorRow x:Name="CanvasColor" c:Cfg.Key="pal:canvas" c:Cfg.I18n="pal_lbl_canvas" Label="画布底色" Text="F6FBFB"/>
+                    <TextBlock Margin="14,10,14,2" TextWrapping="Wrap"><Hyperlink c:Cfg.I18n="list_gen_link" c:Cfg.Link="gen:list"/></TextBlock>
+                    <TextBlock Style="{DynamicResource Desc}" Margin="14,0,14,6" TextWrapping="Wrap" c:Cfg.I18n="palette_keys_desc"/>
+                    <WrapPanel Margin="14,0,14,8">
+                        <Button c:Cfg.I18n="copy_template" c:Cfg.Action="palette:template" Margin="0,0,6,4"/>
+                        <Button c:Cfg.I18n="export_all" c:Cfg.Action="palette:export" Margin="0,0,6,4"/>
+                        <Button c:Cfg.I18n="paste_import" c:Cfg.Action="palette:paste" Margin="0,0,6,4" Style="{DynamicResource PrimaryButton}"/>
+                    </WrapPanel>
+                    <TextBlock c:Cfg.I18n="appearance_preview" Margin="14,8,14,6"/>
+                    <Border Margin="14,0,14,6" CornerRadius="4" Padding="10,8" Background="{Binding Brush, ElementName=CanvasColor}"
+                            BorderBrush="{DynamicResource LineBrush}" BorderThickness="1">
+                        <StackPanel>
+                            <Grid>
+                                <TextBlock c:Cfg.I18n="preview_sample_folder" FontWeight="SemiBold" Foreground="{Binding Brush, ElementName=PalFg}"/>
+                                <TextBlock Text="185 项" HorizontalAlignment="Right" FontFamily="Consolas" Foreground="{Binding Brush, ElementName=PalMu}"/>
+                            </Grid>
+                            <Border Background="{Binding Brush, ElementName=PalSel}" Margin="0,6,0,0" Padding="8,4" CornerRadius="2">
+                                <Grid>
+                                    <TextBlock c:Cfg.I18n="preview_sample_file" Foreground="{Binding Brush, ElementName=PalSelfg}"/>
+                                    <TextBlock Text="1.2 MB" HorizontalAlignment="Right" Foreground="{Binding Brush, ElementName=PalSelfg}" FontFamily="Consolas"/>
+                                </Grid>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                    <c:SettingRow c:Cfg.I18n="font_header"><StackPanel Orientation="Horizontal"><ComboBox c:Cfg.Key="ListHeaderFontName" c:Cfg.Mode="Fonts" Width="220" SelectedIndex="0" Margin="0,0,6,0"/><c:Stepper c:Cfg.Key="ListHeaderFontSize" Value="10" Min="6" Max="24"/></StackPanel></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="font_title"><StackPanel Orientation="Horizontal"><ComboBox c:Cfg.Key="ListTitleFontName" c:Cfg.Mode="Fonts" Width="220" SelectedIndex="0" Margin="0,0,6,0"/><c:Stepper c:Cfg.Key="ListTitleFontSize" Value="10" Min="6" Max="24"/></StackPanel></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="font_item"><StackPanel Orientation="Horizontal"><ComboBox c:Cfg.Key="ListItemFontName" c:Cfg.Mode="Fonts" Width="220" SelectedIndex="0" Margin="0,0,6,0"/><c:Stepper c:Cfg.Key="ListItemFontSize" Value="10" Min="6" Max="24"/></StackPanel></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="font_chip"><StackPanel Orientation="Horizontal"><ComboBox c:Cfg.Key="ListChipFontName" c:Cfg.Mode="Fonts" Width="220" SelectedIndex="0" Margin="0,0,6,0"/><c:Stepper c:Cfg.Key="ListChipFontSize" Value="9" Min="6" Max="24"/></StackPanel></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="font_meta"><StackPanel Orientation="Horizontal"><ComboBox c:Cfg.Key="ListMetaFontName" c:Cfg.Mode="Fonts" Width="220" SelectedIndex="0" Margin="0,0,6,0"/><c:Stepper c:Cfg.Key="ListMetaFontSize" Value="8" Min="6" Max="24"/></StackPanel></c:SettingRow>
+                </StackPanel>
+            </HeaderedContentControl>
+        </StackPanel>
+    </DataTemplate>
+
+    <!-- ============ 预览窗口 ============ -->
+    <DataTemplate x:Key="PreviewPage">
+        <StackPanel>
+            <TextBlock Margin="0,0,2,10" HorizontalAlignment="Right"><Hyperlink c:Cfg.Link="https://b23.tv/hVdEGrA">@成熟的剪辑猿</Hyperlink>  <Hyperlink c:Cfg.Link="https://github.com/akahoz94">GitHub</Hyperlink></TextBlock>
+            <!-- 通用预览选项：无具体类型归属的项（触发位置 / 解码器） -->
+            <HeaderedContentControl Header="预览选项" c:Cfg.I18n="group_preview_opts" Style="{DynamicResource Card}">
+                <StackPanel>
+                    <c:SettingRow c:Cfg.I18n="pv_info_bar" c:Cfg.Desc="pv_info_bar_desc">
+                        <ToggleButton c:Cfg.Key="PreviewInfoBar" Style="{DynamicResource Switch}" IsChecked="True"/>
+                    </c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pv_info_bar_font_family" c:Cfg.Desc="pv_info_bar_font_family_desc" c:Cfg.ShowIf="InfoBarOn"><ComboBox c:Cfg.Key="PreviewInfoBarFontName" c:Cfg.Mode="Fonts" Width="220" SelectedIndex="0"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pv_info_bar_font" c:Cfg.Desc="pv_info_bar_font_desc" c:Cfg.ShowIf="InfoBarOn"><c:Stepper c:Cfg.Key="PreviewInfoBarFontMax" Value="10" Min="6" Max="18" Step="0.5" Suffix=" pt"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pv_edge" c:Cfg.Desc="pv_edge_desc">
+                        <ComboBox c:Cfg.Key="PreviewEdgeMode" SelectedIndex="0">
+                            <ComboBoxItem c:Cfg.I18n="edge_off"/>
+                            <ComboBoxItem c:Cfg.I18n="edge_left"/>
+                            <ComboBoxItem c:Cfg.I18n="edge_right"/>
+                            <ComboBoxItem c:Cfg.I18n="edge_both"/>
+                        </ComboBox>
+                    </c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pv_edge_width" c:Cfg.ShowIf="EdgeOn"><c:Stepper c:Cfg.Key="PreviewEdgeWidth" Value="50" Min="10" Max="300" Step="5" Suffix=" px"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="ffmpeg_path_row" c:Cfg.Desc="ffmpeg_path_desc">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBox c:Cfg.Key="FfmpegPath" Width="150" Margin="0,0,6,0"/>
+                            <Button c:Cfg.I18n="ffmpeg_auto" c:Cfg.Action="ffmpeg:auto"/>
+                        </StackPanel>
+                    </c:SettingRow>
+                    <TextBlock Style="{DynamicResource Desc}" Margin="14,2,14,4" c:Cfg.Key="FfmpegStatus"/>
+                </StackPanel>
+            </HeaderedContentControl>
+
+            <!-- 类型开关为父级，其专属选项为带强调色的从属子项，随父开关显隐 -->
+            <HeaderedContentControl Header="预览内容类型" c:Cfg.I18n="group_preview_types_full" Style="{DynamicResource Card}">
+                <StackPanel Margin="14,8,14,10">
+                    <c:SettingRow c:Cfg.I18n="pv_type_image"><ToggleButton c:Cfg.Key="PreviewImage" Style="{DynamicResource Switch}" IsChecked="True"/></c:SettingRow>
+
+                    <c:SettingRow c:Cfg.I18n="pv_type_video"><ToggleButton c:Cfg.Key="PreviewVideo" Style="{DynamicResource Switch}" IsChecked="True"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pv_video_speed" c:Cfg.ShowIf="VideoOn"><ToggleButton c:Cfg.Key="VideoSpeedToggle" Style="{DynamicResource Switch}"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="mute_video" c:Cfg.Desc="mute_video_desc" c:Cfg.ShowIf="VideoOn"><ToggleButton c:Cfg.Key="PreviewMuted" Style="{DynamicResource Switch}"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pv_video_delay" c:Cfg.Desc="pv_video_delay_desc" c:Cfg.ShowIf="VideoOn">
+                        <StackPanel Orientation="Horizontal">
+                            <ToggleButton c:Cfg.Key="VideoPreviewDelayEnabled" Style="{DynamicResource Switch}" Margin="0,0,8,0"/>
+                            <c:Stepper c:Cfg.Key="VideoPreviewDelay" Value="0.8" Min="0" Max="5" Step="0.1" Format="0.00" Suffix=" 秒" c:Cfg.ShowIf="VideoDelayOn"/>
+                        </StackPanel>
+                    </c:SettingRow>
+
+                    <c:SettingRow c:Cfg.I18n="pv_type_audio"><ToggleButton c:Cfg.Key="PreviewAudio" Style="{DynamicResource Switch}" IsChecked="True"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pv_audio_speed" c:Cfg.ShowIf="AudioPreviewOn"><ToggleButton c:Cfg.Key="AudioSpeedToggle" Style="{DynamicResource Switch}"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pv_waveform" c:Cfg.Desc="pv_waveform_desc" c:Cfg.ShowIf="AudioPreviewOn"><ToggleButton c:Cfg.Key="WaveformEnabled" Style="{DynamicResource Switch}"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pv_spectrum" c:Cfg.Desc="pv_spectrum_desc" c:Cfg.ShowIf="SpectrumVisible"><ToggleButton c:Cfg.Key="SpectrumEnabled" Style="{DynamicResource Switch}"/></c:SettingRow>
+                    <Border Style="{DynamicResource Hint}" c:Cfg.ShowIf="AudioPreviewOn"><TextBlock c:Cfg.I18n="hint_audio_wheel" Foreground="{DynamicResource HintTextBrush}"/></Border>
+
+                    <c:SettingRow c:Cfg.I18n="pv_type_document"><ToggleButton c:Cfg.Key="PreviewDocument" Style="{DynamicResource Switch}" IsChecked="True"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pv_type_text"><ToggleButton c:Cfg.Key="PreviewText" Style="{DynamicResource Switch}" IsChecked="True"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pv_type_archive"><ToggleButton c:Cfg.Key="PreviewArchive" Style="{DynamicResource Switch}" IsChecked="True"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pv_type_font"><ToggleButton c:Cfg.Key="PreviewFont" Style="{DynamicResource Switch}" IsChecked="True"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pv_type_other"><ToggleButton c:Cfg.Key="PreviewOther" Style="{DynamicResource Switch}" IsChecked="True"/></c:SettingRow>
+                </StackPanel>
+            </HeaderedContentControl>
+        </StackPanel>
+    </DataTemplate>
+</ResourceDictionary>

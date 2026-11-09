@@ -13,7 +13,7 @@ namespace HoverExplorer
 {
     internal static class Program
     {
-        public const string Version = "1.1.5";
+        public const string Version = "1.1.6";
 
         private static string _desktopPath;
         private static string _publicDesktopPath;
@@ -54,6 +54,9 @@ namespace HoverExplorer
         private static string _hoverFolder;
         internal static string _extHoverFile;   // 改名后同步（RenamePath 里按旧路径更新，避免悬停状态错位）
         private static string _lastHoverPath;
+        // .lnk → 目标目录缓存（null 表示目标不是可用目录）：轮询很密，避免每个 tick 都去
+        // 触碰目标目录；指向网络路径时 Directory.Exists 可能阻塞 UI
+        private static readonly Dictionary<string, string> _lnkDirCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         // 指针静止时的候选目标 + 稳定起点：目标被连续检测到满 HoverDelay 也算真实悬停
         // （缩略图视图下检测会抖，"mouseMoved + 目标稳定"的 tick 可能永不对齐，见上游 issue #4）
         private static string _extCandidate;
@@ -79,8 +82,9 @@ namespace HoverExplorer
         internal static ContextMenuStrip TrayMenu;
         private static HotkeyWindow _hotkey;
         private static bool _hoverEnabled = true;
-        private static bool _settingsOpen; // 设置窗口打开期间挂起面板自动关闭（面板可能是对话框属主）
-        private static SettingsForm _settingsForm;
+        // 设置窗已改为 WPF（HoverExplorer.Wpf.WpfSettingsWindow）；打开状态直接问 WPF 窗口，
+        // 旧 WinForms SettingsForm 只在 WPF 加载失败时作为回退新建，不再持有实例。
+        private static bool _settingsOpen { get { return HoverExplorer.Wpf.WpfSettingsWindow.IsOpen; } }
         internal static bool _entryArmed = true;   // 收藏·历史触发区域/卡片悬停武装位：点击行打开 Explorer 后解除，鼠标离开后恢复
 
         // 开机自启：写 HKCU Run 键，无需安装
@@ -443,20 +447,20 @@ namespace HoverExplorer
                     bool mod = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_SHIFT) & 0x8000) != 0
                         || (NativeMethods.GetAsyncKeyState(NativeMethods.VK_CONTROL) & 0x8000) != 0
                         || (NativeMethods.GetAsyncKeyState(NativeMethods.VK_MENU) & 0x8000) != 0;
-                    if (!mod && RoutePageKey(hs.vkCode == NativeMethods.VK_NEXT ? 1 : -1)) return (IntPtr)1;
+                    if (!mod && !IsKeyboardInputFocus() && RoutePageKey(hs.vkCode == NativeMethods.VK_NEXT ? 1 : -1)) return (IntPtr)1;
                 }
-                // 面板键盘导航 / 预览窗文件切换：仅裸键，且前台不在输入态（Explorer 重命名/搜索框不能被抢键）。
-                // F2/Del 不路由（用户实测后砍掉）：重命名/删除交给资源管理器自己，导航只管选中和打开
+                // 面板键盘导航 / 预览窗文件切换：仅裸键，且前台不在输入态（Explorer 重命名/搜索框、
+                // 本进程设置窗与文本预览框都不能被抢键）。F2/Del 不路由，交给资源管理器自己
                 int vk = (int)hs.vkCode;
+                bool shift = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_SHIFT) & 0x8000) != 0;
+                bool otherMod = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_CONTROL) & 0x8000) != 0
+                        || (NativeMethods.GetAsyncKeyState(NativeMethods.VK_MENU) & 0x8000) != 0;
+                bool hasMod = shift || otherMod;
+                // Vimium 式 hint：f / Shift+F 进入，之后字母键逐字符过滤（hint 期间 Shift 不算组合键）
+                if (!IsKeyboardInputFocus() && RouteHintKey(vk, shift, otherMod)) return (IntPtr)1;
                 bool nav = vk == VK_UP || vk == VK_DOWN || vk == VK_LEFT || vk == VK_RIGHT
                     || vk == VK_RETURN || vk == VK_ESCAPE;
-                if (nav)
-                {
-                    bool mod = (NativeMethods.GetAsyncKeyState(NativeMethods.VK_SHIFT) & 0x8000) != 0
-                        || (NativeMethods.GetAsyncKeyState(NativeMethods.VK_CONTROL) & 0x8000) != 0
-                        || (NativeMethods.GetAsyncKeyState(NativeMethods.VK_MENU) & 0x8000) != 0;
-                    if (!mod && !IsEditingInForeground() && RoutePanelKeys(vk)) return (IntPtr)1;
-                }
+                if (nav && !hasMod && !IsKeyboardInputFocus() && RoutePanelKeys(vk)) return (IntPtr)1;
             }
             return NativeMethods.CallNextHookEx(_kbHook, nCode, wParam, lParam);
         }
@@ -465,51 +469,291 @@ namespace HoverExplorer
         private const int VK_LEFT = 0x25, VK_UP = 0x26, VK_RIGHT = 0x27, VK_DOWN = 0x28;
         private const int VK_RETURN = 0x0D, VK_ESCAPE = 0x1B, VK_DELETE = 0x2E, VK_F2 = 0x71;
 
+        // ===== 键盘导航会话（固定窗口不再长期占用方向键）=====
+        // 固定（Pinned）面板/预览长期可见 → 钩子常驻，若无条件接管就会一直抢走前台方向键。
+        // 接管条件：鼠标落在悬停窗口内，或存在 3 秒内的显式键盘会话；
+        // 会话随超时 / 前台窗口变化 / Esc 自动解除，并清掉所有面板的键盘选中行。
+        private const int KbArmedMs = 3000;
+        private static IntPtr _kbArmedFg;
+        private static int _kbArmedTick;
+
+        private static bool KbArmed()
+        {
+            return _kbArmedTick != 0
+                && NativeMethods.GetForegroundWindow() == _kbArmedFg
+                && (uint)(Environment.TickCount - _kbArmedTick) < KbArmedMs;
+        }
+
+        private static void ArmKeyboard()
+        {
+            _kbArmedFg = NativeMethods.GetForegroundWindow();
+            _kbArmedTick = Environment.TickCount;
+        }
+
+        private static void DisarmKeyboard()
+        {
+            _kbArmedTick = 0;
+            _kbArmedFg = IntPtr.Zero;
+            GlobalHintFinish();
+            for (int i = 0; i < _panels.Count; i++)
+            {
+                var p = _panels[i];
+                if (p != null && !p.IsDisposed && p.Visible) p.ClearKbRow();
+            }
+        }
+
+        // 鼠标是否压在某个可见的悬停窗口（面板 / 面板内预览 / 外部预览）上
+        private static bool KbMouseOnPanel()
+        {
+            NativeMethods.POINT pt;
+            NativeMethods.GetCursorPos(out pt);
+            for (int i = _panels.Count - 1; i >= 0; i--)
+            {
+                var p = _panels[i];
+                if (p == null || p.IsDisposed || !p.Visible) continue;
+                if (p.ContainsPoint(pt.X, pt.Y) || p.PreviewContainsPoint(pt.X, pt.Y)) return true;
+            }
+            return PopupForm.FilePreviewContainsPoint(pt.X, pt.Y);
+        }
+
+        // ===== 全局 Vimium 式 Hint 模式 =====
+        // f / Shift+F 进入：收集所有可见 HE 窗口（各级列表 + 内嵌/外部预览窗）的行与按钮，
+        // 统一编号；标记挂在各窗口顶层，避免 FlowLayoutPanel 被标签挤乱布局。
+        private const int VK_F = 0x46;
+        private const string HintChars = "sadfjklewcmpgh";   // home-row 优先，缩短连击距离
+        private static readonly List<HintItem> _hintItems = new List<HintItem>();
+        private static string _hintPrefix = "";
+        private static bool _hintCopyMode;
+        private static Form _hintHost;
+        private static System.Windows.Forms.Timer _hintTimer;
+        private static bool GlobalHintActive { get { return _hintItems.Count > 0; } }
+
+        private static bool KbMayTakeover()
+        {
+            bool armed = KbArmed();
+            if (!armed && _kbArmedTick != 0) DisarmKeyboard();   // 超时 / 切了前台：解除并清选中
+            return armed || KbMouseOnPanel();
+        }
+
+        // 只要有可见 HE 窗口就允许 f 起全局 hint：标签要覆盖所有窗口，不该受鼠标落点限制。
+        // 输入框/设置窗等输入态仍由 IsKeyboardInputFocus 先拦掉，不会抢键。
+        private static bool AnyHeWindowVisible()
+        {
+            for (int i = 0; i < _panels.Count; i++)
+            {
+                var p = _panels[i];
+                if (p != null && !p.IsDisposed && p.Visible) return true;
+            }
+            return PopupForm.ExtPreviewActive();
+        }
+
+        // 底部提示条的宿主：优先鼠标压着的面板，否则第一个可见面板
+        private static Form HintHost()
+        {
+            NativeMethods.POINT pt;
+            NativeMethods.GetCursorPos(out pt);
+            for (int i = _panels.Count - 1; i >= 0; i--)
+            {
+                var p = _panels[i];
+                if (p == null || p.IsDisposed || !p.Visible) continue;
+                if (p.ContainsPoint(pt.X, pt.Y)) return p;
+            }
+            for (int i = _panels.Count - 1; i >= 0; i--)
+            {
+                var p = _panels[i];
+                if (p != null && !p.IsDisposed && p.Visible) return p;
+            }
+            return PopupForm.ExtPreviewHost();
+        }
+
+        private static bool GlobalHintStart(bool copyMode)
+        {
+            GlobalHintFinish();
+            var list = new List<HintItem>();
+            for (int i = 0; i < _panels.Count; i++)
+            {
+                var p = _panels[i];
+                if (p != null && !p.IsDisposed && p.Visible) p.HintCollect(list, copyMode);
+            }
+            PopupForm.HintCollectExt(list, copyMode);
+            if (list.Count == 0) return false;
+            int n = list.Count, c = HintChars.Length;
+            int len = n <= c ? 1 : (n <= c * c ? 2 : 3);
+            for (int i = 0; i < n; i++)
+            {
+                string code = len == 1
+                    ? HintChars[i].ToString()
+                    : len == 2
+                        ? HintChars[(i / c) % c].ToString() + HintChars[i % c].ToString()
+                        : HintChars[(i / (c * c)) % c].ToString() + HintChars[(i / c) % c].ToString() + HintChars[i % c].ToString();
+                list[i].Code = code;
+                try
+                {
+                    var host = list[i].Ctl.FindForm();
+                    if (host == null || host.IsDisposed) continue;
+                    var sp = list[i].Ctl.PointToScreen(Point.Empty);
+                    var cp = host.PointToClient(sp);
+                    var lb = new Label
+                    {
+                        AutoSize = false,
+                        Text = code.ToUpperInvariant(),
+                        Size = new Size(Math.Max(16, code.Length * 9 + 6), 16),
+                        BackColor = Config.Accent,
+                        ForeColor = Color.White,
+                        Font = new Font("Consolas", 8f, FontStyle.Bold),
+                        TextAlign = ContentAlignment.MiddleCenter,
+                    };
+                    lb.Location = new Point(Math.Max(0, cp.X + 2),
+                        Math.Max(0, cp.Y + Math.Max(0, (list[i].Ctl.Height - 16) / 2)));
+                    host.Controls.Add(lb);
+                    lb.BringToFront();
+                    list[i].Tag = lb;
+                }
+                catch { }
+            }
+            _hintItems.AddRange(list);
+            _hintCopyMode = copyMode;
+            _hintPrefix = "";
+            _hintHost = HintHost();
+            _hintTimer = new System.Windows.Forms.Timer { Interval = 3000 };
+            _hintTimer.Tick += delegate { GlobalHintFinish(); };
+            _hintTimer.Start();
+            Tips.ShowBar(_hintHost, I18n.T(copyMode ? "hint_mode_copy" : "hint_mode_open"));
+            return true;
+        }
+
+        private static void GlobalHintInput(char ch)
+        {
+            if (!GlobalHintActive) return;
+            _hintPrefix += char.ToLowerInvariant(ch);
+            if (_hintTimer != null) { _hintTimer.Stop(); _hintTimer.Start(); }
+            var match = new List<int>();
+            for (int i = 0; i < _hintItems.Count; i++)
+                if (_hintItems[i].Code.StartsWith(_hintPrefix, StringComparison.Ordinal)) match.Add(i);
+            if (match.Count == 0) { GlobalHintFinish(); return; }
+            if (match.Count == 1)
+            {
+                var act = _hintItems[match[0]].Exec;
+                GlobalHintFinish();
+                try { if (act != null) act(); } catch { }
+                return;
+            }
+            for (int i = 0; i < _hintItems.Count; i++)
+            {
+                bool ok = _hintItems[i].Code.StartsWith(_hintPrefix, StringComparison.Ordinal);
+                var tag = _hintItems[i].Tag;
+                if (tag == null || tag.IsDisposed) continue;
+                tag.Visible = ok;
+                if (ok) tag.Text = _hintItems[i].Code.Substring(_hintPrefix.Length).ToUpperInvariant();
+            }
+            if (_hintHost != null && !_hintHost.IsDisposed)
+                Tips.ShowBar(_hintHost, I18n.T(_hintCopyMode ? "hint_mode_copy" : "hint_mode_open")
+                    + "  " + _hintPrefix.ToUpperInvariant());
+        }
+
+        private static void GlobalHintFinish()
+        {
+            if (_hintTimer != null)
+            {
+                try { _hintTimer.Stop(); _hintTimer.Dispose(); } catch { }
+                _hintTimer = null;
+            }
+            foreach (var it in _hintItems)
+            {
+                try
+                {
+                    if (it.Tag == null || it.Tag.IsDisposed) continue;
+                    if (it.Tag.Parent != null) it.Tag.Parent.Controls.Remove(it.Tag);
+                    it.Tag.Dispose();
+                }
+                catch { }
+            }
+            _hintItems.Clear();
+            _hintPrefix = "";
+            if (_hintHost != null)
+            {
+                try { Tips.HideBar(_hintHost); } catch { }
+                _hintHost = null;
+            }
+        }
+
+        // 暂时禁用 hint：f 会与其它程序（自绘输入控件等）的文本框输入冲突，
+        // IsKeyboardInputFocus 无法覆盖所有输入态。实现全部保留，日后改好归属判定只需把此开关置 true
+        private static readonly bool HintEnabled = false;
+
+        private static bool RouteHintKey(int vk, bool shift, bool otherMod)
+        {
+            if (!HintEnabled) return false;
+            if (GlobalHintActive)
+            {
+                // hint 期间只吞 A-Z；Ctrl/Alt 组合留给系统，Esc 交给 RoutePanelKeys 退出
+                if (otherMod || vk < 0x41 || vk > 0x5A) return false;
+                GlobalHintInput((char)('a' + vk - 0x41));
+                ArmKeyboard();
+                return true;
+            }
+            if (vk != VK_F || otherMod) return false;
+            if (!KbMayTakeover() && !AnyHeWindowVisible()) return false;
+            if (!GlobalHintStart(shift)) return false;
+            ArmKeyboard();
+            return true;
+        }
+
         // 面板/预览键盘路由——分工明确（用户实测定稿）：
         // ↑/↓ 只管面板行选中（Enter 打开，Esc 取消，选中行自动滚入视口）；
-        // ←/→ 只管预览窗文件切换（↑↓ 不碰预览——按住会自动重复，逐个重建视频预览会风暴，
-        // 实测表现为 navigate 循环、预览窗反复 SHOW/CLOSE 关不掉）。只拦裸键；输入态透传
+        // ←/→ 只管预览窗文件切换（↑↓ 不碰预览——按住会自动重复，逐个重建视频预览会风暴）。
         private static bool RoutePanelKeys(int vk)
         {
+            bool armed = KbArmed();
+            if (!KbMayTakeover()) return false;       // 鼠标不在悬停窗口上：完全透传
+            // hint 期间只放行字母（由 RouteHintKey 处理）和 Esc，其余导航键先冻结
+            if (GlobalHintActive && vk != VK_ESCAPE) return false;
+
             Keys k = (Keys)vk;
             if (vk == VK_UP || vk == VK_DOWN)
             {
-                PopupForm kbPanel = null;
-                for (int i = _panels.Count - 1; i >= 0; i--)
+                int dir = vk == VK_DOWN ? 1 : -1;
+                // 会话延续：沿用已有选中行，不要求鼠标仍停在面板上
+                if (armed)
                 {
-                    var p = _panels[i];
-                    if (p == null || p.IsDisposed || !p.Visible) continue;
-                    if (p.KbNavActive()) { kbPanel = p; break; }
-                }
-                if (kbPanel != null) return kbPanel.KbNavigate(vk == VK_DOWN ? 1 : -1);
-                // 尚无选中行：第一次按键在鼠标压着的（或最近的）可见面板开始选中
-                // （旧版要求"先有选中行才进路由"，第一次按键永远进不来——上上轮返工的根因）
-                NativeMethods.POINT pt; NativeMethods.GetCursorPos(out pt);
-                PopupForm target = null;
-                for (int i = _panels.Count - 1; i >= 0; i--)
-                {
-                    var p = _panels[i];
-                    if (p == null || p.IsDisposed || !p.Visible) continue;
-                    if (p.ContainsPoint(pt.X, pt.Y)) { target = p; break; }
-                }
-                if (target == null)
                     for (int i = _panels.Count - 1; i >= 0; i--)
                     {
                         var p = _panels[i];
-                        if (p != null && !p.IsDisposed && p.Visible) { target = p; break; }
+                        if (p == null || p.IsDisposed || !p.Visible) continue;
+                        if (p.KbNavActive()) { ArmKeyboard(); return p.KbNavigate(dir); }
                     }
-                return target != null && target.KbNavigate(vk == VK_DOWN ? 1 : -1);
+                }
+                // 新会话必须由鼠标命中的面板开启：不再退回"最近的可见面板"，
+                // 否则常驻的固定面板会莫名其妙接管方向键
+                NativeMethods.POINT pt;
+                NativeMethods.GetCursorPos(out pt);
+                for (int i = _panels.Count - 1; i >= 0; i--)
+                {
+                    var p = _panels[i];
+                    if (p == null || p.IsDisposed || !p.Visible) continue;
+                    if (!p.ContainsPoint(pt.X, pt.Y) && !p.PreviewContainsPoint(pt.X, pt.Y)) continue;
+                    ArmKeyboard();
+                    return p.KbNavigate(dir);
+                }
+                return false;
             }
             if (vk == VK_RETURN || vk == VK_ESCAPE)
             {
+                if (k == Keys.Escape && GlobalHintActive)
+                {
+                    GlobalHintFinish();
+                    DisarmKeyboard();
+                    return true;
+                }
                 for (int i = _panels.Count - 1; i >= 0; i--)
                 {
                     var p = _panels[i];
                     if (p == null || p.IsDisposed || !p.Visible) continue;
                     if (p.KbNavActive())
                     {
-                        if (k == Keys.Enter || k == Keys.Escape) return p.KbAction(k);
-                        break;
+                        bool acted = p.KbAction(k);
+                        if (k == Keys.Escape) DisarmKeyboard(); else ArmKeyboard();
+                        return acted;
                     }
                 }
                 return false;
@@ -517,13 +761,33 @@ namespace HoverExplorer
             if (vk == VK_LEFT || vk == VK_RIGHT)
             {
                 int dir = vk == VK_RIGHT ? 1 : -1;
+                // 列表键盘会话：→ 才显示选中行预览，← 关闭预览/子面板回到列表。
+                // 预览已显示时 ←/→ 仍复用预览窗的文件切换（如同鼠标滚轮上下翻）。
+                if (vk == VK_RIGHT)
+                {
+                    for (int i = _panels.Count - 1; i >= 0; i--)
+                    {
+                        var p = _panels[i];
+                        if (p == null || p.IsDisposed || !p.Visible) continue;
+                        if (p.KbNavActive() && !p.KbHasPreview() && p.KbShowPreview()) { ArmKeyboard(); return true; }
+                    }
+                }
+                else
+                {
+                    for (int i = _panels.Count - 1; i >= 0; i--)
+                    {
+                        var p = _panels[i];
+                        if (p == null || p.IsDisposed || !p.Visible) continue;
+                        if (p.KbNavActive() && p.KbHasPreview()) { p.KbClosePreview(); ArmKeyboard(); return true; }
+                    }
+                }
                 for (int i = _panels.Count - 1; i >= 0; i--)
                 {
                     var p = _panels[i];
                     if (p == null || p.IsDisposed || !p.Visible) continue;
-                    if (p.NavigatePreview(dir)) return true;
+                    if (p.NavigatePreview(dir)) { ArmKeyboard(); return true; }
                 }
-                if (PopupForm.ExtPreviewActive()) { PopupForm.NavigateExtPreview(dir); return true; }
+                if (PopupForm.ExtPreviewActive()) { PopupForm.NavigateExtPreview(dir); ArmKeyboard(); return true; }
             }
             return false;
         }
@@ -601,6 +865,7 @@ namespace HoverExplorer
             foreach (var c in _pinCards) { if (!c.IsDisposed) c.ApplyPalette(); }
             EntryListForm.NotifyChanged();
             if (_entryCardForm != null && !_entryCardForm.IsDisposed) _entryCardForm.Relayout();
+            HoverExplorer.Wpf.WpfSettingsWindow.SyncTheme();
         }
 
         private static bool _lastGatePass = true;
@@ -704,6 +969,57 @@ namespace HoverExplorer
                     DebugLog("[tick] foreground editing (" + cls + "), suppress hover");
                 }
                 return editing;
+            }
+            catch { return false; }
+        }
+
+        // 键盘钩子专用输入态判定。与 IsEditingInForeground() 分开：
+        // 后者还被悬停检测复用，且有意忽略本进程窗口（防止自己输入时把面板关掉）；
+        // 钩子正相反——本进程窗口一旦成为前台，方向键必须完整交还。
+        public static bool IsKeyboardInputFocus()
+        {
+            try
+            {
+                IntPtr fg = NativeMethods.GetForegroundWindow();
+                if (fg == IntPtr.Zero) return false;
+                uint pid;
+                uint tid = NativeMethods.GetWindowThreadProcessId(fg, out pid);
+                if (tid == 0) return false;
+                if (pid == _currentPid)
+                {
+                    // 设置窗 / 输入框 / 桌面卡片等本进程窗口：一律不接管方向键
+                    Form f = Control.FromHandle(fg) as Form;
+                    // 预览窗被点击激活后仍要能用 ←/→ 切文件；只有设置窗/输入框等整体透传
+                    if (f == null || !(f is PopupForm || f is PreviewForm)) return true;
+                }
+                var gti = new NativeMethods.GUITHREADINFO { cbSize = Marshal.SizeOf(typeof(NativeMethods.GUITHREADINFO)) };
+                if (!NativeMethods.GetGUIThreadInfo(tid, ref gti) || gti.hwndFocus == IntPtr.Zero) return false;
+                var sb = new System.Text.StringBuilder(64);
+                NativeMethods.GetClassName(gti.hwndFocus, sb, 64);
+                string cls = sb.ToString();
+                if (cls == "Edit" || cls.StartsWith("RichEdit", StringComparison.OrdinalIgnoreCase)) return true;
+                if (cls.IndexOf("ComboBox", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+                if (pid == _currentPid)
+                {
+                    Control c = Control.FromHandle(gti.hwndFocus);
+                    if (c is TextBoxBase || c is ComboBox) return true;
+                }
+                return false;
+            }
+            catch { return false; }
+        }
+
+        // HE 窗口多为 NOACTIVATE，前台通常是 Explorer：以「前台恰是本窗口」或「鼠标压在窗口上」
+        // 判定当前激活窗口，用于右上角固定按钮的绿色状态
+        public static bool HeWindowActive(Form f)
+        {
+            if (f == null || f.IsDisposed || !f.Visible || !f.IsHandleCreated) return false;
+            try
+            {
+                if (NativeMethods.GetForegroundWindow() == f.Handle) return true;
+                NativeMethods.POINT pt;
+                NativeMethods.GetCursorPos(out pt);
+                return pt.X >= f.Left && pt.X < f.Right && pt.Y >= f.Top && pt.Y < f.Bottom;
             }
             catch { return false; }
         }
@@ -989,11 +1305,28 @@ namespace HoverExplorer
             }
         }
 
+        private static void RefreshPinIcons()
+        {
+            try
+            {
+                for (int i = 0; i < _panels.Count; i++)
+                {
+                    var p = _panels[i];
+                    if (p == null || p.IsDisposed || !p.Visible) continue;
+                    p.RefreshPinIcon();
+                    p.RefreshChildPreviewPin();
+                }
+                PopupForm.RefreshExtPreviewPin();
+            }
+            catch { }
+        }
+
         private static void TickImpl()
         {
             // 捕获健康检查放在所有提前 return 之前：即使菜单打开/悬停已关闭也要自愈，
             // 否则一旦捕获残留，点击被路由到卡片，用户连操作入口都点不到
             ReleaseStuckCaptures();
+            RefreshPinIcons();
             // 跟随系统主题：Theme=auto 时轮询系统深浅色（2s 节流，注册表读取代价可忽略），变化即级联刷新
             if (Config.Theme == "auto" && (DateTime.UtcNow - _lastSysThemeAt).TotalSeconds >= 2)
             {
@@ -1226,6 +1559,35 @@ namespace HoverExplorer
                     if (hoverPath == null && Config.PerchEnabled)
                         hoverPath = PerchSupport.DetectHoverItem(mx, my, out hoverRect, out hoverIsDir);
                 }
+            }
+
+            // 文件夹快捷方式（.lnk）：桌面/资源管理器里的快捷方式本身是文件，直接走文件预览
+            // 只会得到一张元数据卡片。目标是已存在的目录时把悬停目标重定向到该目录，
+            // 走与普通文件夹完全相同的列表预览（延时门控、级联、历史记录一并复用）；
+            // 指向文件/失效的快捷方式保持原有文件预览行为。
+            if (hoverPath != null && !hoverIsDir)
+            {
+                try
+                {
+                    if (Config.LnkExts.Contains(Path.GetExtension(hoverPath)))
+                    {
+                        string lnkDir;
+                        if (!_lnkDirCache.TryGetValue(hoverPath, out lnkDir))
+                        {
+                            lnkDir = null;
+                            string lnkTarget = PreviewProvider.GetLnkTarget(hoverPath);
+                            if (!string.IsNullOrEmpty(lnkTarget) && Directory.Exists(lnkTarget)) lnkDir = lnkTarget;
+                            if (_lnkDirCache.Count > 200) _lnkDirCache.Clear();
+                            _lnkDirCache[hoverPath] = lnkDir;
+                        }
+                        if (lnkDir != null)
+                        {
+                            hoverPath = lnkDir;
+                            hoverIsDir = true;
+                        }
+                    }
+                }
+                catch { }
             }
 
             string hoverFolder = (hoverPath != null && hoverIsDir) ? hoverPath : null;
@@ -1505,7 +1867,10 @@ namespace HoverExplorer
             if (string.IsNullOrEmpty(p)) return;
             _gateHintAt = now;
             int mods = Config.FolderGateEnabled ? Config.FolderGateMods : Config.PreviewGateMods;
-            string hint = (mods & 8) != 0 ? I18n.T("gate_hint_long") : string.Format(I18n.T("gate_hint"), Config.ModsLabel(mods));
+            string modsText = Config.ModsLabel(mods);
+            string hint = (mods & 8) != 0
+                ? I18n.T("gate_hint_long")
+                : string.Format(I18n.T("gate_hint"), modsText);
             Tips.Flash(hint, 1400);
             DebugLog("[gate] hint shown @ " + mx + "," + my + " target=" + p);
         }
@@ -1538,7 +1903,7 @@ namespace HoverExplorer
             }
         }
 
-        private static void CloseAfter(int level)
+        internal static void CloseAfter(int level)
         {
             // 按面板的 Level 属性关闭，不用数组索引：pinned 面板占据索引 0 时
             // 索引 > level 会把同层级的面板（如 pinned 面板后面新开的 level 0 列表）误当成深层级关掉
@@ -1643,6 +2008,7 @@ namespace HoverExplorer
                 // 排序/行布局变化 → 立即应用到所有存活面板（含级联子面板）
                 foreach (var p in _panels) { if (!p.IsDisposed) p.RefreshPanel(); }
             }
+            PopupForm.RefreshPreviewInfoBars();   // 信息+操作栏开关/语言切换即时生效
         }
 
         // 触发区域有效 → 桌面显示/更新穿透色块；无效（w<20）→ 移除
@@ -2089,22 +2455,8 @@ namespace HoverExplorer
 
         internal static void OpenSettings()
         {
-            if (_settingsOpen && _settingsForm != null && !_settingsForm.IsDisposed)
-            {
-                if (_settingsForm.WindowState == FormWindowState.Minimized) _settingsForm.WindowState = FormWindowState.Normal;
-                _settingsForm.Show();
-                _settingsForm.BringToFront();
-                _settingsForm.Activate();
-                return;
-            }
-            _settingsOpen = true;
-            _settingsForm = new SettingsForm();
-            _settingsForm.FormClosed += (s2, e2) =>
-            {
-                _settingsOpen = false;
-                _settingsForm = null;
-            };
-            _settingsForm.Show();
+            if (_settingsOpen) { HoverExplorer.Wpf.WpfSettingsWindow.Activate(); return; }
+            HoverExplorer.Wpf.WpfSettingsWindow.Show();
         }
 
         internal static void RebuildTrayMenu()
@@ -2256,7 +2608,7 @@ namespace HoverExplorer
             {
                 Config.ExplorerEnabled = explorerItem.Checked;
                 Config.Save();
-                if (_settingsForm != null && !_settingsForm.IsDisposed) _settingsForm.SyncFromTray();
+                HoverExplorer.Wpf.WpfSettingsWindow.SyncFromTray();
             };
             if (Config.TrayShowExplorer) trayMenu.Items.Add(explorerItem);
             var previewItem = new ToolStripMenuItem(I18n.T("file_preview"));
@@ -2267,7 +2619,7 @@ namespace HoverExplorer
             {
                 Config.PreviewFiles = previewItem.Checked;
                 Config.Save();
-                if (_settingsForm != null && !_settingsForm.IsDisposed) _settingsForm.SyncFromTray();
+                HoverExplorer.Wpf.WpfSettingsWindow.SyncFromTray();
             };
             if (Config.TrayShowPreview) trayMenu.Items.Add(previewItem);
             var origItem = new ToolStripMenuItem(I18n.T("preview_orig"));
@@ -2378,16 +2730,8 @@ namespace HoverExplorer
                     EntryListForm.NotifyChanged();
                     ApplyTrayIcon();   // 语言切换后刷新托盘 tooltip（含更新提示文案）
                     if (_entryCardForm != null && !_entryCardForm.IsDisposed) _entryCardForm.Relayout();
-                    if (_settingsOpen && _settingsForm != null && !_settingsForm.IsDisposed)
-                    {
-                        var sLoc = _settingsForm.Location;
-                        _settingsForm.Close();
-                        _settingsOpen = true;
-                        _settingsForm = new SettingsForm();
-                        _settingsForm.FormClosed += (s3, e3) => { _settingsOpen = false; _settingsForm = null; };
-                        try { _settingsForm.Location = sLoc; } catch { }
-                        _settingsForm.Show();
-                    }
+                    if (HoverExplorer.Wpf.WpfSettingsWindow.IsOpen)
+                        HoverExplorer.Wpf.WpfSettingsWindow.Rebuild();
                     refreshExitText();
                 };
                 langItem.DropDownItems.Add(sub);

@@ -24,9 +24,20 @@ foreach ($g in $gacRefs) {
 }
 
 if (Test-Path $out) { Set-ItemProperty $out -Name IsReadOnly -Value $false }
-$srcFiles = @('AssemblyInfo.cs','CardPalette.cs','Config.cs','EntryListForm.cs','IMediaSession.cs','MciAudioSession.cs','FfmpegAudioSession.cs','FfmpegDownload.cs','ExplorerSupport.cs','ExplorerUia.cs','I18n.cs','Ingest.cs','MediaDecoder.cs','MediaPreview.cs','NativeMethods.cs','PaletteListForm.cs','PerchSupport.cs','PinCardForm.cs','PopupForm.cs','PreviewProvider.cs','Program.cs','RemoteReader.cs','SettingsForm.cs','ShellContextMenu.cs','SlimScrollBar.cs','TcSupport.cs','Win11.cs','WaveDecoder.cs') | ForEach-Object { "$src\$_" }
+$srcFiles = @('AssemblyInfo.cs','CardPalette.cs','Config.cs','EntryListForm.cs','IMediaSession.cs','MciAudioSession.cs','FfmpegAudioSession.cs','FfmpegDownload.cs','GeneratorLinks.cs','ExplorerSupport.cs','ExplorerUia.cs','I18n.cs','Ingest.cs','MediaDecoder.cs','MediaPreview.cs','NativeMethods.cs','PaletteListForm.cs','PerchSupport.cs','PinCardForm.cs','PopupForm.cs','PreviewProvider.cs','Program.cs','RemoteReader.cs','SettingsForm.cs','ShellContextMenu.cs','SlimScrollBar.cs','TcSupport.cs','Win11.cs','WaveDecoder.cs','WpfControls.cs','WpfSettingsBinding.cs','WpfSettingsWindow.cs') | ForEach-Object { "$src\$_" }
 
-& 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe' /nologo /target:winexe /win32icon:"$src\app.ico" /out:$out /resource:"$src\donate_qr.png",HoverExplorer.donate_qr.png ($refs | ForEach-Object { "/r:$_" }) $srcFiles
+# WPF 设置面板：XAML 作为嵌入资源，运行时由 XamlReader 加载（无需 XAML 编译/MSBuild）
+$xamlDir = "$src\WpfSettings"
+$xamlRes = @(
+    @('Themes\Light.xaml', 'Light.xaml'),
+    @('Themes\Dark.xaml',  'Dark.xaml'),
+    @('Styles.xaml',       'Styles.xaml'),
+    @('Pages1.xaml',       'Pages1.xaml'),
+    @('Pages2.xaml',       'Pages2.xaml'),
+    @('Shell.xaml',        'Shell.xaml')
+) | ForEach-Object { '/resource:' + (Join-Path $xamlDir $_[0]) + ',HoverExplorer.Wpf.Xaml.' + $_[1] }
+
+& 'C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe' /nologo /target:winexe /win32icon:"$src\app.ico" /out:$out /resource:"$src\donate_qr.png",HoverExplorer.donate_qr.png ($refs | ForEach-Object { "/r:$_" }) $xamlRes $srcFiles
 if ($LASTEXITCODE -eq 0) { Write-Output "BUILD OK" } else { Write-Output "BUILD FAIL"; exit 1 }
 
 $fixerOut = "$src\Mp3Fixer.exe"

@@ -1,0 +1,57 @@
+<Window xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="clr-namespace:HoverExplorer.Wpf;assembly=HoverExplorer"
+        Title="HoverExplorer" Width="700" Height="880" MinWidth="620" MinHeight="500"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource BgBrush}"
+        TextElement.Foreground="{DynamicResource TextBrush}"
+        FontFamily="Microsoft YaHei UI" FontSize="12"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True" SnapsToDevicePixels="True">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="56"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- 顶栏 -->
+        <Border Background="{DynamicResource HeaderBrush}">
+            <Grid Margin="22,0,14,0">
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Border Width="26" Height="26" CornerRadius="5" Background="#1B1B1F" Margin="0,0,10,0">
+                        <Ellipse Width="12" Height="12" Stroke="#4FC3A1" StrokeThickness="2"/>
+                    </Border>
+                    <TextBlock x:Name="TitleText" Text="HoverExplorer" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                </StackPanel>
+                <ComboBox x:Name="LangCombo" Width="92" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,96,0"/>
+                <Button x:Name="ThemeButton" Content="◐ 深/浅" HorizontalAlignment="Right" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Row="1">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="154"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- 导航（Tag = 页面 DataTemplate 的 Key） -->
+            <Border Background="{DynamicResource NavBrush}" VerticalAlignment="Top" Margin="0,14,0,0">
+                <StackPanel x:Name="NavPanel">
+                    <RadioButton Content="文件夹预览" c:Cfg.I18n="nav_preview_list" Tag="TriggerPage" Style="{DynamicResource NavItem}" IsChecked="True"/>
+                    <RadioButton Content="列表外观" c:Cfg.I18n="group_appearance" Tag="ListLookPage" Style="{DynamicResource NavSub}"/>
+                    <RadioButton Content="文件预览" c:Cfg.I18n="group_content" Tag="PreviewPage" Style="{DynamicResource NavItem}"/>
+                    <RadioButton Content="桌面卡片" c:Cfg.I18n="group_card" Tag="CardPage" Style="{DynamicResource NavItem}"/>
+                    <RadioButton Content="历史•收藏" c:Cfg.I18n="group_entry" Tag="HistoryPage" Style="{DynamicResource NavItem}"/>
+                    <RadioButton Content="高级与集成" c:Cfg.I18n="group_advanced" Tag="AdvancedPage" Style="{DynamicResource NavItem}" FontWeight="Normal"/>
+                    <RadioButton Content="托盘管理" c:Cfg.I18n="group_tray" Tag="TrayPage" Style="{DynamicResource NavItem}" FontWeight="Normal"/>
+                    <RadioButton Content="关于" c:Cfg.I18n="group_about" Tag="AboutPage" Style="{DynamicResource NavItem}" FontWeight="Normal"/>
+                </StackPanel>
+            </Border>
+
+            <!-- 页面 -->
+            <ScrollViewer x:Name="PageScroll" Grid.Column="1" VerticalScrollBarVisibility="Auto">
+                <ContentControl x:Name="PageHost" Margin="26,14,26,20" IsTabStop="False"/>
+            </ScrollViewer>
+        </Grid>
+    </Grid>
+</Window>

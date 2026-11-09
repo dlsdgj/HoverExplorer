@@ -1,0 +1,199 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:c="clr-namespace:HoverExplorer.Wpf;assembly=HoverExplorer">
+
+    <!-- ============ 桌面卡片 ============ -->
+    <DataTemplate x:Key="CardPage">
+        <StackPanel>
+            <HeaderedContentControl Header="桌面卡片" c:Cfg.I18n="group_card" Style="{DynamicResource Card}">
+                <c:SettingRow c:Cfg.I18n="hotkey_row" c:Cfg.Desc="card_hotkey_desc">
+                    <StackPanel Orientation="Horizontal">
+                        <ToggleButton c:Cfg.Key="CardHotkeyEnabled" Style="{DynamicResource Switch}" IsChecked="True" Margin="0,0,10,0"/>
+                        <Button c:Cfg.I18n="hotkey_delete" c:Cfg.Action="hk:card:del" Margin="0,0,6,0"/>
+                        <Button c:Cfg.I18n="hotkey_reset" c:Cfg.Action="hk:card:reset" Margin="0,0,12,0"/>
+                        <StackPanel Orientation="Horizontal" c:Cfg.ShowIf="CardHotkeyOn">
+                            <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkCard:0" Text="Ctrl" HorizontalAlignment="Center"/></Border>
+                            <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkCard:1" Text="Alt" HorizontalAlignment="Center"/></Border>
+                            <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkCard:2" Text="V" HorizontalAlignment="Center"/></Border>
+                        </StackPanel>
+                    </StackPanel>
+                </c:SettingRow>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Header="桌面卡片" c:Cfg.I18n="group_card" Style="{DynamicResource Card}">
+                <StackPanel>
+                    <TextBlock Margin="14,0,14,6"><Hyperlink c:Cfg.I18n="card_gen_link" c:Cfg.Link="gen:card"/></TextBlock>
+                    <c:SettingRow c:Cfg.I18n="palette_scheme">
+                        <StackPanel Orientation="Horizontal">
+                            <ComboBox x:Name="CardSchemeCombo" Width="130" SelectedIndex="0" Margin="0,0,6,0"/>
+                            <Button c:Cfg.I18n="del_scheme" c:Cfg.Action="card:del" Margin="0,0,6,0"/>
+                            <Button c:Cfg.I18n="save_as" c:Cfg.Action="card:save"/>
+                        </StackPanel>
+                    </c:SettingRow>
+                    <c:ColorRow x:Name="CardBg" c:Cfg.Key="card:Bg" c:Cfg.I18n="cp_lbl_bg" Label="卡片背景" Text="rgba(241,226,218,237)"/>
+                    <c:ColorRow x:Name="CardFg" c:Cfg.Key="card:Fg" c:Cfg.I18n="cp_lbl_fg" Label="文字色" Text="rgba(40,32,31,255)"/>
+                    <c:ColorRow x:Name="BadgeBg" c:Cfg.Key="card:BadgeBg" c:Cfg.I18n="cp_lbl_badge_bg" Label="徽标背景" Text="rgba(236,215,193,242)"/>
+                    <c:ColorRow x:Name="BadgeFg" c:Cfg.Key="card:BadgeFg" c:Cfg.I18n="cp_lbl_badge_fg" Label="徽标文字" Text="rgba(28,25,23,255)"/>
+                    <c:ColorRow x:Name="Stripe" c:Cfg.Key="card:Strip" c:Cfg.I18n="cp_lbl_strip" Label="左侧色条" Text="rgba(192,94,41,255)"/>
+                    <c:SettingRow c:Cfg.I18n="cp_strip_w"><c:Stepper c:Cfg.Key="card:StripWidth" Value="3" Min="0" Max="12"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="cp_font">
+                        <ComboBox c:Cfg.Key="card:FontName" c:Cfg.Mode="Fonts" Width="200" SelectedIndex="0"/>
+                    </c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="cp_font_size"><c:Stepper c:Cfg.Key="card:FontSize" Value="9" Min="6" Max="24"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="cp_radius"><c:Stepper c:Cfg.Key="card:Radius" Value="3" Min="0" Max="20"/></c:SettingRow>
+                    <TextBlock Style="{DynamicResource Desc}" Margin="14,0,14,6" TextWrapping="Wrap" c:Cfg.I18n="card_keys_desc"/>
+                    <WrapPanel Margin="14,0,14,8">
+                        <Button c:Cfg.I18n="copy_template" c:Cfg.Action="card:template" Margin="0,0,6,4"/>
+                        <Button c:Cfg.I18n="export_all" c:Cfg.Action="card:export" Margin="0,0,6,4"/>
+                        <Button c:Cfg.I18n="paste_import" c:Cfg.Action="card:paste" Margin="0,0,6,4" Style="{DynamicResource PrimaryButton}"/>
+                    </WrapPanel>
+                    <Border Style="{DynamicResource Hint}"><TextBlock c:Cfg.I18n="hint_card_wheel" Foreground="{DynamicResource HintTextBrush}"/></Border>
+                    <TextBlock c:Cfg.I18n="card_preview" Margin="14,10,14,8"/>
+                    <Border Margin="14,0,14,10" HorizontalAlignment="Left" CornerRadius="3" ClipToBounds="True"
+                            Background="{Binding Brush, ElementName=CardBg}">
+                        <Border.Effect><DropShadowEffect BlurRadius="5" ShadowDepth="1.5" Opacity="0.3"/></Border.Effect>
+                        <StackPanel Orientation="Horizontal">
+                            <Rectangle Width="4" Fill="{Binding Brush, ElementName=Stripe}"/>
+                            <TextBlock c:Cfg.I18n="card_preview_sample" FontFamily="KaiTi" Margin="10,6" Foreground="{Binding Brush, ElementName=CardFg}"/>
+                            <Border Background="{Binding Brush, ElementName=BadgeBg}" CornerRadius="2" Margin="0,5,8,5" Padding="6,1">
+                                <TextBlock Text="PNG" FontSize="10" FontWeight="Bold" VerticalAlignment="Center" Foreground="{Binding Brush, ElementName=BadgeFg}"/>
+                            </Border>
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </HeaderedContentControl>
+        </StackPanel>
+    </DataTemplate>
+
+    <!-- ============ 历史•收藏 ============ -->
+    <DataTemplate x:Key="HistoryPage">
+        <HeaderedContentControl Header="历史•收藏" c:Cfg.I18n="group_entry" Style="{DynamicResource Card}">
+            <StackPanel>
+                <c:SettingRow c:Cfg.I18n="entry_hotkey">
+                    <StackPanel Orientation="Horizontal">
+                        <ToggleButton c:Cfg.Key="EntryHotkeyEnabled" Style="{DynamicResource Switch}" IsChecked="True" Margin="0,0,10,0"/>
+                        <Button c:Cfg.I18n="hotkey_delete" c:Cfg.Action="hk:entry:del" Margin="0,0,6,0"/>
+                        <Button c:Cfg.I18n="hotkey_reset" c:Cfg.Action="hk:entry:reset" Margin="0,0,12,0"/>
+                        <StackPanel Orientation="Horizontal" c:Cfg.ShowIf="EntryHotkeyOn">
+                            <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkEntry:0" Text="Ctrl" HorizontalAlignment="Center"/></Border>
+                            <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkEntry:1" Text="Alt" HorizontalAlignment="Center"/></Border>
+                            <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkEntry:2" Text="E" HorizontalAlignment="Center"/></Border>
+                        </StackPanel>
+                    </StackPanel>
+                </c:SettingRow>
+                <c:SettingRow c:Cfg.I18n="entry_area" c:Cfg.Key="EntryRectInfo">
+                    <StackPanel Orientation="Horizontal">
+                        <Border x:Name="AreaColorSwatch" Width="24" Height="24" CornerRadius="3" Background="Transparent" BorderBrush="{DynamicResource InputLineBrush}" BorderThickness="1" Margin="0,0,10,0" Cursor="Hand" c:Cfg.Action="area:color"/>
+                        <Button c:Cfg.I18n="area_clear" c:Cfg.Action="area:clear" Margin="0,0,6,0"/>
+                        <Button c:Cfg.I18n="area_pick" c:Cfg.Action="area:pick" Style="{DynamicResource PrimaryButton}"/>
+                    </StackPanel>
+                </c:SettingRow>
+                <c:SettingRow c:Cfg.I18n="entry_delay_row" c:Cfg.Desc="entry_delay_desc" c:Cfg.ShowIf="EntryRectSet">
+                    <c:Stepper c:Cfg.Key="EntryRectDelayMs" Value="50" Min="0" Max="2000" Step="10" Suffix=" ms"/>
+                </c:SettingRow>
+                <Border Style="{DynamicResource Hint}"><TextBlock c:Cfg.I18n="hint_fav_features" Foreground="{DynamicResource HintTextBrush}"/></Border>
+            </StackPanel>
+        </HeaderedContentControl>
+    </DataTemplate>
+
+    <!-- ============ 高级与集成 ============ -->
+    <DataTemplate x:Key="AdvancedPage">
+        <HeaderedContentControl Header="高级与集成" c:Cfg.I18n="group_advanced" Style="{DynamicResource Card}">
+            <StackPanel>
+                <c:SettingRow c:Cfg.I18n="tc_sort_row" c:Cfg.Desc="tc_sort_disabled">
+                    <ComboBox Width="170" SelectedIndex="0" IsEnabled="False"><ComboBoxItem Content="自动 (读 TC ini)"/></ComboBox>
+                </c:SettingRow>
+                <c:SettingRow Title="Total Commander 悬停检测" Description="暂停开发中，保留开关供手动启用">
+                    <ToggleButton c:Cfg.Key="TcEnabled" Style="{DynamicResource Switch}"/>
+                </c:SettingRow>
+                <c:SettingRow Title="Perch 笔记卡片悬停" Description="通过 UIAutomation 拾取 Perch 文本块中的路径">
+                    <ToggleButton c:Cfg.Key="PerchEnabled" Style="{DynamicResource Switch}"/>
+                </c:SettingRow>
+                <Border Style="{DynamicResource Hint}"><TextBlock c:Cfg.I18n="hint_integration" Foreground="{DynamicResource HintTextBrush}"/></Border>
+                <TextBlock Margin="14,4,14,2"><Hyperlink c:Cfg.I18n="hidden_features_obsidian_link" c:Cfg.Link="https://github.com/dlsdgj/hover-link-preview"/></TextBlock>
+                <TextBlock Margin="14,2,14,6"><Hyperlink c:Cfg.I18n="hidden_features_perch_link" c:Cfg.Link="https://github.com/dlsdgj/perch"/></TextBlock>
+            </StackPanel>
+        </HeaderedContentControl>
+    </DataTemplate>
+
+    <!-- ============ 托盘管理 ============ -->
+    <DataTemplate x:Key="TrayPage">
+        <HeaderedContentControl Header="托盘管理" c:Cfg.I18n="group_tray" Style="{DynamicResource Card}">
+            <StackPanel>
+                <c:SettingRow c:Cfg.I18n="tray_icon_path" c:Cfg.Desc="tray_icon_desc">
+                    <StackPanel Orientation="Horizontal">
+                        <TextBox c:Cfg.Key="TrayIconPath" Width="150" Margin="0,0,6,0"/>
+                        <Button c:Cfg.I18n="tray_browse" c:Cfg.Action="tray:browse"/>
+                    </StackPanel>
+                </c:SettingRow>
+                <c:SettingRow c:Cfg.I18n="tray_middle_click" c:Cfg.Desc="tray_middle_hint">
+                    <ComboBox c:Cfg.Key="TrayMiddleAction" Width="130" SelectedIndex="0">
+                        <ComboBoxItem c:Cfg.I18n="tray_middle_none"/>
+                        <ComboBoxItem c:Cfg.I18n="tray_middle_settings"/>
+                        <ComboBoxItem c:Cfg.I18n="tray_middle_restart"/>
+                        <ComboBoxItem c:Cfg.I18n="tray_middle_exit"/>
+                    </ComboBox>
+                </c:SettingRow>
+                <TextBlock c:Cfg.I18n="tray_menu_items" Margin="14,10,14,6"/>
+
+                <Grid Margin="14,0,14,2">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/><ColumnDefinition Width="70"/><ColumnDefinition Width="70"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock c:Cfg.I18n="tray_col_item" FontSize="11"/>
+                    <TextBlock Grid.Column="1" c:Cfg.I18n="tray_col_show" FontSize="11" HorizontalAlignment="Center"/>
+                    <TextBlock Grid.Column="2" c:Cfg.I18n="tray_col_enable" FontSize="11" HorizontalAlignment="Center"/>
+                </Grid>
+                <ItemsControl x:Name="TrayList" Margin="14,0">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Height="34">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/><ColumnDefinition Width="70"/><ColumnDefinition Width="70"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBlock Text="{Binding Label}" VerticalAlignment="Center"/>
+                                <ToggleButton Grid.Column="1" Style="{DynamicResource Switch}" HorizontalAlignment="Center"
+                                              IsChecked="{Binding Show, Mode=TwoWay}"/>
+                                <ToggleButton Grid.Column="2" Style="{DynamicResource Switch}" HorizontalAlignment="Center"
+                                              IsChecked="{Binding Enabled, Mode=TwoWay}"
+                                              IsEnabled="{Binding EnableEditable}"
+                                              Visibility="{Binding EnableVisibility}"/>
+                            </Grid>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </HeaderedContentControl>
+    </DataTemplate>
+
+    <!-- ============ 关于 ============ -->
+    <DataTemplate x:Key="AboutPage">
+        <HeaderedContentControl Header="关于" c:Cfg.I18n="group_about" Style="{DynamicResource Card}">
+            <StackPanel Margin="14,6,14,10">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Border x:Name="QrBox" Width="140" Height="140" CornerRadius="6" Background="{DynamicResource ChipBrush}" Margin="0,0,20,0"/>
+                    <StackPanel Grid.Column="1" VerticalAlignment="Top">
+                        <TextBlock Margin="0,0,0,10"><Hyperlink c:Cfg.I18n="donate" c:Cfg.Link="wechat"/></TextBlock>
+                        <TextBlock Margin="0,0,0,10"><Hyperlink c:Cfg.Link="https://github.com/dlsdgj/HoverExplorer/releases">GitHub Releases</Hyperlink></TextBlock>
+                        <TextBlock><Hyperlink c:Cfg.Link="https://pan.baidu.com/s/12rp6LTe7Y8oSErvP8wTLgA?pwd=hbf8">百度网盘 (pwd: hbf8)</Hyperlink></TextBlock>
+                        <TextBlock c:Cfg.Key="VersionText" Style="{DynamicResource Desc}" HorizontalAlignment="Right" Margin="0,50,10,0"/>
+                    </StackPanel>
+                </Grid>
+
+                <TextBlock c:Cfg.I18n="mp3_slow_title" FontWeight="SemiBold" Margin="0,16,0,4"/>
+                <TextBlock Style="{DynamicResource Desc}" c:Cfg.I18n="mp3_slow_body" TextWrapping="Wrap"/>
+                <TextBlock Margin="0,12,0,0"><Hyperlink c:Cfg.I18n="mp3_fixer_open" c:Cfg.Link="mp3fixer"/></TextBlock>
+
+                <TextBlock c:Cfg.I18n="ffmpeg_dl_title" FontWeight="SemiBold" Margin="0,16,0,4"/>
+                <TextBlock Style="{DynamicResource Desc}" c:Cfg.I18n="ffmpeg_dl_body" TextWrapping="Wrap"/>
+                <TextBlock Margin="0,12,0,0"><Hyperlink c:Cfg.I18n="ffmpeg_download" c:Cfg.Link="ffmpeg:download"/></TextBlock>
+
+                <TextBlock c:Cfg.I18n="wd_notice_title" FontWeight="SemiBold" Margin="0,16,0,4"/>
+                <TextBlock Style="{DynamicResource Desc}" c:Cfg.I18n="wd_notice_body" TextWrapping="Wrap"/>
+            </StackPanel>
+        </HeaderedContentControl>
+    </DataTemplate>
+</ResourceDictionary>

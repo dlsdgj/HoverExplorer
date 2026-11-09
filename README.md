@@ -71,7 +71,7 @@
 - **文件列表右键菜单 / List context menu**: 打开/编辑/新窗口/重命名/删除/复制路径·名称/原生菜单 — Open/edit/new window/rename/delete/copy path·name/native menu
 - **历史·收藏文件预览 / History-favorite file preview**: 历史·收藏列表中悬停文件行直接弹出预览窗（与文件列表面板预览一致） — Hover file row in history/favorite list shows preview (same as file panel preview)
 - **预览窗复制菜单 / Preview copy menu**: 复制选中文本/全文/文件/路径，移开自动收起 — Copy selected/all/file/path; auto-dismiss on leave
-- **按钮提示 / Button tooltips**: 悬停显示功能说明于指针上方，可关闭 — Hover shows description above cursor; disableable
+- **按钮提示 / Button tooltips**: 悬停时在宿主窗口底部显示说明条，不创建独立浮窗、不抢焦点，可关闭 — Hover shows a description bar at the bottom of the host window; no separate popup, no focus steal; disableable
 - **预览尺寸记忆 / Preview size memory**: 拖手柄或 `Ctrl+滚轮` 缩放，尺寸自动记住 — Drag handle or `Ctrl+scroll` to resize; size remembered
 - **音视频尺寸分开记忆 / Separate audio/video size**: 视频与音频各自记住窗口尺寸；视频按真实宽高比 — Video/audio remember size separately; video uses real aspect ratio
 - **列表顶部文件夹名 / Folder name header**: 点击/✎ 就地重命名，双击用资源管理器打开，`Ctrl+F` 展开搜索 — Click/✎ to rename in place; double-click to open in Explorer; `Ctrl+F` for search
@@ -79,6 +79,11 @@
 - **文本预览编码保留 / Text encoding preservation**: 保存按原 BOM 写回（UTF-8/16/32），不丢 BOM — Save preserves original BOM (UTF-8/16/32)
 - **悬停触发更精准 / Precise hover trigger**: 指针必须移动才触发；重命名/地址栏输入时不弹 — Pointer must move to trigger; suppressed during rename/address input
 - **输入法友好 / IME friendly**: 输入框持焦点时暂停置顶，候选窗不被遮挡 — Pause topmost when input focused; IME candidate not occluded
+- **WPF 设置面板 / WPF settings shell**: 设置窗改用 WPF 外壳（XAML 作为嵌入资源运行时加载），侧栏分页、深浅主题跟随；加载失败自动回退旧 WinForms 面板 — WPF shell with runtime-loaded XAML resources, sidebar pages and dark/light themes; falls back to the WinForms panel
+- **键盘导航 / Keyboard navigation**: `↑`/`↓` 选择行、`→` 显示选中行预览、`←` 返回列表；预览窗激活时 `←`/`→` 切换同目录文件，`Esc` 退出键盘模式 — Arrow keys select, preview and return; Esc leaves keyboard mode
+- **预览窗标题栏操作 / Preview header actions**: 左上角重命名按钮与「默认程序打开」按钮 — Rename and open-with-default-app buttons at the header
+- **复制确认 / Copy feedback**: 复制按钮点击后自身显示 `√`（约 0.9 秒还原），不再弹独立提示窗 — Copy buttons briefly show a check mark themselves; no popup
+- **固定状态标识 / Active pin state**: 当前激活窗口的固定按钮显示绿色，已固定为实心绿色，非激活窗口保持默认色 — Active window's pin button turns green; pinned is solid green, inactive windows keep the default color
 
 ## 使用 / Usage
 
@@ -103,6 +108,10 @@ Rename: click folder name or ✎ at panel top (`Enter` to commit / `Esc` to canc
 搜索：点击面板激活后按 `Ctrl+F` 展开搜索框（默认隐藏）。
 
 Search: click panel to activate, then `Ctrl+F` to show search box (hidden by default).
+
+键盘：鼠标移到列表面板上后，`↑`/`↓` 选择行，`→` 显示该行预览（子文件夹展开下一级列表），`←` 关闭预览回到列表；预览窗激活时 `←`/`→` 切换同目录文件，`PageUp`/`PageDown` 翻页，`Esc` 退出键盘模式。键盘接管仅在鼠标位于 HE 窗口或刚操作过键盘的短时间内生效，不会长期占用方向键。
+
+Keyboard: with the pointer on a list panel, `↑`/`↓` select a row, `→` previews it (a subfolder opens the next level), `←` closes the preview and returns to the list; `←`/`→` inside an active preview switch files, `PageUp`/`PageDown` paginate, `Esc` leaves keyboard mode.
 
 设置面板底部提供 GitHub Releases 与百度网盘下载链接。
 
@@ -151,11 +160,13 @@ Hotkey config saved in `config.json`, effective after restart.
 ## 编译 / Build
 
 ```powershell
-# 使用 .NET Framework 4.x csc.exe 编译 / Build with .NET Framework 4.x csc.exe
-$csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-# 需引用 UIAutomationClient / UIAutomationTypes / WindowsBase / PresentationCore / System.IO.Compression.FileSystem
-# 输出 HoverExplorer.exe / Output: HoverExplorer.exe
+cd <repo>
+.\build.ps1   # 自动解析 GAC 引用、嵌入 WPF XAML 资源与图标，输出 HoverExplorer.exe / Mp3Fixer.exe
 ```
+
+使用 .NET Framework 4.x 的 `csc.exe`；设置窗的 XAML 作为嵌入资源在运行时由 `XamlReader` 加载，无需 MSBuild / XAML 编译。
+
+Build with .NET Framework 4.x `csc.exe`; settings XAML is embedded and loaded at runtime by `XamlReader` — no MSBuild / XAML compilation needed.
 
 ## 文件说明 / Files
 
@@ -184,4 +195,7 @@ $csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 | `CardPalette.cs` | 桌面卡片标签带配色（11 套） — Card label-band schemes (11) |
 | `PaletteListForm.cs` | 滚轮切换配色的速查列表 — Scroll color cycle quick list |
 | `ShellContextMenu.cs` | Windows 原生 shell 右键菜单 — Windows native shell context menu |
-| `build.ps1` | 一键编译脚本（自动解析 GAC 引用） — One-click build script (auto GAC refs) |
+| `WpfSettingsWindow.cs` / `WpfSettingsBinding.cs` / `WpfControls.cs` | WPF 设置窗外壳、配置双向绑定与自绘控件 — WPF settings shell, config binding, custom controls |
+| `WpfSettings/*.xaml` | 设置窗页面 / 样式 / 深浅主题，作为嵌入资源运行时加载 — Settings pages, styles and themes, runtime-loaded XAML resources |
+| `GeneratorLinks.cs` | 配色生成器本地 HTML / 在线链接入口 — Palette generator local HTML / online links |
+| `build.ps1` | 一键编译脚本（自动解析 GAC 引用、嵌入 XAML 资源与图标） — One-click build script (auto GAC refs, embedded XAML and icon) |

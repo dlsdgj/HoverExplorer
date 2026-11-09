@@ -522,14 +522,14 @@ internal static class MediaPreview
             // ruler 先加（z序高），bar 后加（z序低=最底层，Dock先处理=最底部）
             panel.Controls.Add(ruler);
             panel.Controls.Add(bar);
-            if (!Config.SpeedToggle) ruler.Hide();
+            if (!Config.VideoSpeedToggle) ruler.Hide();
 
             // 长按画面加速到 3×，释放恢复（WPF MediaElement 有独立 HWND，须用 WPF 鼠标事件）
             double savedSpd = 1.0;
             session.WpfMedia.MouseLeftButtonDown += delegate(object s, System.Windows.Input.MouseButtonEventArgs e)
             {
                 e.Handled = true;
-                if (!Config.SpeedToggle) return;
+                if (!Config.VideoSpeedToggle) return;
                 try { savedSpd = session.SpeedRatio; } catch { savedSpd = 1.0; }
                 try { session.SpeedRatio = 3.0; } catch { }
                 UpdateSpeedHint(spdHint, 3.0);
@@ -537,7 +537,7 @@ internal static class MediaPreview
             session.WpfMedia.MouseLeftButtonUp += delegate(object s, System.Windows.Input.MouseButtonEventArgs e)
             {
                 e.Handled = true;
-                if (!Config.SpeedToggle) return;
+                if (!Config.VideoSpeedToggle) return;
                 try { session.SpeedRatio = savedSpd; } catch { }
                 UpdateSpeedHint(spdHint, savedSpd);
             };
@@ -559,7 +559,10 @@ internal static class MediaPreview
                     if (session.NaturalWidth > 0 && session.NaturalHeight > 0 && session.Duration > TimeSpan.Zero)
                     {
                         specBadge.Text = session.NaturalWidth + "×" + session.NaturalHeight + " · " + Fmt(session.Duration);
-                        specBadge.Visible = true;
+                        specBadge.Visible = !Config.PreviewInfoBar;   // 信息栏开启时由信息栏承载规格
+                        // 同步给预览窗信息栏（宽度够时才显示，见 PreviewForm.LayoutInfoBar）
+                        var pf = specBadge.FindForm() as PreviewForm;
+                        if (pf != null) pf.SetMediaSpec(specBadge.Text);
                     }
                 }
                 catch { }
@@ -689,6 +692,8 @@ internal static class MediaPreview
             var tick = new Timer { Interval = 500 };
             tick.Tick += delegate
             {
+                // 设置里切换信息栏开关时即时同步左上角规格角标（文字仍由 Opened 事件写入）
+                if (specBadge.Text.Length > 0) specBadge.Visible = !Config.PreviewInfoBar;
                 if (!session.IsLoaded || session.Duration <= TimeSpan.Zero) return;
                 lblTime.Text = Fmt(session.Position) + " / " + Fmt(session.Duration);
                 prog.DurationSec = session.Duration.TotalSeconds;
