@@ -11,7 +11,7 @@ namespace HoverExplorer
     {
         private const string ListHtml = "hoverExplorers-scheme-generator.html";
         private const string CardHtml = "hoverexplorer-card-palette.html";
-        private const string ListUrl = "https://github.com/dlsdgj/hoverExplorers-cheme-generator";
+        private const string ListUrl = "https://dlsdgj.github.io/hoverExplorers-cheme-generator/";
         private const string CardUrl = "https://dlsdgj.github.io/hoverexplorer-card-palette/";
 
         internal static void Open(string which)

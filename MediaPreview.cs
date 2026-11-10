@@ -524,22 +524,41 @@ internal static class MediaPreview
             panel.Controls.Add(bar);
             if (!Config.VideoSpeedToggle) ruler.Hide();
 
-            // 长按画面加速到 3×，释放恢复（WPF MediaElement 有独立 HWND，须用 WPF 鼠标事件）
+            // 画面交互：短按=播放/暂停，长按=倍速（WPF MediaElement 有独立 HWND，须用 WPF 鼠标事件）
             double savedSpd = 1.0;
-            session.WpfMedia.MouseLeftButtonDown += delegate(object s, System.Windows.Input.MouseButtonEventArgs e)
+            bool longPressed = false;
+            var lpTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
+            lpTimer.Tick += (s, e2) =>
             {
-                e.Handled = true;
+                lpTimer.Stop();
+                longPressed = true;
                 if (!Config.VideoSpeedToggle) return;
                 try { savedSpd = session.SpeedRatio; } catch { savedSpd = 1.0; }
                 try { session.SpeedRatio = 3.0; } catch { }
                 UpdateSpeedHint(spdHint, 3.0);
             };
-            session.WpfMedia.MouseLeftButtonUp += delegate(object s, System.Windows.Input.MouseButtonEventArgs e)
+            session.WpfMedia.MouseLeftButtonDown += delegate(object s, System.Windows.Input.MouseButtonEventArgs e)
             {
                 e.Handled = true;
                 if (!Config.VideoSpeedToggle) return;
-                try { session.SpeedRatio = savedSpd; } catch { }
-                UpdateSpeedHint(spdHint, savedSpd);
+                longPressed = false;
+                lpTimer.Start();
+            };
+            session.WpfMedia.MouseLeftButtonUp += delegate(object s, System.Windows.Input.MouseButtonEventArgs e)
+            {
+                e.Handled = true;
+                lpTimer.Stop();
+                if (longPressed && Config.VideoSpeedToggle)
+                {
+                    try { session.SpeedRatio = savedSpd; } catch { }
+                    UpdateSpeedHint(spdHint, savedSpd);
+                }
+                else
+                {
+                    // 短按：播放/暂停并同步控制条按钮
+                    session.Toggle();
+                    btn.Text = session.IsPlaying ? "❚❚" : "▶";
+                }
             };
 
             session.Opened += delegate
@@ -682,7 +701,20 @@ internal static class MediaPreview
                 }
                 catch { }
             });
-            session.Ended += delegate { btn.Text = "▶"; };
+            session.Ended += delegate
+            {
+                // 视频自动循环播放：复位到开头继续播放，并同步右下角播放/暂停按钮状态
+                if (session.IsVideo)
+                {
+                    try { session.SeekRatio(0); } catch { }   // 复位到开头（Position 只读，用 SeekRatio）
+                    session.Play();
+                    btn.Text = "❚❚";
+                }
+                else
+                {
+                    btn.Text = "▶";
+                }
+            };
 
             btn.Click += delegate
             {

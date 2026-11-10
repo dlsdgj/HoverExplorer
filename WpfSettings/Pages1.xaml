@@ -87,6 +87,9 @@
         <StackPanel>
             <HeaderedContentControl Header="自定义颜色" c:Cfg.I18n="list_palette" Style="{DynamicResource Card}">
                 <StackPanel>
+                    <Border Background="#FFF8E1" BorderBrush="#F0C36D" BorderThickness="1" CornerRadius="4" Padding="8,6" Margin="14,0,14,8" ToolTip="鼠标在列表标题滚动切换配色方案.">
+                        <TextBlock TextWrapping="Wrap" FontSize="10" Foreground="#5b4a00" c:Cfg.I18n="list_palette_wheel_tip"/>
+                    </Border>
                     <TextBlock Style="{DynamicResource Desc}" Margin="14,0,14,6" c:Cfg.I18n="list_palette_desc"/>
                     <c:SettingRow c:Cfg.I18n="palette_scheme">
                         <StackPanel Orientation="Horizontal">
@@ -98,7 +101,7 @@
                     <StackPanel Orientation="Horizontal" Margin="14,4,14,8">
                         <Button c:Cfg.I18n="warm_zebra" c:Cfg.Action="palette:warm" Margin="0,0,6,0"/>
                         <Button c:Cfg.I18n="clear" c:Cfg.Action="palette:clear" Margin="0,0,6,0"/>
-                        <Button c:Cfg.I18n="wallpaper_pick" c:Cfg.Action="palette:wallpaper"/>
+                        <Button c:Cfg.I18n="wallpaper_pick" c:Cfg.Action="palette:wallpaper" ToolTip="从当前壁纸采样主色调并应用到列表配色"/>
                     </StackPanel>
                     <c:ColorRow c:Cfg.Key="pal:bg" c:Cfg.I18n="pal_lbl_bg" Label="行背景(奇)" Text="F6FBFB"/>
                     <c:ColorRow c:Cfg.Key="pal:zb" c:Cfg.I18n="pal_lbl_zb" Label="斑马(偶)" Text="EDF6F7"/>
@@ -155,7 +158,7 @@
                         <ToggleButton c:Cfg.Key="PreviewInfoBar" Style="{DynamicResource Switch}" IsChecked="True"/>
                     </c:SettingRow>
                     <c:SettingRow c:Cfg.I18n="pv_info_bar_font_family" c:Cfg.Desc="pv_info_bar_font_family_desc" c:Cfg.ShowIf="InfoBarOn"><ComboBox c:Cfg.Key="PreviewInfoBarFontName" c:Cfg.Mode="Fonts" Width="220" SelectedIndex="0"/></c:SettingRow>
-                    <c:SettingRow c:Cfg.I18n="pv_info_bar_font" c:Cfg.Desc="pv_info_bar_font_desc" c:Cfg.ShowIf="InfoBarOn"><c:Stepper c:Cfg.Key="PreviewInfoBarFontMax" Value="10" Min="6" Max="18" Step="0.5" Suffix=" pt"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pv_info_bar_font" c:Cfg.Desc="pv_info_bar_font_desc" c:Cfg.ShowIf="InfoBarOn"><c:Stepper c:Cfg.Key="PreviewInfoBarFontMax" Value="10" Min="6" Max="24"/></c:SettingRow>
                     <c:SettingRow c:Cfg.I18n="pv_edge" c:Cfg.Desc="pv_edge_desc">
                         <ComboBox c:Cfg.Key="PreviewEdgeMode" SelectedIndex="0">
                             <ComboBoxItem c:Cfg.I18n="edge_off"/>

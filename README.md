@@ -82,8 +82,13 @@
 - **WPF 设置面板 / WPF settings shell**: 设置窗改用 WPF 外壳（XAML 作为嵌入资源运行时加载），侧栏分页、深浅主题跟随；加载失败自动回退旧 WinForms 面板 — WPF shell with runtime-loaded XAML resources, sidebar pages and dark/light themes; falls back to the WinForms panel
 - **键盘导航 / Keyboard navigation**: `↑`/`↓` 选择行、`→` 显示选中行预览、`←` 返回列表；预览窗激活时 `←`/`→` 切换同目录文件，`Esc` 退出键盘模式 — Arrow keys select, preview and return; Esc leaves keyboard mode
 - **预览窗标题栏操作 / Preview header actions**: 左上角重命名按钮与「默认程序打开」按钮 — Rename and open-with-default-app buttons at the header
-- **复制确认 / Copy feedback**: 复制按钮点击后自身显示 `√`（约 0.9 秒还原），不再弹独立提示窗 — Copy buttons briefly show a check mark themselves; no popup
-- **固定状态标识 / Active pin state**: 当前激活窗口的固定按钮显示绿色，已固定为实心绿色，非激活窗口保持默认色 — Active window's pin button turns green; pinned is solid green, inactive windows keep the default color
+- **复制确认 / Copy feedback**: 复制后按钮显示 `√`，窗口底部同时提示「已复制文件/路径/文本…」，均 1000ms 后自动还原 — Copy button shows `√` and a bottom-bar "Copied file/path/text…" hint; both revert after 1000ms
+- **固定按钮状态 / Pin state**: 固定按钮只表示是否已固定（实心=已固定、空心=未固定），不再随窗口激活变色 — Pin button only shows pinned/unpinned, without active-window coloring
+- **预览复制提示 / Preview copy hints**: 信息栏复制按钮悬停显示「复制文本/文件/路径…」，复制菜单按钮显示「复制（文本/文件/路径）」 — Hovering info-bar copy buttons shows what will be copied
+- **信息/操作栏字体 / Info bar font**: 字体族下拉 + 6–24 整数步进字号，去掉 pt 单位，固定字号不随窗口缩放 — Font-family dropdown and integer 6–24 size stepper; fixed size, no pt suffix
+- **列表圆角与大小条渐变 / Rounded rows & gradient size bars**: 悬停/选中/拖拽高亮统一圆角；文件大小指示条圆角并按名称左右方向渐变（淡端始终远离文件名） — Rounded hover/selection highlight; rounded size bars with a directional gradient fading away from the file name
+- **行内操作按钮 / Row action buttons**: 4 个按钮统一弱化为灰色线稿、无边框；仅悬停的单个按钮出现淡圆角底（删除偏红、编辑偏主题色），鼠标在按钮列时整行保持悬停高亮 — Muted icon-only buttons with per-button hover tint; row highlight persists over the button column
+- **壁纸配色默认 / Wallpaper-based default palette**: 新装用户默认从当前壁纸采样主色生成列表配色 — Fresh installs derive the default list palette from the current wallpaper
 
 ## 使用 / Usage
 
@@ -185,7 +190,6 @@ Build with .NET Framework 4.x `csc.exe`; settings XAML is embedded and loaded at
 | `MediaDecoder.cs` | ffmpeg 定位/视频探测/帧流兜底播放器（系统解码器打不开时） — ffmpeg lookup, video probe, frame-stream fallback player |
 | `WaveDecoder.cs` | 音频全量波形：MF 解码 + 峰值/RMS — Full waveform: MF decode + peak/RMS |
 | `EntryListForm.cs` | 收藏·历史列表 — Favorites · History list |
-| `PanelPalette.cs` | 面板/预览窗语义配色 — Panel/preview semantic colors |
 | `SlimScrollBar.cs` | 设置面板自绘细滚动条 — Settings self-drawn slim scrollbar |
 | `MciAudioSession.cs` / `IMediaSession.cs` | MP3 MCI 播放会话与统一接口 — MP3 MCI session & unified interface |
 | `Mp3Fixer.cs`（→ Mp3Fixer.exe） | 假 MP3 检测/批量转码工具 — Fake MP3 detect/batch transcode tool |

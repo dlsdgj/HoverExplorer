@@ -521,8 +521,8 @@ namespace HoverExplorer
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_info_bar_font_family"), I18n.T("pv_info_bar_font_family_desc"), _pvInfoBarFontBox);
             _pvInfoBarFontNum = new NumericUpDown
             {
-                Minimum = 6m, Maximum = 18m, DecimalPlaces = 1, Increment = 0.5m,
-                Value = (decimal)Math.Max(6f, Math.Min(18f, Config.PreviewInfoBarFontMax)),
+                Minimum = 6m, Maximum = 24m, DecimalPlaces = 0, Increment = 1m,
+                Value = (decimal)Math.Round(Math.Max(6f, Math.Min(24f, Config.PreviewInfoBarFontMax))),
                 Width = 90,
             };
             _pvInfoBarFontNum.ValueChanged += (s, e) => _fnApplySettings(false, false);

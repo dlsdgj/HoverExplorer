@@ -13,7 +13,7 @@ namespace HoverExplorer
 {
     internal static class Program
     {
-        public const string Version = "1.1.6";
+        public const string Version = "1.1.7";
 
         private static string _desktopPath;
         private static string _publicDesktopPath;
@@ -1011,6 +1011,7 @@ namespace HoverExplorer
 
         // HE 窗口多为 NOACTIVATE，前台通常是 Explorer：以「前台恰是本窗口」或「鼠标压在窗口上」
         // 判定当前激活窗口，用于右上角固定按钮的绿色状态
+        // 注：曾用于"预览窗口激活时固定按钮转绿"，该功能已移除，保留为通用工具方法。
         public static bool HeWindowActive(Form f)
         {
             if (f == null || f.IsDisposed || !f.Visible || !f.IsHandleCreated) return false;

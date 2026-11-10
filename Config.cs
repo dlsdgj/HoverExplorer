@@ -1,7 +1,9 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Web.Script.Serialization;
 
 namespace HoverExplorer
@@ -480,7 +482,13 @@ namespace HoverExplorer
             ListHdbg = ColorTranslator.FromHtml("#f0e8dc");
             ListBtnHv = ColorTranslator.FromHtml("#e0d0b8");
             ListCanvas = ListBg;   // 列表画布底色默认=行背景；用户可单独设以分离行底与画布底
-            if (string.IsNullOrEmpty(ListPalette)) return;
+            // 新装用户（无自定义配色）：默认采用当前壁纸主色，而非固定浅色
+            if (string.IsNullOrEmpty(ListPalette))
+            {
+                string wp = WallpaperPaletteString();
+                if (!string.IsNullOrEmpty(wp)) { ListPalette = wp; }
+                else return;
+            }
             bool sawCanvas = false, sawHdbg = false;
             foreach (var line in ListPalette.Split('\n'))
             {
@@ -520,6 +528,67 @@ namespace HoverExplorer
             // 浅色默认值（滚动条让位区/行区露底、顶栏标题与搜索框残留浅色）
             if (!sawCanvas) ListCanvas = ListBg;
             if (!sawHdbg) ListHdbg = ListBg;
+        }
+
+        // 从当前壁纸采样主色并生成列表配色文本（新装用户默认配色用）。结果缓存，避免 ApplyListPalette 频繁调用时反复解码图片。
+        [DllImport("user32.dll", CharSet = CharSet.Auto)]
+        private static extern int SystemParametersInfo(int action, int param, StringBuilder val, int flags);
+
+        private static string _wpPaletteCache;
+        private static bool _wpPaletteTried;
+        public static string WallpaperPaletteString()
+        {
+            if (_wpPaletteTried) return _wpPaletteCache;
+            _wpPaletteTried = true;
+            _wpPaletteCache = ComputeWallpaperPalette();
+            return _wpPaletteCache;
+        }
+
+        private static string ComputeWallpaperPalette()
+        {
+            try
+            {
+                StringBuilder sb = new StringBuilder(512);
+                if (SystemParametersInfo(0x0073, 512, sb, 0) == 0) return null;
+                string path = sb.ToString();
+                if (!File.Exists(path)) return null;
+                int r = 0, g = 0, b = 0, n = 0;
+                using (System.Drawing.Bitmap big = new System.Drawing.Bitmap(path))
+                using (System.Drawing.Bitmap small = new System.Drawing.Bitmap(big, 32, 32))
+                {
+                    for (int y = 0; y < 32; y++)
+                        for (int x = 0; x < 32; x++)
+                        {
+                            System.Drawing.Color c = small.GetPixel(x, y);
+                            r += c.R; g += c.G; b += c.B; n++;
+                        }
+                }
+                if (n == 0) return null;
+                System.Drawing.Color baseC = System.Drawing.Color.FromArgb(r / n, g / n, b / n);
+                System.Drawing.Color bg = MixColor(baseC, System.Drawing.Color.White, 0.88);
+                System.Drawing.Color zb = MixColor(baseC, System.Drawing.Color.White, 0.80);
+                System.Drawing.Color fg = MixColor(baseC, System.Drawing.Color.Black, 0.72);
+                System.Drawing.Color mu = MixColor(baseC, System.Drawing.Color.Black, 0.42);
+                System.Drawing.Color hv = MixColor(baseC, System.Drawing.Color.White, 0.68);
+                System.Drawing.Color sel = MixColor(baseC, System.Drawing.Color.Black, 0.25);
+                System.Drawing.Color bd = MixColor(baseC, System.Drawing.Color.Black, 0.12);
+                return "bg=" + HexOf(bg) + "\nzb=" + HexOf(zb) + "\nfg=" + HexOf(fg) + "\nmu=" + HexOf(mu) +
+                    "\nhv=" + HexOf(hv) + "\nsel=" + HexOf(sel) + "\nselfg=FFFFFF\nbar=" + HexOf(hv) +
+                    "\ndrop=" + HexOf(sel) + "\nac=" + HexOf(sel) + "\nacfg=FFFFFF\nbd=" + HexOf(bd) +
+                    "\nsb=" + HexOf(bd) + "\nhdbg=" + HexOf(zb) + "\nbtnhv=" + HexOf(hv) + "\ncanvas=" + HexOf(bg) + "\n";
+            }
+            catch { return null; }
+        }
+
+        private static System.Drawing.Color MixColor(System.Drawing.Color a, System.Drawing.Color b, double t)
+        {
+            return System.Drawing.Color.FromArgb(
+                (int)(a.R + (b.R - a.R) * t), (int)(a.G + (b.G - a.G) * t), (int)(a.B + (b.B - a.B) * t));
+        }
+
+        private static string HexOf(System.Drawing.Color c)
+        {
+            return c.R.ToString("X2") + c.G.ToString("X2") + c.B.ToString("X2");
         }
 
         // 解析配色文本为 15 色字典A字典（基于当前 ListXxx + text 覆盖，不写全局；色块预览用）
