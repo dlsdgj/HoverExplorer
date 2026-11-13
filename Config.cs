@@ -295,6 +295,8 @@ namespace HoverExplorer
         public static bool RowSwapSides = false;
         // 列表底部格式筛选：关闭后 PopupForm 底部状态栏不显示格式标签（保留拖动/点击展开搜索入口）
         public static bool StatusFilter = true;
+        // 在列表标题的"N 项"计数右侧显示 HE 自身的 CPU/内存占用（默认关闭）
+        public static bool ShowResourceUsage = false;
         // 互换布局的分栏分隔线位置（行内 X 像素）；0=自动（按钮组+大小列宽度），拖动后持久化
         public static int RowSplitX = 0;
         // 悬停门控：按住所选修饰键才触发，重命名/多选等操作不被弹窗干扰。
@@ -795,6 +797,7 @@ namespace HoverExplorer
                         case "KeepOnLeave": KeepOnLeave = Convert.ToBoolean(v); break;
                         case "RowSwapSides": RowSwapSides = Convert.ToBoolean(v); break;
                         case "StatusFilter": StatusFilter = Convert.ToBoolean(v); break;
+                        case "ShowResourceUsage": ShowResourceUsage = Convert.ToBoolean(v); break;
                         case "RowSplitX": RowSplitX = Convert.ToInt32(v); break;
                         case "FolderGateEnabled": FolderGateEnabled = Convert.ToBoolean(v); break;
                         case "FolderGateMods": FolderGateMods = Convert.ToInt32(v); break;
@@ -929,6 +932,7 @@ namespace HoverExplorer
                 data["KeepOnLeave"] = KeepOnLeave;
                 data["RowSwapSides"] = RowSwapSides;
                 data["StatusFilter"] = StatusFilter;
+                data["ShowResourceUsage"] = ShowResourceUsage;
                 data["RowSplitX"] = RowSplitX;
                 data["FolderGateEnabled"] = FolderGateEnabled;
                 data["FolderGateMods"] = FolderGateMods;

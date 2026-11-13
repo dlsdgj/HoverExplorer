@@ -814,7 +814,10 @@ namespace HoverExplorer
             _audioOpening = true;
             var t = new Thread(delegate()
             {
-                var a = new FfmpegAudioSession(_path);
+                // 直接从视频当前进度起播：不先从头出声，也就不会有"同一段音频播两次"
+                double from = _pos;
+                if (from < 0) from = 0;
+                var a = new FfmpegAudioSession(_path, from);
                 if (a.HasFailed || !a.IsLoaded)
                 {
                     _audioOpening = false;
@@ -835,7 +838,8 @@ namespace HoverExplorer
             try
             {
                 if (_audio == null || !_audio.IsLoaded) return;
-                if (_info != null && _info.DurationSec > 0)
+                if (_info != null && _info.DurationSec > 0
+                    && Math.Abs(_audio.StartSec - _pos) > 0.8)   // 已经很接近就不用重建进程，避免多余的重启
                     _audio.SeekRatio(Math.Max(0.0, Math.Min(0.999, _pos / _info.DurationSec)));
                 if (Math.Abs(_audio.SpeedRatio - _speed) > 0.001) _audio.SpeedRatio = _speed;
                 if (_paused || _oneShot) _audio.Pause(); else _audio.Play();

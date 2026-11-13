@@ -816,13 +816,35 @@ namespace HoverExplorer
             int w = Width, h = Height;
             int fw = (int)Math.Round(w * Ratio);
             if (fw > 0)
-                using (var b = new SolidBrush(Color.FromArgb(30, Config.FG)))
+                using (var b = new SolidBrush(Color.FromArgb(30, ForeColor)))
                     g.FillRectangle(b, 0, 0, fw, h);
-            using (var b = new SolidBrush(Color.FromArgb(45, Config.FG)))
+            using (var b = new SolidBrush(Color.FromArgb(45, ForeColor)))
                 g.FillRectangle(b, 0, h - 2, w, 2);
             if (fw > 0)
-                using (var b = new SolidBrush(Config.Accent))
+                using (var b = new SolidBrush(Config.ListSel))
                     g.FillRectangle(b, 0, h - 2, fw, 2);
+        }
+    }
+
+    // 图片预览的画布：棋盘格底（6% 前景色），让透明 PNG 也能看出边界
+    internal class CheckerPanel : Panel
+    {
+        protected override void OnPaintBackground(PaintEventArgs e)
+        {
+            var g = e.Graphics;
+            g.Clear(BackColor);
+            int s = 8;
+            Color fg = ForeColor;
+            using (var b = new SolidBrush(Color.FromArgb(
+                (BackColor.R * 94 + fg.R * 6) / 100,
+                (BackColor.G * 94 + fg.G * 6) / 100,
+                (BackColor.B * 94 + fg.B * 6) / 100)))
+            {
+                for (int y = 0; y < Height; y += s)
+                    for (int x = 0; x < Width; x += s)
+                        if (((x / s) + (y / s)) % 2 == 0)
+                            g.FillRectangle(b, x, y, s, s);
+            }
         }
     }
 
@@ -831,10 +853,35 @@ namespace HoverExplorer
         // 不抢前台：预览仅为悬停展示，激活会打断当前窗口的焦点
         protected override bool ShowWithoutActivation { get { return true; } }
 
+        // ── 配色：预览窗跟随列表配色（List* 调色板），视觉上和列表面板同一套 ──
+        private static Color PvBg { get { return Config.ListBg; } }
+        private static Color PvFg { get { return Config.ListFg; } }
+        private static Color PvMu { get { return Config.ListMu; } }
+        private static Color PvHv { get { return Config.ListHv; } }
+        private static Color PvBd
+        {
+            get
+            {
+                // 低对比分隔线：背景与前景按 ~12% 混合，任何配色下都不会突兀
+                var a = PvBg; var b = PvFg;
+                return Color.FromArgb((a.R * 88 + b.R * 12) / 100,
+                                      (a.G * 88 + b.G * 12) / 100,
+                                      (a.B * 88 + b.B * 12) / 100);
+            }
+        }
+        private static bool PvDark
+        {
+            get { var c = PvBg; return (0.299 * c.R + 0.587 * c.G + 0.114 * c.B) < 128; }
+        }
+        // 拖到卡片：文字卡片预览要按 text 类型重新生成卡片，不能当文件路径处理
+        public string PinKind = "file";
+        public string PinTitle;
+        private Label _grip;
+
         protected override void OnHandleCreated(EventArgs e)
         {
             base.OnHandleCreated(e);
-            Win11.Apply(Handle, Config.IsDark, Config.Border);
+            Win11.Apply(Handle, PvDark, Config.Border);
             Win11.RemoveNcBorder(Handle);
 
         }
@@ -848,8 +895,7 @@ namespace HoverExplorer
 
         private Label _copyBtn;
         private Label _saveBtn;
-        private Label _pasteBtn;   // textcard 专用：粘贴到原焦点窗口（PinCardForm 注入 PasteAction）
-        public Action PasteAction;
+        private bool _textCardMode;   // textcard 预览：没有真实文件，复制组只留"文本/选中"
         private Panel _scrollPanel;
         private Control _content;
 
@@ -955,12 +1001,16 @@ namespace HoverExplorer
             : this()
         {
             _img = img;
-            var pb = new PictureBox { Image = img, SizeMode = PictureBoxSizeMode.Zoom, BorderStyle = BorderStyle.None, Dock = DockStyle.Fill };
+            // P1：内容区 12px 留白 + 6% 棋盘格底（透明 PNG 能看出边界）
+            _scrollPanel.Padding = new Padding(12);
+            var host = new CheckerPanel { BackColor = PvBg, ForeColor = PvFg, Dock = DockStyle.Fill };
+            var pb = new PictureBox { Image = img, SizeMode = PictureBoxSizeMode.Zoom, BorderStyle = BorderStyle.None, Dock = DockStyle.Fill, BackColor = Color.Transparent };
             _content = pb;
-            _scrollPanel.Controls.Add(pb);
-            BindResize(pb);
-            ClientSize = new Size(img.Width, img.Height);
-            ApplyImageSize(img.Width, img.Height);
+            host.Controls.Add(pb);
+            _scrollPanel.Controls.Add(host);
+            BindResize(host);
+            ClientSize = new Size(img.Width + 24, img.Height + 24);
+            ApplyImageSize(img.Width + 24, img.Height + 24);
 
         }
 
@@ -968,10 +1018,13 @@ namespace HoverExplorer
             : this()
         {
             _img = img;
-            var pb = new PictureBox { Image = img, SizeMode = PictureBoxSizeMode.Zoom, BorderStyle = BorderStyle.None, Dock = DockStyle.Fill };
+            _scrollPanel.Padding = new Padding(12);
+            var host = new CheckerPanel { BackColor = PvBg, ForeColor = PvFg, Dock = DockStyle.Fill };
+            var pb = new PictureBox { Image = img, SizeMode = PictureBoxSizeMode.Zoom, BorderStyle = BorderStyle.None, Dock = DockStyle.Fill, BackColor = Color.Transparent };
             _content = pb;
-            _scrollPanel.Controls.Add(pb);
-            BindResize(pb);
+            host.Controls.Add(pb);
+            _scrollPanel.Controls.Add(host);
+            BindResize(host);
             ClientSize = new Size(displayW, displayH);
             ApplyImageSize(displayW, displayH);
 
@@ -980,28 +1033,58 @@ namespace HoverExplorer
         public PreviewForm(string text, long size)
             : this()
         {
-            // RichTextBox 构造函数内部会 set_Multiline(true) → AdjustHeight → Font.GetHeight()
-            // 在某些系统字体状态下会抛 ArgumentException。换成 TextBox（Multiline）避免这个问题
-            var tb = new TextBox
+            // 用 RichTextBox：DetectUrls 让链接自动呈现为蓝色下划线并只响应链接点击，
+            // 不会出现 TextBox 里"整块窗口都算点在链接上"的命中问题。
+            // 历史上 RichTextBox 构造函数在个别系统字体状态下会抛 ArgumentException，
+            // 这里保留 TextBox 兜底（此时只是没有可点击链接，功能不中断）
+            TextBoxBase tb;
+            try
             {
-                Multiline = true,
-                Font = new Font("Microsoft YaHei", 9),
-                BackColor = Config.BG,
-                ForeColor = Config.FG,
-                BorderStyle = BorderStyle.None,
-                ReadOnly = false,
-                ScrollBars = ScrollBars.Vertical,
-                WordWrap = true,
-                Dock = DockStyle.Fill,
-            };
+                var rtb = new RichTextBox
+                {
+                    DetectUrls = true,
+                    Font = new Font("Microsoft YaHei", 9),
+                    BackColor = PvBg,
+                    ForeColor = PvFg,
+                    BorderStyle = BorderStyle.None,
+                    ReadOnly = false,
+                    ScrollBars = RichTextBoxScrollBars.Vertical,
+                    WordWrap = true,
+                    Dock = DockStyle.Fill,
+                };
+                rtb.LinkClicked += (s, e) =>
+                {
+                    try { Process.Start(new ProcessStartInfo(e.LinkText) { UseShellExecute = true }); } catch { }
+                };
+                tb = rtb;
+            }
+            catch
+            {
+                tb = new TextBox
+                {
+                    Multiline = true,
+                    Font = new Font("Microsoft YaHei", 9),
+                    BackColor = PvBg,
+                    ForeColor = PvFg,
+                    BorderStyle = BorderStyle.None,
+                    ReadOnly = false,
+                    ScrollBars = ScrollBars.Vertical,
+                    WordWrap = true,
+                    Dock = DockStyle.Fill,
+                };
+            }
             tb.Text = text;
             tb.SelectionStart = 0;
             tb.SelectionLength = 0;
+            // 显式给链接上蓝色+下划线：不同系统/主题下 DetectUrls 的默认链接色有差异
+            var rtbLinks = tb as RichTextBox;
+            if (rtbLinks != null) StyleTextLinks(rtbLinks, text);
             _content = tb;
             _mediaKind = "text";   // 独立一组尺寸记忆，避免落到 SVG 的 PreviewMediaW/H
+            _scrollPanel.Padding = new Padding(10, 6, 6, 6);   // P0：文本内容留白，避免贴边
             _scrollPanel.Controls.Add(tb);
             BindResize(tb);
-            Win11.ApplyScrollTheme(tb, Config.IsDark);
+            Win11.ApplyScrollTheme(tb, PvDark);
             tb.TextChanged += (s, e) =>
             {
                 if (!_textDirty) { _textDirty = true; _saveBtn.Visible = true; UpdateToolbarBtnPos(); }
@@ -1022,7 +1105,7 @@ namespace HoverExplorer
                     if (w.Width > maxW) maxW = (int)w.Width;
                 }
                 int chrome = _toolbarH + (Config.PreviewInfoBar ? InfoBarH : 0);
-                int contentH = Math.Min(initH, 320);
+                int contentH = Math.Min(initH, 320) + 12;   // +12：内容上下留白
                 if (Config.PreviewTextW > 0 && Config.PreviewTextH > 0)
                 {
                     // 用户手动调整过尺寸：和其它内容类型一样优先套用记忆值（含工具栏/信息栏开销）
@@ -1031,9 +1114,43 @@ namespace HoverExplorer
                                           Math.Max(120 + chrome, Math.Min(Config.PreviewTextH, wa.Height - 20)));
                     Program.DebugLog("[pv-size] text-remembered " + ClientSize.Width + "x" + ClientSize.Height);
                 }
-                else ClientSize = new Size(Math.Max(Math.Min(maxW + 20, 480), 240), contentH + chrome);
+                else ClientSize = new Size(Math.Max(Math.Min(maxW + 36, 480), 240), contentH + chrome);
             }
 
+        }
+
+        // 把文本中的链接标成蓝色+下划线（DetectUrls 负责点击命中，这里补视觉样式）。
+        // 只按空白切词，尾部中英文标点不算链接的一部分
+        private static void StyleTextLinks(RichTextBox rtb, string text)
+        {
+            try
+            {
+                int i = 0;
+                while (i < text.Length)
+                {
+                    while (i < text.Length && char.IsWhiteSpace(text[i])) i++;
+                    int s = i;
+                    while (i < text.Length && !char.IsWhiteSpace(text[i])) i++;
+                    if (i == s) break;
+                    string raw = text.Substring(s, i - s);
+                    string tok = raw.Trim('(', ')', '[', ']', '{', '}', '<', '>', '"', '\'',
+                                          ',', '.', ';', ':', '!', '?',
+                                          '，', '。', '；', '：', '、', '！', '？', '“', '”', '‘', '’', '《', '》', '「', '」');
+                    bool isLink = tok.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+                        || tok.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                        || tok.StartsWith("www.", StringComparison.OrdinalIgnoreCase);
+                    if (!isLink) continue;
+                    int off = raw.IndexOf(tok, StringComparison.Ordinal);
+                    if (off < 0) continue;
+                    rtb.Select(s + off, tok.Length);
+                    rtb.SelectionColor = Color.FromArgb(0, 102, 204);
+                    rtb.SelectionFont = new Font(rtb.Font, FontStyle.Underline);
+                }
+                rtb.Select(0, 0);
+                rtb.SelectionColor = PvFg;
+                rtb.SelectionFont = rtb.Font;
+            }
+            catch { }
         }
 
         // 自定义内容面板（视频/音频播放器 / SVG 浏览器）
@@ -1084,7 +1201,7 @@ namespace HoverExplorer
                 Location = new Point(6, 8),
                 Text = _audio != null && _audio.IsPlaying ? "❚❚" : "▶",
                 Font = new Font("Microsoft YaHei", 9f),
-                ForeColor = Config.FG,
+                ForeColor = PvFg,
                 BackColor = Color.Transparent,
                 TextAlign = ContentAlignment.MiddleCenter,
                 Cursor = Cursors.Hand
@@ -1109,7 +1226,7 @@ namespace HoverExplorer
                 AutoSize = false,
                 Text = "✕",
                 Font = new Font("Microsoft YaHei", 8f),
-                ForeColor = Config.FG,
+                ForeColor = PvFg,
                 BackColor = Color.Transparent,
                 TextAlign = ContentAlignment.MiddleCenter,
                 Cursor = Cursors.Hand
@@ -1119,7 +1236,7 @@ namespace HoverExplorer
             _toolbar.Controls.Add(_audioCloseBtn);
 
             // 操作栏中段即波形：点击/横向拖动 = seek；竖向拖动 = 移动窗口（拖动过即固定）
-            _audioViz = new WaveView { BackColor = Config.BG };
+            _audioViz = new WaveView { BackColor = PvBg };
             _audioViz.Seek += delegate(double r) { _audio.SeekRatio(r); };
             _audioViz.MoveWindow += delegate
             {
@@ -1136,7 +1253,7 @@ namespace HoverExplorer
             };
             _toolbar.Controls.Add(_audioViz);
 
-            _spectrumViz = new SpectrumView { BackColor = Config.BG, Visible = false };
+            _spectrumViz = new SpectrumView { BackColor = PvBg, Visible = false };
             _spectrumViz.Seek += delegate(double r) { _audio.SeekRatio(r); };
             _spectrumViz.MoveWindow += delegate
             {
@@ -1153,7 +1270,7 @@ namespace HoverExplorer
             };
             _toolbar.Controls.Add(_spectrumViz);
 
-            _audioProgress = new AudioProgress { BackColor = Config.BG, Visible = false };
+            _audioProgress = new AudioProgress { BackColor = PvBg, Visible = false };
             _audioProgress.Seek += delegate(double r) { _audio.SeekRatio(r); };
             _toolbar.Controls.Add(_audioProgress);
 
@@ -1162,8 +1279,8 @@ namespace HoverExplorer
             _audioHeadBar = new Label
             {
                 Height = HeadBarH,
-                BackColor = Config.BG,
-                ForeColor = Config.FgDir,
+                BackColor = PvBg,
+                ForeColor = PvMu,
                 Font = new Font(Config.FontName, 8.5f),
                 TextAlign = ContentAlignment.MiddleLeft,
                 Padding = new Padding(10, 0, 0, 0),
@@ -1175,13 +1292,13 @@ namespace HoverExplorer
             _audioHeadBar.MouseMove += AudioBarMove;
             _audioHeadBar.MouseUp += AudioBarUp;
 
-            _audioBody = new Panel { BackColor = Config.BG };
+            _audioBody = new Panel { BackColor = PvBg };
             _audioNameLbl = new Label
             {
                 Location = new Point(10, 6),
                 Font = new Font(Config.FontName, 9.5f, FontStyle.Bold),
-                ForeColor = Config.FG,
-                BackColor = Config.BG,
+                ForeColor = PvFg,
+                BackColor = PvBg,
                 AutoEllipsis = true,
                 Height = 20
             };
@@ -1189,8 +1306,8 @@ namespace HoverExplorer
             {
                 Location = new Point(10, 32),
                 Font = new Font(Config.FontName, 9f),
-                ForeColor = Config.FgDir,
-                BackColor = Config.BG,
+                ForeColor = PvMu,
+                BackColor = PvBg,
                 AutoEllipsis = true,
                 Height = 18,
                 Text = I18n.T("media_loading")
@@ -1199,8 +1316,8 @@ namespace HoverExplorer
             {
                 Location = new Point(10, 56),
                 Font = new Font(Config.FontName, 8f),
-                ForeColor = Config.PlaceholderFg,
-                BackColor = Config.BG,
+                ForeColor = PvMu,
+                BackColor = PvBg,
                 AutoEllipsis = true,
                 Height = 18
             };
@@ -1454,14 +1571,14 @@ namespace HoverExplorer
         private void BuildFolderPanel()
         {
             if (_folderPanel != null) { RefreshFolderItems(); return; }
-            _folderPanel = new Panel { BackColor = Config.BG, Dock = DockStyle.None, Visible = false };
-            _folderHead = new Panel { Dock = DockStyle.Top, Height = 24, BackColor = Config.BG };
+            _folderPanel = new Panel { BackColor = PvBg, Dock = DockStyle.None, Visible = false };
+            _folderHead = new Panel { Dock = DockStyle.Top, Height = 24, BackColor = PvBg };
             var head = _folderHead;
             _folderHeadLbl = new Label
             {
                 Dock = DockStyle.Fill,
-                ForeColor = Config.FgDir,
-                BackColor = Config.BG,
+                ForeColor = PvMu,
+                BackColor = PvBg,
                 Font = new Font(Config.FontName, 8f),
                 TextAlign = ContentAlignment.MiddleLeft,
                 Padding = new Padding(10, 0, 0, 0),
@@ -1472,8 +1589,8 @@ namespace HoverExplorer
                 Size = new Size(34, 18),
                 Dock = DockStyle.Right,
                 Text = LoopIcon(),
-                ForeColor = Config.FG,
-                BackColor = Config.BG,
+                ForeColor = PvFg,
+                BackColor = PvBg,
                 TextAlign = ContentAlignment.MiddleCenter,
                 Cursor = Cursors.Hand,
                 Font = new Font(Config.FontName, 9f)
@@ -1490,8 +1607,8 @@ namespace HoverExplorer
             {
                 Dock = DockStyle.Fill,
                 BorderStyle = BorderStyle.None,
-                BackColor = Config.BG,
-                ForeColor = Config.FG,
+                BackColor = PvBg,
+                ForeColor = PvFg,
                 Font = new Font(Config.FontName, Config.FontSize),
                 DrawMode = DrawMode.OwnerDrawFixed,
                 ItemHeight = FolderRowH,
@@ -1539,14 +1656,14 @@ namespace HoverExplorer
             if (e.Index < 0 || _folderTracks == null || e.Index >= _folderTracks.Count) return;
             bool cur = e.Index == _folderIdx;
             bool sel = (e.State & DrawItemState.Selected) == DrawItemState.Selected;
-            using (var b = new SolidBrush(sel ? Config.BgHover : Config.BG))
+            using (var b = new SolidBrush(sel ? PvHv : PvBg))
                 e.Graphics.FillRectangle(b, e.Bounds);
             string name = (cur ? "♪ " : "") + (string)_folderList.Items[e.Index];
             var rc = new Rectangle(e.Bounds.X + 8, e.Bounds.Y, e.Bounds.Width - 16, e.Bounds.Height);
             e.Graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
             var sf = StringFormat.GenericTypographic;
             float lh = _folderList.Font.GetHeight(e.Graphics);
-            using (var b = new SolidBrush(Config.FG))
+            using (var b = new SolidBrush(PvFg))
                 e.Graphics.DrawString(RowLabel.MidEllipsis(e.Graphics, name, _folderList.Font, rc.Width), _folderList.Font, b, rc.X, e.Bounds.Y + (e.Bounds.Height - lh) / 2, sf);
         }
 
@@ -1799,7 +1916,7 @@ namespace HoverExplorer
             TopMost = true;
             ShowInTaskbar = false;
             StartPosition = FormStartPosition.Manual;
-            BackColor = Config.BG;
+            BackColor = PvBg;
             DoubleBuffered = true;
             SetStyle(ControlStyles.ResizeRedraw, true);
 
@@ -1825,12 +1942,39 @@ namespace HoverExplorer
                 if (_copyMenu != null) { try { _copyMenu.Close(); } catch { } _copyMenu = null; }
             };
 
-            _toolbar = new AudioBarPanel { BackColor = Config.BG, Height = 34 };
+            _toolbar = new AudioBarPanel { BackColor = PvBg, ForeColor = PvFg, Height = 34 };
             Controls.Add(_toolbar);
+            // P0：操作栏与内容之间一条低对比分隔线（颜色取自列表配色）
+            _toolbar.Paint += (s, e) =>
+            {
+                using (var pen = new Pen(PvBd))
+                    e.Graphics.DrawLine(pen, 0, _toolbar.Height - 1, _toolbar.Width, _toolbar.Height - 1);
+            };
 
-            _scrollPanel = new Panel { AutoScroll = false, BackColor = Config.BG };
+            _scrollPanel = new Panel { AutoScroll = false, BackColor = PvBg };
             Controls.Add(_scrollPanel);
-            Win11.ApplyScrollTheme(_scrollPanel, Config.IsDark);
+            Win11.ApplyScrollTheme(_scrollPanel, PvDark);
+
+            // P1：右下角淡色拖拽手柄（纯装饰；Disabled 不接鼠标，缩放仍由窗口边缘命中测试处理）
+            _grip = new Label
+            {
+                Size = new Size(12, 12),
+                Enabled = false,
+                BackColor = PvBg,
+                Visible = false,
+            };
+            _grip.Paint += (s, e) =>
+            {
+                using (var pen = new Pen(PvMu))
+                {
+                    for (int i = 0; i < 3; i++)
+                    {
+                        int d = 4 + i * 3;
+                        e.Graphics.DrawLine(pen, _grip.Width - 2, d, d, _grip.Height - 2);
+                    }
+                }
+            };
+            Controls.Add(_grip);
 
 
             // 左上角：重命名 + 用默认程序打开（取代原类型角标）
@@ -1839,13 +1983,13 @@ namespace HoverExplorer
                 Size = new Size(20, 18),
                 Location = new Point(6, 8),
                 AutoSize = false,
-                BackColor = Config.BG,
-                Image = EditIcon(Config.FG),
+                BackColor = PvBg,
+                Image = EditIcon(PvFg),
                 Cursor = Cursors.Hand,
                 TextAlign = ContentAlignment.MiddleCenter,
             };
-            _renameBtn.MouseEnter += (s, e) => _renameBtn.BackColor = Config.BgHover;
-            _renameBtn.MouseLeave += (s, e) => _renameBtn.BackColor = Config.BG;
+            _renameBtn.MouseEnter += (s, e) => _renameBtn.BackColor = PvHv;
+            _renameBtn.MouseLeave += (s, e) => _renameBtn.BackColor = PvBg;
             Tips.Set(_renameBtn, I18n.T("rename"));
             // 编辑中再点一次 = 收起编辑框（改过名就保存），给用户一个明确的退出入口
             _renameBtn.Click += (s, e) =>
@@ -1860,13 +2004,13 @@ namespace HoverExplorer
                 Size = new Size(20, 18),
                 Location = new Point(28, 8),
                 AutoSize = false,
-                BackColor = Config.BG,
-                Image = OpenIcon(Config.FG),
+                BackColor = PvBg,
+                Image = OpenIcon(PvFg),
                 Cursor = Cursors.Hand,
                 TextAlign = ContentAlignment.MiddleCenter,
             };
-            _openBtn.MouseEnter += (s, e) => _openBtn.BackColor = Config.BgHover;
-            _openBtn.MouseLeave += (s, e) => _openBtn.BackColor = Config.BG;
+            _openBtn.MouseEnter += (s, e) => _openBtn.BackColor = PvHv;
+            _openBtn.MouseLeave += (s, e) => _openBtn.BackColor = PvBg;
             Tips.Set(_openBtn, I18n.T("tip_open_file"));
             _openBtn.Click += (s, e) => OpenWithDefaultApp();
             _toolbar.Controls.Add(_openBtn);
@@ -1874,9 +2018,9 @@ namespace HoverExplorer
             _nameLbl = new Label
             {
                 Location = new Point(34, 9),
-                Font = new Font(Config.FontName, 9f, FontStyle.Bold),
-                ForeColor = Config.FG,
-                BackColor = Config.BG,
+                Font = new Font(Config.FontName, 9.75f, FontStyle.Bold),
+                ForeColor = PvFg,
+                BackColor = PvBg,
                 AutoEllipsis = true,
                 Cursor = Cursors.Hand,
             };
@@ -1884,9 +2028,9 @@ namespace HoverExplorer
 
             _metaLbl = new Label
             {
-                Font = new Font(Config.FontName, 8f),
-                ForeColor = Config.PlaceholderFg,
-                BackColor = Config.BG,
+                Font = new Font(Config.FontName, 8.25f),
+                ForeColor = PvMu,
+                BackColor = PvBg,
                 TextAlign = ContentAlignment.MiddleRight,
                 AutoEllipsis = true,
             };
@@ -1896,7 +2040,7 @@ namespace HoverExplorer
             {
                 Size = new Size(20, 18),
                 AutoSize = false,
-                BackColor = Config.BG,
+                BackColor = PvBg,
                 Image = PinIcon(false),
                 Cursor = Cursors.Hand,
             };
@@ -1908,11 +2052,13 @@ namespace HoverExplorer
             {
                 Size = new Size(20, 18),
                 AutoSize = false,
-                BackColor = Config.BG,
+                BackColor = PvBg,
                 Image = PinLaunchIcon(false),
                 Cursor = Cursors.Hand,
             };
-            _pinLaunchBtn.Click += (s, e) => { if (!string.IsNullOrEmpty(FilePath)) { Program.TogglePin(FilePath); RefreshPinLaunchIcon(); } };
+            _pinLaunchBtn.Click += (s, e) => TogglePinToCard();
+            // 卡片可能已被取消固定：指针移入时按最新固定状态重画图标
+            _pinLaunchBtn.MouseEnter += (s, e) => RefreshPinLaunchIcon();
             Tips.Set(_pinLaunchBtn, I18n.T("tip_pin_card"));
             _toolbar.Controls.Add(_pinLaunchBtn);
 
@@ -1921,7 +2067,7 @@ namespace HoverExplorer
             {
                 Size = new Size(20, 18),
                 AutoSize = false,
-                BackColor = Config.BG,
+                BackColor = PvBg,
                 Image = CopyIcon(),
                 Cursor = Cursors.Hand,
             };
@@ -1953,27 +2099,11 @@ namespace HoverExplorer
             Tips.Set(_copyBtn, I18n.T("tip_copy_menu"), true);   // 悬停底部提示；放开菜单门控，否则悬停即弹菜单时提示出不来
             _toolbar.Controls.Add(_copyBtn);
 
-            // textcard：复制文件/复制路径无意义 → 隐藏 _copyBtn，同位换成粘贴按钮
-            _pasteBtn = new Label
-            {
-                Size = new Size(20, 18),
-                AutoSize = false,
-                BackColor = Config.BG,
-                Text = "⇥",
-                Font = new Font(Config.FontName, 10f, FontStyle.Bold),
-                ForeColor = Config.FG,
-                TextAlign = ContentAlignment.MiddleCenter,
-                Cursor = Cursors.Hand,
-                Visible = false,
-            };
-            _pasteBtn.Click += (s, e) => { if (PasteAction != null) PasteAction(); };
-            _toolbar.Controls.Add(_pasteBtn);
-
             _saveBtn = new Label
             {
                 Size = new Size(20, 18),
                 AutoSize = false,
-                BackColor = Config.BG,
+                BackColor = PvBg,
                 Image = SaveIcon(),
                 Cursor = Cursors.Hand,
                 Visible = false,
@@ -2424,8 +2554,8 @@ namespace HoverExplorer
             _renameBox = new TextBox
             {
                 Font = new Font(Config.FontName, 9f),
-                ForeColor = Config.FG,
-                BackColor = Config.BG,
+                ForeColor = PvFg,
+                BackColor = PvBg,
                 BorderStyle = BorderStyle.FixedSingle,
                 Text = cur,
             };
@@ -2606,10 +2736,9 @@ namespace HoverExplorer
             _pinLaunchBtn.Location = new Point(_pinBtn.Left - _pinLaunchBtn.Width - 2, btnY);
             int copyX = _pinLaunchBtn.Left - _copyBtn.Width - 2;
             _copyBtn.Location = new Point(copyX, btnY);
-            _pasteBtn.Location = _copyBtn.Location;   // textcard：粘贴按钮占复制按钮同位
             // 信息栏接管复制操作后右上复制图标隐藏：把省下的空间让给标题/meta，
             // 保存按钮也顺势左移到 pinLaunch 旁边，避免留一块空白
-            bool copyShown = _copyBtn.Visible || _pasteBtn.Visible;
+            bool copyShown = _copyBtn.Visible;
             int anchor = copyShown ? copyX : _pinLaunchBtn.Left;
             if (_saveBtn.Visible)
             {
@@ -2633,14 +2762,15 @@ namespace HoverExplorer
             RefreshPinLaunchIcon();
         }
 
-        // textcard 预览：复制按钮换粘贴按钮（PasteAction 由 PinCardForm 随后注入）
+        // textcard 预览：隐藏复制按钮（复制文件/复制路径对文本无意义）
         public void HideCopyForTextCard()
         {
-            _copyBtn.Visible = false;
-            _pasteBtn.Visible = true;
+            _textCardMode = true;
+            _copyBtn.Visible = false;   // 复制文件/复制路径对文本无意义，暂不提供粘贴按钮
             // 文本卡片没有对应的真实文件，重命名/打开按钮无意义
             _renameBtn.Visible = false;
             _openBtn.Visible = false;
+            ApplyInfoBar();   // 信息栏复制组同步收掉"文件、路径"两项
             UpdateToolbarBtnPos();
         }
 
@@ -2669,11 +2799,11 @@ namespace HoverExplorer
 
         private void BuildInfoBar()
         {
-            _infoBar = new Panel { BackColor = Config.BG, Height = InfoBarH, Visible = false };
-            // 底部一条极细分隔线，与内容区分开
+            _infoBar = new Panel { BackColor = PvBg, Height = InfoBarH, Visible = false };
+            // 底部一条极细分隔线，与内容区分开（颜色取列表配色混出的低对比线）
             _infoBar.Paint += (s, e) =>
             {
-                using (var pen = new Pen(Config.Border))
+                using (var pen = new Pen(PvBd))
                     e.Graphics.DrawLine(pen, 0, InfoBarH - 1, _infoBar.Width, InfoBarH - 1);
             };
             Controls.Add(_infoBar);
@@ -2681,8 +2811,8 @@ namespace HoverExplorer
             _infoLbl = new Label
             {
                 AutoEllipsis = true,
-                ForeColor = Config.PlaceholderFg,
-                BackColor = Config.BG,
+                ForeColor = PvMu,
+                BackColor = PvBg,
                 TextAlign = ContentAlignment.MiddleLeft,
             };
             _infoBar.Controls.Add(_infoLbl);
@@ -2719,14 +2849,14 @@ namespace HoverExplorer
                 AutoSize = false,
                 Height = InfoBarH - 6,
                 TextAlign = ContentAlignment.MiddleCenter,
-                BackColor = Config.BG,
-                ForeColor = Config.FG,
+                BackColor = PvBg,
+                ForeColor = PvFg,
                 Cursor = Cursors.Hand,
             };
-            // 原型 :hover / :active：悬停淡背景、按下整块变强调色，鼠标离开复原
+            // 原型 :hover / :active：悬停淡背景、按下整块变列表强调色，鼠标离开复原
             b.MouseEnter += (s, e) =>
             {
-                b.BackColor = Config.BgHover; b.Invalidate();
+                b.BackColor = PvHv; b.Invalidate();
                 string t = Tips.TextOf(b);
                 if (Config.ShowTips && !string.IsNullOrEmpty(t))
                 {
@@ -2735,11 +2865,11 @@ namespace HoverExplorer
                     Tips.ShowBarTimed(this, t, 2000);
                 }
             };
-            b.MouseDown += (s, e) => { b.BackColor = Config.Accent; b.ForeColor = Color.White; b.Invalidate(); };
-            b.MouseUp += (s, e) => { b.BackColor = Config.BgHover; b.ForeColor = Config.FG; b.Invalidate(); };
+            b.MouseDown += (s, e) => { b.BackColor = Config.ListSel; b.ForeColor = Config.ListSelFg; b.Invalidate(); };
+            b.MouseUp += (s, e) => { b.BackColor = PvHv; b.ForeColor = PvFg; b.Invalidate(); };
             b.MouseLeave += (s, e) =>
             {
-                b.BackColor = Config.BG; b.ForeColor = Config.FG; b.Invalidate();
+                b.BackColor = PvBg; b.ForeColor = PvFg; b.Invalidate();
                 Tips.EndTimedTip(this, Tips.TextOf(b));
             };
             // 组内位置由 LayoutInfoBar 写进 Tag：int[]{ 序号, 总数 }。
@@ -2766,7 +2896,7 @@ namespace HoverExplorer
             // 先把四个角补成信息栏底色，再把圆内 1/4 补回按钮背景色，最后画边框线。
             if (first || last)
             {
-                using (var outer = new SolidBrush(Config.BG))
+                using (var outer = new SolidBrush(PvBg))
                 using (var inner = new SolidBrush(b.BackColor))
                 {
                     if (first)
@@ -2819,9 +2949,8 @@ namespace HoverExplorer
             bool on = InfoBarVisible();
             _infoBar.Visible = on;
             // 信息栏接管复制操作后，标题栏右上角原来的复制图标让位；
-            // textcard 的粘贴按钮仍要保留（此时 _pasteBtn 可见，复制按钮本就隐藏）
             // 音频预览有自己的工具栏，不要动它的按钮可见性
-            if (_copyBtn != null && _audio == null) _copyBtn.Visible = !on && !_pasteBtn.Visible;
+            if (_copyBtn != null && _audio == null) _copyBtn.Visible = !on && !_textCardMode;
             // 格式/大小已并入信息栏，标题栏右上角的原格式信息让位（音频有自己的工具栏）
             if (_audio == null) _metaLbl.Visible = !on;
             if (IsHandleCreated) UpdateToolbarBtnPos();
@@ -2896,10 +3025,11 @@ namespace HoverExplorer
             bool second = !string.Equals(_ibPrimary.Text, _ibSecond.Text, StringComparison.Ordinal);
             var tb = _content as TextBoxBase;
             bool hasSelection = tb != null && tb.SelectionLength > 0;
+            // 文字卡片没有真实文件：复制按钮里只保留"文本/选中"，去掉"文件、路径"
             var chain = new List<Label> { _ibPrimary };
             if (hasSelection) chain.Add(_ibSelected);
-            if (second) chain.Add(_ibSecond);
-            chain.Add(_ibThird);
+            if (second && !_textCardMode) chain.Add(_ibSecond);
+            if (!_textCardMode) chain.Add(_ibThird);
 
             int[] cw = new int[chain.Count];
             int total = Math.Max(0, chain.Count - 1) * Gap;
@@ -3095,6 +3225,17 @@ namespace HoverExplorer
             }
             _scrollPanel.Location = new Point(0, _toolbarH + rulerH + infoH);
             _scrollPanel.Size = new Size(ClientSize.Width, Math.Max(0, ClientSize.Height - _toolbarH - rulerH - infoH));
+            // 右下角手柄：只给静态内容（图片/文本/SVG）画，视频/音频画面不压角标
+            if (_grip != null)
+            {
+                bool showGrip = _content is PictureBox;   // 只画在图片上：文本会挡住滚动条、视频会压住画面
+                _grip.Visible = showGrip;
+                if (showGrip)
+                {
+                    _grip.Location = new Point(Math.Max(0, ClientSize.Width - 13), Math.Max(0, ClientSize.Height - 13));
+                    _grip.BringToFront();
+                }
+            }
             if (infoH > 0) LayoutInfoBar();
             UpdateToolbarBtnPos();
         }
@@ -3232,14 +3373,14 @@ namespace HoverExplorer
         internal void RefreshPinIcon()
         {
             if (_pinBtn == null || _pinBtn.IsDisposed) return;
-            SetPinIcon(_pinBtn, _pinned, Config.FG);
+            SetPinIcon(_pinBtn, _pinned, PvFg);
         }
 
         // 预览窗内参与全局 hint 的按钮：重命名 / 打开 / 复制 / 固定 / 信息栏复制组等
         internal void HintCollect(List<HintItem> list, bool copyMode)
         {
             if (list == null || IsDisposed || !Visible) return;
-            Control[] btns = { _renameBtn, _openBtn, _copyBtn, _saveBtn, _pasteBtn,
+            Control[] btns = { _renameBtn, _openBtn, _copyBtn, _saveBtn,
                                _pinBtn, _pinLaunchBtn, _audioPlayBtn,
                                _ibPrimary, _ibSecond, _ibThird, _ibSelected, _ibMore };
             foreach (var c in btns) PopupForm.AddHintButton(list, c);
@@ -3247,7 +3388,7 @@ namespace HoverExplorer
 
         internal static Image PinIcon(bool pinned)
         {
-            return PinIcon(pinned, Config.FG);
+            return PinIcon(pinned, PvFg);
         }
 
         // c = 图标前景色：列表面板传 ListFg（用户调色板可能与应用主题明暗相反，用主题 FG 会看不见）
@@ -3283,7 +3424,7 @@ namespace HoverExplorer
 
         internal static Image PinLaunchIcon(bool active)
         {
-            return PinLaunchIcon(active, Config.FG);
+            return PinLaunchIcon(active, PvFg);
         }
 
         internal static Image PinLaunchIcon(bool active, Color c)
@@ -3295,7 +3436,7 @@ namespace HoverExplorer
                 {
                     g.Clear(Color.Transparent);
                     g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                    var col = active ? Config.Accent : c;
+                    var col = active ? Config.ListSel : c;
                     using (var p = new Pen(col, 1.4f))
                     using (var b = new SolidBrush(col))
                     {
@@ -3310,14 +3451,30 @@ namespace HoverExplorer
         internal void RefreshPinLaunchIcon()
         {
             if (_pinLaunchBtn == null) return;
-            bool active = !string.IsNullOrEmpty(FilePath) && Program.IsPinned(FilePath);
+            string kind = string.IsNullOrEmpty(PinKind) ? "file" : PinKind;
+            bool active = !string.IsNullOrEmpty(FilePath) && Program.IsPinned(kind, FilePath);
             _pinLaunchBtn.Image = PinLaunchIcon(active);
             _pinLaunchBtn.Invalidate();
         }
 
+        // 固定为桌面卡片：文字卡片预览按 text 类型重建卡片（Kind=file + 文本内容会被当路径）
+        private void TogglePinToCard()
+        {
+            if (string.IsNullOrEmpty(FilePath)) return;
+            Program.TogglePinItem(new PinnedItem
+            {
+                Kind = string.IsNullOrEmpty(PinKind) ? "file" : PinKind,
+                Path = FilePath,
+                Title = PinTitle,
+                X = Cursor.Position.X + 20,
+                Y = Cursor.Position.Y + 20,
+            });
+            RefreshPinLaunchIcon();
+        }
+
         internal static Image TrashIcon()
         {
-            return TrashIcon(Config.FG);
+            return TrashIcon(PvFg);
         }
 
         internal static Image TrashIcon(Color c)
@@ -3348,7 +3505,7 @@ namespace HoverExplorer
 
         internal static Image CopyIcon()
         {
-            return CopyIcon(Config.FG);
+            return CopyIcon(PvFg);
         }
 
         internal static Image CopyIcon(Color c)
@@ -3372,7 +3529,7 @@ namespace HoverExplorer
 
         internal static Image EditIcon()
         {
-            return EditIcon(Config.FG);
+            return EditIcon(PvFg);
         }
 
         internal static Image EditIcon(Color c)
@@ -3432,8 +3589,8 @@ namespace HoverExplorer
                 {
                     g.Clear(Color.Transparent);
                     g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                    using (var p = new Pen(Config.FG, 1.4f))
-                    using (var b = new SolidBrush(Config.FG))
+                    using (var p = new Pen(PvFg, 1.4f))
+                    using (var b = new SolidBrush(PvFg))
                     {
                         g.DrawRectangle(p, 2, 2, 12, 12);
                         g.FillRectangle(b, 4, 3, 8, 3);
@@ -3535,12 +3692,12 @@ namespace HoverExplorer
             {
                 FormBorderStyle = FormBorderStyle.None,
                 StartPosition = FormStartPosition.Manual,
-                BackColor = Config.BG,
+                BackColor = PvBg,
                 ShowInTaskbar = false,
                 TopMost = true,
                 Size = new Size(60, 22),
             };
-            var lbl = new Label { Text = msg, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, ForeColor = Config.FG, BackColor = Config.BG, Font = new Font("Microsoft YaHei", 9) };
+            var lbl = new Label { Text = msg, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter, ForeColor = PvFg, BackColor = PvBg, Font = new Font("Microsoft YaHei", 9) };
             t.Controls.Add(lbl);
             t.Location = new Point(Left + (Width - t.Width) / 2, Top + 34);
             t.Show();
@@ -3646,6 +3803,7 @@ namespace HoverExplorer
         private Panel _nameRow;
         private SmoothLabel _titleLbl;
         private SmoothLabel _countLbl;  // 名称行右侧的条目计数小字（格式标签多行时会盖住状态栏文字，故移到顶部）
+        private SmoothLabel _resLbl;    // 计数右侧的 HE 资源占用（设置开启时显示，约 1 秒刷新）
         private Label _copyBtn;
         private Label _editBtn;
         private TextBox _nameEdit;
@@ -3659,6 +3817,9 @@ namespace HoverExplorer
         private const int ListPadLr = 6;
         private const int ListPadBottom = 6;
         private string _path;
+
+        // 标题名称后缀（如从文件夹快捷方式跳来的面板显示 "lnk"）；由调用方在 ShowPanel 前设置
+        internal string TitleSuffix;
         private int _headH;
         private int _panelW = 260;
         // 固定时记下自身尺寸：后续刷新沿用，避免条目少时被内容宽度或全局默认值改写
@@ -3975,6 +4136,12 @@ namespace HoverExplorer
             {
                 key = "lnk|" + full.ToLowerInvariant();
             }
+            // 可执行文件/图标/快捷方式的图标随文件本身而变（不同 exe 各有自己的图标），
+            // 按扩展名分桶会让所有 exe 共用第一个 exe 的图标 → 这类文件按完整路径单独缓存
+            else if (!isDir && PerFileIconExt(ext))
+            {
+                key = "f|" + full.ToLowerInvariant();
+            }
             Image cached;
             if (_iconCache.TryGetValue(key, out cached)) return cached;
             Image img = null;
@@ -3991,6 +4158,19 @@ namespace HoverExplorer
         }
 
 
+        // 图标内容取决于文件本身的扩展名：不能按扩展名共用缓存桶
+        private static bool PerFileIconExt(string ext)
+        {
+            switch ((ext ?? "").ToLowerInvariant())
+            {
+                case ".exe": case ".ico": case ".url": case ".msi":
+                case ".scr": case ".cpl": case ".dll": case ".com":
+                case "":   // 无扩展名（appref-ms 等）图标也随文件变
+                    return true;
+            }
+            return false;
+        }
+
         private static string FormatSize(long bytes)
         {
             if (bytes < 1024) return bytes + " B";
@@ -4006,21 +4186,32 @@ namespace HoverExplorer
             if (_titleLbl == null || _countLbl == null || _nameRow == null || _editBtn == null) return;
             int titleLeft = _editBtn.Right + 2;
             int rightEdge = _nameRow.Width - 46;   // 42px 固定按钮区 + 4px 间隙
-            int cw = 0;
+            int cw = 0, rw = 0;
             if (_countLbl.Visible && _countLbl.Text.Length > 0)
             {
                 using (var g = _countLbl.CreateGraphics())
                     cw = (int)Math.Ceiling(g.MeasureString(_countLbl.Text, _countLbl.Font).Width) + 6;
                 _countLbl.Width = cw;
             }
-            _titleLbl.Width = Math.Max(40, rightEdge - titleLeft - 4 - cw);
+            if (_resLbl != null && _resLbl.Visible && _resLbl.Text.Length > 0)
+            {
+                using (var g = _resLbl.CreateGraphics())
+                    rw = (int)Math.Ceiling(g.MeasureString(_resLbl.Text, _resLbl.Font).Width) + 6;
+                _resLbl.Width = rw;
+            }
+            int resGap = rw > 0 ? 10 : 0;
+            _titleLbl.Width = Math.Max(40, rightEdge - titleLeft - 4 - cw - (rw > 0 ? rw + resGap : 0));
+            int textW;
+            using (var g = _titleLbl.CreateGraphics())
+                textW = (int)Math.Ceiling(g.MeasureString(_titleLbl.Text, _titleLbl.Font).Width);
+            int x = titleLeft + textW + 6;
             if (cw > 0)
             {
-                int textW;
-                using (var g = _titleLbl.CreateGraphics())
-                    textW = (int)Math.Ceiling(g.MeasureString(_titleLbl.Text, _titleLbl.Font).Width);
-                _countLbl.Left = Math.Min(titleLeft + textW + 6, rightEdge - 2 - cw);
+                _countLbl.Left = Math.Min(x, rightEdge - 2 - cw - resGap);
+                x = _countLbl.Right + resGap;
             }
+            if (rw > 0)
+                _resLbl.Left = Math.Min(x, rightEdge - 2 - rw);
             // 标题宽度收缩为文字实际宽度：右侧留出"真空白"（可拖动移动面板）。
             // 标签背景与行底同色时拉满宽会让整行看似空白实则都在标题上，拖动/右键全部失效
             int maxW = _titleLbl.Width, tW;
@@ -4029,6 +4220,68 @@ namespace HoverExplorer
             _titleLbl.Width = Math.Min(maxW, tW + 2);
             // 计数加在标题之后（z 序更靠后），名称短时整体落在标题标签范围内，必须提到最上层否则被不透明标题盖住
             _countLbl.BringToFront();
+            if (_resLbl != null) _resLbl.BringToFront();
+        }
+
+        // ── HE 自身资源占用（标题行计数右侧，默认关闭）────────────────────────
+        private static Timer _resTimer;
+        private static string _resText = "";
+        private static DateTime _resLastAt;
+        private static TimeSpan _resLastCpu;
+
+        // 每秒采样一次；所有打开的面板共享一份数据，避免每个面板各起一个定时器
+        private static void EnsureResourceSampler()
+        {
+            if (_resTimer != null) return;
+            _resTimer = new Timer { Interval = 1000 };
+            _resTimer.Tick += delegate
+            {
+                SampleResourceText();
+                try
+                {
+                    foreach (var f in Program.Panels)
+                    {
+                        if (f != null && !f.IsDisposed) f.RefreshResourceLabel();
+                    }
+                }
+                catch { }
+            };
+            _resTimer.Start();
+        }
+
+        // 采样一次（CPU% 用两次 TotalProcessorTime 差分除以实际经过时间×逻辑核数）
+        private static string SampleResourceText()
+        {
+            try
+            {
+                using (var p = Process.GetCurrentProcess())
+                {
+                    var cpu = p.TotalProcessorTime;
+                    var now = DateTime.UtcNow;
+                    double pct = 0;
+                    if (_resLastAt != DateTime.MinValue)
+                    {
+                        double usedMs = (cpu - _resLastCpu).TotalMilliseconds;
+                        double wallMs = (now - _resLastAt).TotalMilliseconds;
+                        if (wallMs > 0)
+                            pct = Math.Max(0, Math.Min(100, usedMs / (wallMs * Environment.ProcessorCount) * 100));
+                    }
+                    _resLastCpu = cpu;
+                    _resLastAt = now;
+                    _resText = "CPU " + pct.ToString("0.#") + "% · " + (p.WorkingSet64 / (1024 * 1024)) + "MB";
+                }
+            }
+            catch { }
+            return _resText;
+        }
+
+        private void RefreshResourceLabel()
+        {
+            if (_resLbl == null || _resLbl.IsDisposed) return;
+            bool show = Config.ShowResourceUsage && _resText.Length > 0;
+            if (_resLbl.Visible != show) _resLbl.Visible = show;
+            if (show && _resLbl.Text != _resText) _resLbl.Text = _resText;
+            LayoutTitleCount();
         }
 
         // 顶部控件与行宽度按面板宽度同步：拖动手柄改宽后必须刷新，
@@ -4275,9 +4528,23 @@ namespace HoverExplorer
                     Size = new Size(countW, nameRowH - 4),
                     Visible = countText.Length > 0,
                 };
+                _resLbl = new SmoothLabel
+                {
+                    Text = "",
+                    Font = countFont,
+                    ForeColor = Config.ListMu,
+                    BackColor = Config.ListBg,
+                    AutoSize = false,
+                    UseCompatibleTextRendering = true,
+                    TextAlign = ContentAlignment.MiddleLeft,
+                    Cursor = DefaultCursor,
+                    Location = new Point(0, 2),
+                    Size = new Size(0, nameRowH - 4),
+                    Visible = false,
+                };
                 _titleLbl = new SmoothLabel
                 {
-                    Text = ShowName(path),
+                    Text = ShowName(path) + (string.IsNullOrEmpty(TitleSuffix) ? "" : " · " + TitleSuffix),
                     Font = Config.ListTitleFont(),
                     ForeColor = Config.ListFg,
                     BackColor = Config.ListBg,   // 移除标题背景条：与名称行底色一致
@@ -4382,11 +4649,21 @@ namespace HoverExplorer
                 _nameRow.MouseUp += blankMenu;
                 _countLbl.MouseDown += drag;    // 计数小字无自身点击行为，同样作为拖拽入口
                 _countLbl.MouseUp += blankMenu;
+                _resLbl.MouseDown += drag;
+                _resLbl.MouseUp += blankMenu;
                 _nameRow.Controls.Add(_titleLbl);
                 _nameRow.Controls.Add(_countLbl);
+                _nameRow.Controls.Add(_resLbl);
                 _nameRow.Controls.Add(_copyBtn);
                 _nameRow.Controls.Add(_editBtn);
                 _nameRow.Controls.Add(_nameEdit);
+                // 资源占用：设置开启时在计数右侧显示（采样器全局共享，1 秒刷新）
+                if (Config.ShowResourceUsage)
+                {
+                    EnsureResourceSampler();
+                    _resLbl.Text = SampleResourceText();
+                    _resLbl.Visible = _resLbl.Text.Length > 0;
+                }
                 LayoutTitleCount();   // ⧉/✎ 在左、计数紧跟名称文字、右侧避开固定按钮（改宽/刷新后同样走这里）
                 Controls.Add(_nameRow);
                 // 名称行与表头排序栏调换位置：名称行提到面板最顶部，排序栏移到其下方（两带总高不变，curY 不受影响）
@@ -4849,6 +5126,8 @@ namespace HoverExplorer
                     Tag = kind,
                 };
                 btn.MouseDown += FilterBtnMouseDown;
+                btn.MouseUp += FilterBtnMouseUp;
+                btn.MouseLeave += FilterBtnMouseLeave;
                 btn.Click += FilterBtnClick;
                 Controls.Add(btn);
                 _filterBtns.Add(btn);
@@ -5206,25 +5485,77 @@ namespace HoverExplorer
             }
         }
 
+        // 格式标签：单击=只看该格式；长按=反选（隐藏该格式，看其余）
+        private Timer _filterHoldTimer;
+        private Label _filterHoldBtn;
+        private bool _filterHoldFired;
+
         private void FilterBtnMouseDown(object s, MouseEventArgs e)
         {
-            if (e.Button != MouseButtons.Middle) return;
+            if (e.Button != MouseButtons.Left) return;
             var btn = s as Label;
             string kind = btn != null ? btn.Tag as string : null;
             if (kind == null) return;
+            _fnStopFilterHold();
+            _filterHoldBtn = btn;
+            _filterHoldFired = false;
+            if (_filterHoldTimer == null)
+            {
+                _filterHoldTimer = new Timer { Interval = 450 };
+                _filterHoldTimer.Tick += (s2, e2) =>
+                {
+                    _filterHoldTimer.Stop();
+                    _fnToggleExclude(_filterHoldBtn);
+                    _filterHoldFired = true;   // 随后的 Click 吞掉，避免长按后又切回包含
+                };
+            }
+            _filterHoldTimer.Start();
+        }
+
+        private void FilterBtnMouseUp(object s, MouseEventArgs e)
+        {
+            _fnStopFilterHold();
+        }
+
+        private void FilterBtnMouseLeave(object s, EventArgs e)
+        {
+            // 长按已生效后移出按钮：不会再有 Click 到来，重置标志，避免吞掉下一次正常单击
+            if (_filterHoldFired) _filterHoldFired = false;
+            _fnStopFilterHold();
+        }
+
+        private void _fnStopFilterHold()
+        {
+            if (_filterHoldTimer != null) { _filterHoldTimer.Stop(); _filterHoldTimer.Dispose(); _filterHoldTimer = null; }
+            _filterHoldBtn = null;
+        }
+
+        private void _fnToggleExclude(Label btn)
+        {
+            string kind = btn != null ? btn.Tag as string : null;
+            if (kind == null) return;
             if (_filterExcluded.Contains(kind)) _filterExcluded.Remove(kind);
-            else _filterExcluded.Add(kind);
+            else
+            {
+                _filterExcluded.Add(kind);
+                _filterSelected.Remove(kind);   // 白名单与黑名单互斥，避免一个格式同时被选中又排除
+            }
             UpdateFilterBtnAppearance();
             FilterRows(_searchBox != null ? _searchBox.Text : "");
         }
 
         private void FilterBtnClick(object s, EventArgs e)
         {
+            if (_filterHoldFired) { _filterHoldFired = false; _fnStopFilterHold(); return; }
             var btn = s as Label;
             string kind = btn != null ? btn.Tag as string : null;
             if (kind == null) return;
             if (_filterSelected.Contains(kind)) _filterSelected.Remove(kind);
-            else _filterSelected.Add(kind);
+            else
+            {
+                _filterSelected.Add(kind);
+                _filterExcluded.Remove(kind);
+            }
             UpdateFilterBtnAppearance();
             FilterRows(_searchBox != null ? _searchBox.Text : "");
         }
@@ -5251,8 +5582,9 @@ namespace HoverExplorer
                 string kind = RowExtKey(row);
                 if (_filterSelected.Count > 0)
                     kindVis = kind != null && _filterSelected.Contains(kind);
-                else if (_filterExcluded.Count > 0)
-                    kindVis = kind == null || !_filterExcluded.Contains(kind);
+                // 反选（排除）在此基础上再减掉：白名单与黑名单可同时存在且互不冲突
+                if (kindVis && kind != null && _filterExcluded.Contains(kind))
+                    kindVis = false;
                 bool vis = nameVis && kindVis;
                 row.Visible = vis;
                 if (!vis) hidden++;
@@ -5331,6 +5663,9 @@ namespace HoverExplorer
             }
             // 序号叠加：与行内操作按钮同生共死——只显示当前悬停行的行号，先清掉残留行
             _fnClearRowIndex();
+            // 旧行可能因"光标仍停在按钮组上"跳过了 MouseLeave 的复位（按钮组随后整体
+            // 移到新行），整行高亮会残留在上一行：进入新行时统一清掉其他行的高亮
+            _fnClearRowHighlight(row);
             row.ShowIndex = true;
             row.Invalidate();
             row.BackColor = Config.ListHv;
@@ -5416,6 +5751,7 @@ namespace HoverExplorer
                 if (_rowRenameBtn != null) _rowRenameBtn.Visible = false;
                 // 序号与按钮组同生共死：整组隐藏时序号一并消失（移到按钮组上则保留）
                 if (row.ShowIndex) { row.ShowIndex = false; row.Invalidate(); }
+                _fnResetRowBtnHover();   // 按钮组隐藏后清掉指针悬停色块，避免下一个按钮残留高亮
             }
             // 光标仍在按钮列时保持整行悬停高亮（方案 A 按钮底色就是行悬停色，不能擦掉）
             if (onBtns || row == _activeDirRow || row == _contextRow) row.BackColor = Config.ListHv;
@@ -6819,6 +7155,28 @@ namespace HoverExplorer
         {
             foreach (var r in _rows)
                 if (!r.IsDisposed && r.ShowIndex) { r.ShowIndex = false; r.Invalidate(); }
+        }
+
+        // 清掉除 keep 以外所有行的悬停高亮（活动目录行/右键上下文行/滚轮预览行保留）
+        private void _fnClearRowHighlight(RowLabel keep)
+        {
+            foreach (var r in _rows)
+            {
+                if (r == keep || r.IsDisposed) continue;
+                if (r == _activeDirRow || r == _contextRow || r == _hlRow) continue;
+                if (r.BackColor == Config.ListHv) ApplySel(r);
+            }
+            _fnResetRowBtnHover();
+        }
+
+        // 行内操作按钮的悬停色块：按钮组被隐藏/挪到新行时清掉，避免上一个按钮残留高亮
+        private void _fnResetRowBtnHover()
+        {
+            foreach (var b in new Label[] { _rowDelBtn, _rowCopyBtn, _rowPinBtn, _rowRenameBtn })
+            {
+                var rb = b as RowActionButton;
+                if (rb != null && rb.Hovered) { rb.Hovered = false; rb.Invalidate(); }
+            }
         }
 
         // 双击顶部操作栏：资源管理器打开当前面板所在文件夹（子面板各自打开自己的目录）

@@ -111,9 +111,12 @@ namespace HoverExplorer
             }
         }
 
-        public FfmpegAudioSession(string path)
+        // startSec：直接从该秒数开始解码播放。视频预览用视频当前进度传入，
+        // 避免"先从头出声、再 seek 回当前位置重播"的两次播放听感
+        public FfmpegAudioSession(string path, double startSec = 0)
         {
             _path = path;
+            if (startSec < 0) startSec = 0;
             double? est = MediaPreview.EstimateDurationMs(path);
             if (!est.HasValue || est.Value <= 0)
             {
@@ -133,7 +136,7 @@ namespace HoverExplorer
                 var f = Failed; if (f != null) { try { f(); } catch { } }
                 return;
             }
-            if (!StartFfmpeg(0))
+            if (!StartFfmpeg(startSec))
             {
                 CleanupWaveOut();
                 _failed = true;
@@ -145,6 +148,9 @@ namespace HoverExplorer
             var e = EstimateReady; if (e != null) { try { e(_duration.TotalMilliseconds); } catch { } }
             _playing = true;
         }
+
+        // 当前音频流的起始秒数（Play/Seek 重建时更新）；用于判断是否还需要对齐
+        public double StartSec { get { return _seekSec; } }
 
         private bool InitWaveOut()
         {

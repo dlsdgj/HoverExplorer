@@ -41,16 +41,6 @@
                             <ComboBoxItem c:Cfg.I18n="mode_long_press"/>
                         </ComboBox>
                     </c:SettingRow>
-                    <c:SettingRow c:Cfg.I18n="file_preview" c:Cfg.Desc="mode_desc">
-                        <ComboBox c:Cfg.Key="PreviewMode" SelectedIndex="0">
-                            <ComboBoxItem c:Cfg.I18n="mode_off"/>
-                            <ComboBoxItem c:Cfg.I18n="mode_always"/>
-                            <ComboBoxItem c:Cfg.I18n="mode_ctrl"/>
-                            <ComboBoxItem c:Cfg.I18n="mode_shift"/>
-                            <ComboBoxItem c:Cfg.I18n="mode_alt"/>
-                            <ComboBoxItem c:Cfg.I18n="mode_long_press"/>
-                        </ComboBox>
-                    </c:SettingRow>
                     <c:SettingRow c:Cfg.I18n="long_press_delay" c:Cfg.Desc="long_press_delay_desc" c:Cfg.ShowIf="LongPressOn">
                         <c:Stepper c:Cfg.Key="LongPressDelayMs" Value="300" Min="50" Max="3000" Step="50" Suffix=" ms"/>
                     </c:SettingRow>
@@ -73,6 +63,9 @@
                     </c:SettingRow>
                     <c:SettingRow c:Cfg.I18n="status_filter" c:Cfg.Desc="status_filter_desc">
                         <ToggleButton c:Cfg.Key="StatusFilter" Style="{DynamicResource Switch}" IsChecked="True"/>
+                    </c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="show_resource" c:Cfg.Desc="show_resource_desc">
+                        <ToggleButton c:Cfg.Key="ShowResourceUsage" Style="{DynamicResource Switch}"/>
                     </c:SettingRow>
                     <Border Style="{DynamicResource Hint}"><TextBlock c:Cfg.I18n="hint_dbl_click" Foreground="{DynamicResource HintTextBrush}"/></Border>
                     <Border Style="{DynamicResource Hint}"><TextBlock c:Cfg.I18n="hint_ctrl_wheel" Foreground="{DynamicResource HintTextBrush}"/></Border>
@@ -154,6 +147,16 @@
             <!-- 通用预览选项：无具体类型归属的项（触发位置 / 解码器） -->
             <HeaderedContentControl Header="预览选项" c:Cfg.I18n="group_preview_opts" Style="{DynamicResource Card}">
                 <StackPanel>
+                    <c:SettingRow c:Cfg.I18n="file_preview" c:Cfg.Desc="mode_desc">
+                        <ComboBox c:Cfg.Key="PreviewMode" SelectedIndex="0">
+                            <ComboBoxItem c:Cfg.I18n="mode_off"/>
+                            <ComboBoxItem c:Cfg.I18n="mode_always"/>
+                            <ComboBoxItem c:Cfg.I18n="mode_ctrl"/>
+                            <ComboBoxItem c:Cfg.I18n="mode_shift"/>
+                            <ComboBoxItem c:Cfg.I18n="mode_alt"/>
+                            <ComboBoxItem c:Cfg.I18n="mode_long_press"/>
+                        </ComboBox>
+                    </c:SettingRow>
                     <c:SettingRow c:Cfg.I18n="pv_info_bar" c:Cfg.Desc="pv_info_bar_desc">
                         <ToggleButton c:Cfg.Key="PreviewInfoBar" Style="{DynamicResource Switch}" IsChecked="True"/>
                     </c:SettingRow>

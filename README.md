@@ -42,7 +42,7 @@
 - **悬停门控 / Modifier-gated hover**: 开启后必须按住所选修饰键（Ctrl/Shift/Alt 或组合）悬停才触发，文件夹列表与文件预览可分别设置，重命名、多选不再被弹窗打扰 —  hover only triggers while a chosen modifier key (Ctrl/Shift/Alt or a combo) is held; folder lists and file previews can be gated separately, so renaming and multi-select stay undisturbed
 - **视频预览默认静音 / Mute video previews by default**: 悬停触发的视频先静音，点击播放条 🔊 恢复声音；音频预览不受影响 — Hover-triggered videos start muted; click 🔊 on the control bar to unmute; audio previews unaffected
 - **进度条悬停时间 / Seek-bar hover time**: 视频进度条上悬停显示圆角时间气泡，跟随指针指示该处进度 — Rounded time bubble follows the pointer above the video seek bar
-- **格式筛选 / Format filter**: 列表底部按实际格式显示标签（文件夹显示 DIR），点击只看该格式、中键排除；可在设置中关闭 — Bottom chips show actual formats (folders as DIR); click to filter, middle-click to exclude; toggleable in settings
+- **格式筛选 / Format filter**: 列表底部按实际格式显示标签（文件夹显示 DIR），单击只看该格式、长按反选（隐藏该格式）；可在设置中关闭 — Bottom chips show actual formats (folders as DIR); click to filter, long-press to invert (hide that format); toggleable in settings
 - **m4v 等移动端容器 / m4v & mobile containers**: 补齐 `.m4v` `.m4b` `.3gp` `.mts` `.m2ts` `.webm` `.flv` 等扩展名，直接出画面而非只有元数据 — Adds `.m4v` `.m4b` `.3gp` `.mts` `.m2ts` `.webm` `.flv` so they preview instead of showing metadata only
 - **高规格视频兜底解码 / High-spec video fallback**: 系统解码器打不开时（ProRes / 10bit / 4:2:2 / HEVC）自动改用 ffmpeg 帧流播放 — When the system decoder fails (ProRes / 10-bit / 4:2:2 / HEVC), falls back to an ffmpeg frame-stream player
 - **音频波形播放器 / Audio waveform**: 迷你播放条，波形即进度，MF 后台解码峰值/RMS，点击/拖动 seek — Mini player bar, waveform = progress, MF background peak/RMS decode, click/drag to seek
@@ -89,6 +89,13 @@
 - **列表圆角与大小条渐变 / Rounded rows & gradient size bars**: 悬停/选中/拖拽高亮统一圆角；文件大小指示条圆角并按名称左右方向渐变（淡端始终远离文件名） — Rounded hover/selection highlight; rounded size bars with a directional gradient fading away from the file name
 - **行内操作按钮 / Row action buttons**: 4 个按钮统一弱化为灰色线稿、无边框；仅悬停的单个按钮出现淡圆角底（删除偏红、编辑偏主题色），鼠标在按钮列时整行保持悬停高亮 — Muted icon-only buttons with per-button hover tint; row highlight persists over the button column
 - **壁纸配色默认 / Wallpaper-based default palette**: 新装用户默认从当前壁纸采样主色生成列表配色 — Fresh installs derive the default list palette from the current wallpaper
+- **文本预览链接 / Clickable links in text**: 文本预览里的 `http(s)://`、`www.` 链接显示为蓝色下划线，单击用默认浏览器打开；只有链接本身可点击 — URLs in text previews render blue and underlined; a single click opens the default browser, and only the link itself is clickable
+- **快捷方式标题标记 / Shortcut title marker**: 从文件夹快捷方式（.lnk）打开的列表面板，标题名称后显示 `· lnk`，一眼看出这是快捷方式的目标目录 — Panels opened from a folder shortcut show `· lnk` after the title
+- **预览窗配色跟随列表 / Preview matches list palette**: 预览窗底色、文字、悬停、强调与分隔线全部取自列表配色（含滚动条深浅），两个界面上同一套视觉 — Preview chrome uses the list palette (background, text, hover, accent, separators, scrollbar tone), so both surfaces share one look
+- **预览窗细节统一 / Unified preview chrome**: 文本/图片内容留白、操作栏与信息栏细分隔线、标题 13px 半粗 + 规格 11px 次要色、图片 6% 棋盘格底与右下角淡色手柄 — Content padding, hairline separators, 13px semibold title + 11px muted meta, 6% checkerboard behind images and a faint corner grip
+- **资源占用显示 / Resource usage readout**: 可选在列表面板计数右侧显示 HE 自身的 `CPU x% · xxxMB`，约 1 秒刷新，默认关闭 — Optional `CPU x% · xxxMB` readout next to the item count, refreshed about once per second; off by default
+- **文字卡片 / Text cards**: 剪贴板文字卡片徽章显示 `TEXT`；卡片关闭时固定中的预览窗保留；预览窗「固定为卡片」按文本类型重建卡片 — Text cards show a `TEXT` badge; a pinned preview survives closing the card; "pin to card" re-creates a text card
+- **列表与预览修复 / List & preview fixes**: exe/ico/lnk 等按完整路径缓存图标（不再整类共用一个图标）、行内按钮上下移动不再残留悬停高亮、ffmpeg 兜底视频音轨从当前位置起播（不再重复/静音） — Per-file icon caching for exe/ico/lnk, no stale row hover when moving over action buttons, ffmpeg-fallback audio starts at the current position (no double or missing sound)
 
 ## 使用 / Usage
 
@@ -131,7 +138,8 @@ Windows 自带解码器的实际能力边界（实测）：H.264/HEVC **只支�
 探测不到时该类视频只能显示缩略图。
 可在 **设置 → 预览类型 → ffmpeg 路径** 指定 ffmpeg 可执行文件位置（留空=自动探测）。
 
-> 兜底通道只解画面、不出声；系统解码器能开的文件仍走原生通道（带声音）。
+> 兜底通道画面与声音都由 ffmpeg 处理，音频会先对齐到视频当前进度再起播；
+> 系统解码器能开的文件仍走原生通道（带声音）。
 > 码流高本身不是问题 —— 42 Mbps 的 8bit 4:2:0 文件系统解码器直接就播；
 > 决定生死的是像素格式与编码（ProRes / 10bit / 4:2:2）。
 
@@ -142,9 +150,10 @@ Only those "system can't decode" specs need ffmpeg as a fallback: the app auto-d
 install locations, and without it those videos fall back to a thumbnail.
 Set an explicit path under **Settings → Preview types → ffmpeg path** (leave empty to auto-detect).
 
-> The fallback channel decodes picture only (no audio); files the system decoder can open still
-> use the native path (with sound). High bitrate itself is not the problem — a 42 Mbps 8-bit
-> 4:2:0 file opens natively; what matters is pixel format and codec.
+> The fallback channel now plays both picture and sound (ffmpeg), with audio aligned to the
+> video position before it starts; files the system decoder can open still use the native path
+> (with sound). High bitrate itself is not the problem — a 42 Mbps 8-bit 4:2:0 file opens
+> natively; what matters is pixel format and codec.
 
 ## 快捷键 / Hotkey
 

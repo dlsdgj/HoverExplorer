@@ -13,7 +13,7 @@ namespace HoverExplorer
 {
     internal static class Program
     {
-        public const string Version = "1.1.7";
+        public const string Version = "1.1.8";
 
         private static string _desktopPath;
         private static string _publicDesktopPath;
@@ -1566,6 +1566,8 @@ namespace HoverExplorer
             // 只会得到一张元数据卡片。目标是已存在的目录时把悬停目标重定向到该目录，
             // 走与普通文件夹完全相同的列表预览（延时门控、级联、历史记录一并复用）；
             // 指向文件/失效的快捷方式保持原有文件预览行为。
+            // lnkFolderTarget 只用于面板标题后缀，提醒用户这是快捷方式打开的目录
+            bool lnkFolderTarget = false;
             if (hoverPath != null && !hoverIsDir)
             {
                 try
@@ -1585,6 +1587,7 @@ namespace HoverExplorer
                         {
                             hoverPath = lnkDir;
                             hoverIsDir = true;
+                            lnkFolderTarget = true;
                         }
                     }
                 }
@@ -1720,6 +1723,7 @@ namespace HoverExplorer
                     foreach (var p in nonPinned) p.ClosePanel();
                     _panels.RemoveAll(p => !p.Pinned);
                     var p2 = new PopupForm(0, OpenSub, DropResolver, ScheduleCloseAfter);
+                    p2.TitleSuffix = lnkFolderTarget ? "lnk" : null;   // 快捷方式打开：标题名称后标出 lnk
                     if (p2.ShowPanel(hoverFolder, mx + Config.PopupOffset, my + Config.PopupOffset))
                     {
                         ShowHighlight(hoverRect);
@@ -2151,7 +2155,9 @@ namespace HoverExplorer
             foreach (var p in nonPinned) p.ClosePanel();
             _panels.RemoveAll(p => !p.Pinned && !p.IsDragging);
             var p2 = new PopupForm(0, OpenSub, DropResolver, ScheduleCloseAfter);
-            if (p2.ShowPanel(path, rowRightTop.X + 6, rowRightTop.Y - 4))
+            // 行的屏幕右缘已在列表内缩 ListPadLr(6px) 之内，这里再让 6px 才真正留出视觉间隙：
+            // 否则子列表左缘与历史/收藏列表右缘贴在一起（x 轴看起来重叠）
+            if (p2.ShowPanel(path, rowRightTop.X + 12, rowRightTop.Y - 4))
             {
                 _panels.Add(p2);
                 p2.Show();

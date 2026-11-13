@@ -629,6 +629,9 @@ internal static class MediaPreview
                     // 宿主隐藏 + 退出 Dock 计算：ffmpeg 面板是 Dock=Fill 且排在最前，
                     // 若宿主仍占着 Fill，剩余空间会被它吃光 → ffmpeg 面板拿到 0 面积（画面看不见）。
                     try { host.Hide(); host.Dock = DockStyle.None; } catch { }
+                    // 同步停掉 MediaElement：只隐藏画面不停播时，它会继续用自带音轨出声，
+                    // 和下面 ffmpeg 的音频声道叠成"前后两次播放"
+                    try { session.Pause(); } catch { }
                     var fv = new FfmpegVideoPanel(path, panel.Width, panel.Height, probed);
                     fv.Dock = DockStyle.Fill;
                     fv.Visible = false;                        // 首帧到达再显示，避免闪黑

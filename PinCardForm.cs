@@ -92,7 +92,7 @@ namespace HoverExplorer
             else
             {
                 _name = !string.IsNullOrEmpty(item.Title) ? item.Title : Ingest.Ellipsis(Ingest.FirstLine(item.Path), 18);
-                _ext = "TXT";
+                _ext = "TEXT";   // 文字卡片不是 txt 文件，徽章标明是文本内容
                 _sub = item.Path.Length + " 字";
             }
 
@@ -387,31 +387,11 @@ namespace HoverExplorer
 
             _textPreview = new PreviewForm(tb, w, h, "textcard");
             _textPreview.FilePath = _path;
-            // textcard：隐藏复制按钮（复制文件/复制路径对文本无意义），同位显示粘贴按钮
+            // textcard：隐藏复制按钮（复制文件/复制路径对文本无意义）
             _textPreview.HideCopyForTextCard();
-            // 记录预览打开前的前台窗口：预览的粘贴按钮把（可能已编辑的）文本贴回那里
-            IntPtr pasteTarget = NativeMethods.GetForegroundWindow();
-            _textPreview.PasteAction = () =>
-            {
-                try
-                {
-                    string txt = tb.Text;
-                    if (!string.IsNullOrEmpty(txt)) Clipboard.SetText(txt);
-                    if (pasteTarget != IntPtr.Zero && pasteTarget != _textPreview.Handle)
-                        NativeMethods.SetForegroundWindow(pasteTarget);
-                    var t = new Timer { Interval = 60 };
-                    t.Tick += (s2, e2) =>
-                    {
-                        t.Stop(); t.Dispose();
-                        NativeMethods.keybd_event(0x11, 0, 0, UIntPtr.Zero);
-                        NativeMethods.keybd_event(0x56, 0, 0, UIntPtr.Zero);
-                        NativeMethods.keybd_event(0x56, 0, 2, UIntPtr.Zero);
-                        NativeMethods.keybd_event(0x11, 0, 2, UIntPtr.Zero);
-                    };
-                    t.Start();
-                }
-                catch (Exception ex) { Program.DebugLog("[pincard] preview-paste fail " + ex.Message); }
-            };
+            // 「固定为卡片」按文本类型重建卡片（否则会把文本内容当文件路径处理）
+            _textPreview.PinKind = "text";
+            _textPreview.PinTitle = _item.Title;
             // 位置：卡片下方，工作区内钳制
             var wa = Screen.GetWorkingArea(new Rectangle(Location, Size));
             int px = Math.Min(Right + 4, wa.Right - w - 8);
@@ -451,6 +431,8 @@ namespace HoverExplorer
         {
             if (_textHoverTimer != null) { _textHoverTimer.Stop(); }
             if (_textPreview == null) return;
+            // 预览被用户拖住固定了：卡片关闭时保留预览窗口（解除引用即可，不 Dispose）
+            if (!_textPreview.IsDisposed && _textPreview.Pinned) { _textPreview = null; return; }
             try { _textPreview.Close(); _textPreview.Dispose(); } catch { }
             _textPreview = null;
         }
@@ -582,6 +564,8 @@ namespace HoverExplorer
         {
             if (_fileHoverTimer != null) _fileHoverTimer.Stop();
             if (_filePreview == null) return;
+            // 固定显示中的预览不随卡片关闭（与文字卡片预览一致）
+            if (!_filePreview.IsDisposed && _filePreview.Pinned) { _filePreview = null; return; }
             try { _filePreview.Close(); _filePreview.Dispose(); } catch { }
             _filePreview = null;
         }
@@ -589,6 +573,7 @@ namespace HoverExplorer
         // 文本写回后刷新卡片显示（名字摘要/副标题）
         private void _fnRefreshTextCard()
         {
+            if (IsDisposed) return;   // 卡片已关闭、预览仍被固定留着：只写回内容，不再重绘卡片
             _name = !string.IsNullOrEmpty(_item.Title) ? _item.Title : Ingest.Ellipsis(Ingest.FirstLine(_item.Path), 18);
             _sub = _item.Path.Length + " 字";
             _fnRender();
