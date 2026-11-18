@@ -412,8 +412,25 @@ namespace HoverExplorer
             _muteBtn.FlatAppearance.MouseOverBackColor = Config.BgHover;
             _muteBtn.FlatAppearance.MouseDownBackColor = Config.BgHover;
             _muteBtn.Click += delegate { ToggleAudio(); };
-            // bar：[播放][静音][进度][时间][关闭]
+            // 标记按钮：高码流素材正是粗筛的主要对象，与 MediaElement 路径的 ＋ 等价
+            var markBtn = new Button
+            {
+                Text = "＋",
+                Width = 30,
+                Dock = DockStyle.Left,
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = Config.FG,
+                BackColor = Config.BG,
+                Font = new Font("Microsoft YaHei", 9)
+            };
+            markBtn.FlatAppearance.BorderSize = 0;
+            markBtn.FlatAppearance.MouseOverBackColor = Config.BgHover;
+            markBtn.FlatAppearance.MouseDownBackColor = Config.BgHover;
+            Tips.Set(markBtn, I18n.T("cull_mark_tip"));
+            markBtn.Click += delegate { CullTray.Toggle(_path); };
+            // bar：[播放][静音][标记][进度][时间][关闭]
             bar.Controls.Add(_muteBtn);
+            bar.Controls.Add(markBtn);
             bar.Controls.Add(_prog);
             bar.Controls.Add(_btn);
             bar.Controls.Add(_lbl);

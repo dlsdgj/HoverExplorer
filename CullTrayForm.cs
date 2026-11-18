@@ -181,8 +181,9 @@ namespace HoverExplorer
                 };
                 card.MouseMove += (s, e) =>
                 {
-                    if (e.Button != MouseButtons.Left) return;
-                    if (Math.Abs(e.X - _dragPt.X) + Math.Abs(e.Y - _dragPt.Y) < 4) { _dragPt = Point.Empty; return; }
+                    if (e.Button != MouseButtons.Left || _dragPt == Point.Empty) return;
+                    if (Math.Abs(e.X - _dragPt.X) + Math.Abs(e.Y - _dragPt.Y) < 4) return;
+                    _dragPt = Point.Empty;
                     _flow.SuspendLayout();
                     try { card.DoDragDrop(new DataObject(DataFormats.FileDrop, new[] { path }), DragDropEffects.Copy | DragDropEffects.Move); }
                     catch { }
