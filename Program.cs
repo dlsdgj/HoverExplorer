@@ -1722,6 +1722,9 @@ namespace HoverExplorer
             // 门控只拦各自功能：文件夹被拦不弹面板，预览被拦不弹预览（未拦的一方正常走）
             if (folderSup) hoverFolder = null;
             if (previewSup) hoverFile = null;
+            // 空格预览模式：悬停不再弹文件预览（QuickLook 式，统一走空格开/关）——
+            // 两种触发方式互斥，不和边缘触发/延时打架。文件夹面板照常悬停
+            if (hoverFile != null && Config.SpacePreviewEnabled) hoverFile = null;
             // 文件预览边缘触发区：条目中段不弹预览窗（留给改名/右键/拖拽），只有停在
             // 左/右缘触发区才预览。长按预览模式按住左键=主动操作，不受限。
             // 桌面同样受管，但触发条放宽到图标宽度的 40%——v1.1.5 曾因"够不着"整个豁免桌面，

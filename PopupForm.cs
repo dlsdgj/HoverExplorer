@@ -853,6 +853,19 @@ namespace HoverExplorer
         // 不抢前台：预览仅为悬停展示，激活会打断当前窗口的焦点
         protected override bool ShowWithoutActivation { get { return true; } }
 
+        // 诞生即置顶：Windows 在 Show 时会清掉 WS_EX_TOPMOST 样式位，靠 tick 的
+        // EnsureWinTopmost 补会有 ~50ms 排在普通窗口后面的"裸奔帧"（快速开关预览时
+        // 看起来就是预览窗藏在 Explorer 后面）。直接写进 CreateParams，第一帧就置顶
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams;
+                cp.ExStyle |= 0x8;   // WS_EX_TOPMOST
+                return cp;
+            }
+        }
+
         // ── 配色：预览窗跟随列表配色（List* 调色板），视觉上和列表面板同一套 ──
         private static Color PvBg { get { return Config.ListBg; } }
         private static Color PvFg { get { return Config.ListFg; } }
