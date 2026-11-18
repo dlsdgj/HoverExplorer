@@ -891,6 +891,11 @@ namespace HoverExplorer
         private Label _renameBtn, _openBtn;   // 左上角：重命名 / 用默认程序打开
         private Label _nameLbl;
         private Label _metaLbl;
+
+        // Ctrl+拖头部 = 拖出文件（OLE FileDrop）；ExtDragActive 冻结拖放期间的预览窗关闭
+        private bool _fileDragArmed;
+        private Point _fileDragPt;
+        internal static bool ExtDragActive;
         private Label _pinBtn;
 
         private Label _copyBtn;
@@ -2117,6 +2122,16 @@ namespace HoverExplorer
                 // 音频操作栏：点击 seek / 拖动挪窗口，二义性由 AudioBarDown 处理
                 if (_audio != null) { AudioBarDown(s, e); return; }
                 if (e.Button != MouseButtons.Left) return;
+                // Ctrl+拖头部 = 拖出文件（OLE FileDrop，可直接丢进达芬奇/资源管理器/聊天）：
+                // 武装后在 MouseMove 里越过 3px 阈值才真正进 DoDragDrop（模态循环），
+                // 拖放期间 CloseExtPreviewForm 被 ExtDragActive 冻结，预览窗不会中途消失
+                if (Control.ModifierKeys.HasFlag(Keys.Control) && !string.IsNullOrEmpty(FilePath))
+                {
+                    _fileDragArmed = true;
+                    _fileDragPt = ((Control)s).PointToScreen(e.Location);
+                    return;
+                }
+                _fileDragArmed = false;
                 // 双击标题 = 打开所在文件夹（手动判定）
                 int nowTick = Environment.TickCount;
                 var curPos = Cursor.Position;
@@ -2143,8 +2158,24 @@ namespace HoverExplorer
             _metaLbl.MouseDown += drag;
             foreach (var ctl in new Control[] { _toolbar, _nameLbl, _metaLbl })
             {
-                ctl.MouseMove += (s, e) => { var c = (Control)s; var sp = c.PointToScreen(e.Location); UpdateResizeCursor(c, sp.X, sp.Y); };
+                ctl.MouseMove += (s, e) =>
+                {
+                    var c = (Control)s; var sp = c.PointToScreen(e.Location);
+                    UpdateResizeCursor(c, sp.X, sp.Y);
+                    // Ctrl 拖出文件：越过阈值进模态 DoDragDrop（数据是路径副本，预览窗生死不影响落点）
+                    if (_fileDragArmed && !string.IsNullOrEmpty(FilePath)
+                        && Math.Abs(sp.X - _fileDragPt.X) + Math.Abs(sp.Y - _fileDragPt.Y) > 3)
+                    {
+                        _fileDragArmed = false;
+                        ExtDragActive = true;
+                        try { DoDragDrop(new DataObject(DataFormats.FileDrop, new[] { FilePath }), DragDropEffects.Copy | DragDropEffects.Move); }
+                        catch { }
+                        ExtDragActive = false;
+                    }
+                };
                 ctl.MouseLeave += (s, e) => { ((Control)s).Cursor = null; };
+                ctl.MouseUp += (s, e) => { if (e.Button == MouseButtons.Left) _fileDragArmed = false; };
+                Tips.Set(ctl, I18n.T("tip_pv_drag"));
             }
             BuildInfoBar();
             BindResize(_scrollPanel);
@@ -6429,6 +6460,7 @@ namespace HoverExplorer
         private static void CloseExtPreviewForm()
         {
             if (_extPreviewForm == null) return;
+            if (PreviewForm.ExtDragActive) return;   // Ctrl 拖出文件进行中：冻结关闭，否则预览窗在 DoDragDrop 模态循环里被抽走、拖放视觉中断
             if (_extPreviewForm.Pinned) { Program.DebugLog("[preview] CLOSE detach (pinned)"); _extPreviewForm = null; return; }
             Program.DebugLog("[preview] CLOSE form"); try { _extPreviewForm.Close(); _extPreviewForm.Dispose(); } catch { } _extPreviewForm = null;
         }
