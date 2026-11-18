@@ -997,7 +997,7 @@ namespace HoverExplorer
         private Size _pvSizeMoveStart;
         // 手动 resize：FormBorderStyle.None 下系统 HTBOTTOM sizing loop 会拖顶部，改手动保持 top/left 不变
         private bool _pvResize;
-        private int _pvResizeMode, _pvResizeSX, _pvResizeSY, _pvResizeSW, _pvResizeSH;
+        private int _pvResizeMode, _pvResizeSX, _pvResizeSY, _pvResizeSW, _pvResizeSH, _pvResizeT0;
         // 双击标题打开文件夹的手动判定
         private int _pvHdrLastTick;
         private Point _pvHdrLastPos;
@@ -2252,7 +2252,7 @@ namespace HoverExplorer
             if (x >= Right - br && y >= Bottom - br) return 0x11;
             if (x <= Left + b) return 0x0A;
             if (x >= Right - b) return 0x0B;
-            if (y <= Top + b) return 0x0C;
+            if (y <= Top + b) return 0x1C;   // 顶边：专用内部标签（HTTOP 0x0C=12 与内部底边模式撞车）
             if (y >= Bottom - b) return 0x0F;
             return 0;
         }
@@ -2279,12 +2279,15 @@ namespace HoverExplorer
                 if (ht == 12 || ht == 11 || ht == 17)
                 {
                     _pvResize = true;
-                    _pvResizeMode = ht == 12 ? 1 : (ht == 11 ? 2 : 3);
+                    // 0x1C = 顶边专用内部标签：HTTOP(0x0C) 十进制就是 12，与底边的内部
+                    // "高度模式"标签 12 撞车——顶边被当成底边式缩放，往下拉反而越拉越长
+                    _pvResizeMode = ht == 12 ? 1 : (ht == 11 ? 2 : (ht == 0x1C ? 4 : 3));
                     var sp0 = Cursor.Position;
                     _pvResizeSX = sp0.X;
                     _pvResizeSY = sp0.Y;
                     _pvResizeSW = Width;
                     _pvResizeSH = Height;
+                    _pvResizeT0 = Top;
                     Capture = true;
                     return;
                 }
@@ -2292,6 +2295,14 @@ namespace HoverExplorer
             else if (_pvResize && m.Msg == 0x200)   // WM_MOUSEMOVE
             {
                 var sp = Cursor.Position;
+                if (_pvResizeMode == 4)
+                {
+                    // 顶边：上沿跟随光标、下沿固定，最小高 60
+                    int nh = Math.Max(60, _pvResizeSH - (sp.Y - _pvResizeSY));
+                    Top = _pvResizeT0 + _pvResizeSH - nh;
+                    Height = nh;
+                    return;
+                }
                 if ((_pvResizeMode & 1) != 0) Height = Math.Max(60, _pvResizeSH + (sp.Y - _pvResizeSY));
                 if ((_pvResizeMode & 2) != 0) Width = Math.Max(120, _pvResizeSW + (sp.X - _pvResizeSX));
                 return;
