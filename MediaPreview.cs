@@ -512,9 +512,25 @@ internal static class MediaPreview
                 Config.PreviewVolume = Math.Round(r * 100);
                 Config.Save();
             };
-            // bar：[播放][静音][音量][进度][时间][关闭]——muteBtn 最先 Add（Dock 逆序结算，落在播放键右侧）
+            // bar：[播放][静音][音量][标记][进度][时间][关闭]——muteBtn 最先 Add（Dock 逆序结算，落在播放键右侧）
+            var markBtn = new Button
+            {
+                Text = "＋",
+                Width = 30,
+                Dock = DockStyle.Left,
+                FlatStyle = FlatStyle.Flat,
+                ForeColor = Config.FG,
+                BackColor = Config.BG,
+                Font = new Font("Microsoft YaHei", 9)
+            };
+            markBtn.FlatAppearance.BorderSize = 0;
+            markBtn.FlatAppearance.MouseOverBackColor = Config.BgHover;
+            markBtn.FlatAppearance.MouseDownBackColor = Config.BgHover;
+            Tips.Set(markBtn, I18n.T("cull_mark_tip"));
+            markBtn.Click += delegate { CullTray.Toggle(path); };
             bar.Controls.Add(muteBtn);
             bar.Controls.Add(volBar);
+            bar.Controls.Add(markBtn);
             bar.Controls.Add(prog);
             bar.Controls.Add(btn);
             bar.Controls.Add(lblTime);

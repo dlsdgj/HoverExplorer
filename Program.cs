@@ -470,6 +470,13 @@ namespace HoverExplorer
                     _spacePending = true;
                     return (IntPtr)1;
                 }
+                // M 标记：把外部预览正显示的文件收进/移出筛选架（须有预览开着）
+                if (vk == 0x4D && !hasMod && !IsKeyboardInputFocus() && !IsEditingInForeground()
+                    && ForegroundIsShell() && PopupForm.ExtPreviewActive())
+                {
+                    _markPending = true;
+                    return (IntPtr)1;
+                }
             }
             return NativeMethods.CallNextHookEx(_kbHook, nCode, wParam, lParam);
         }
@@ -481,6 +488,8 @@ namespace HoverExplorer
 
         // 空格预览待处理标志（钩子置位 → UI 线程 tick 消费）
         private static volatile bool _spacePending;
+        // M 标记待处理标志
+        private static volatile bool _markPending;
 
         // 前台是否资源管理器窗口或桌面（空格预览只在 shell 语境拦空格；聊天/浏览器里空格是文本）
         private static bool ForegroundIsShell()
@@ -1413,6 +1422,16 @@ namespace HoverExplorer
             {
                 _spacePending = false;
                 if (!menuOpen) SpacePreview(mx, my);
+            }
+            // M 标记：预览正显示的文件收进/移出筛选架
+            if (_markPending)
+            {
+                _markPending = false;
+                if (!menuOpen)
+                {
+                    var mp = PopupForm.ExtPreviewFilePath();
+                    if (mp != null) CullTray.Toggle(mp);
+                }
             }
 
             _dragSessionActive = false;
