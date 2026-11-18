@@ -70,8 +70,9 @@ namespace HoverExplorer
         private ToggleSwitch _pvVideoToggle;
         private DelayStepper _pvVideoDelayStepper;  // 视频预览单独触发延时
         private ToggleSwitch _pvVideoDelayToggle;   // 视频预览延时开关
+        private ToggleSwitch _spacePreviewToggle;   // 空格预览开关
         private DarkCombo _pvEdgeCombo;             // 文件预览边缘触发位置
-        private MsStepper _pvEdgeWidthStepper;      // 边缘触发区宽度(px)
+              // 边缘触发区宽度(px)
         private ToggleSwitch _pvAudioToggle;
         private ToggleSwitch _pvDocToggle;
         private ToggleSwitch _pvTextToggle;
@@ -548,9 +549,10 @@ namespace HoverExplorer
             _pvEdgeCombo.SelectedIndexChanged += (s, e) => { _fnApplySettings(false, false); };
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_edge"), I18n.T("pv_edge_desc"), _pvEdgeCombo);
 
-            _pvEdgeWidthStepper = new MsStepper { Value = Math.Max(50, Config.PreviewEdgeWidth), Unit = "px" };
-            _pvEdgeWidthStepper.ValueChanged += (s, e) => { _fnApplySettings(false, false); };
-            y = _pvTypeGroup.AddRow(y, I18n.T("pv_edge_width"), null, _pvEdgeWidthStepper);
+            // 空格预览开关：资源管理器/桌面里按空格预览/关闭光标下的文件
+            _spacePreviewToggle = new ToggleSwitch { On = Config.SpacePreviewEnabled };
+            _spacePreviewToggle.Toggled += (s, e) => _fnApplySettings(false, false);
+            y = _pvTypeGroup.AddRow(y, I18n.T("space_preview"), I18n.T("space_preview_desc"), _spacePreviewToggle);
 
             // 逐类开关要预览的类型（组说明紧贴类型开关区，别和上面的全局设置混在一起）
             y = _pvTypeGroup.AddRow(y, I18n.T("pv_types_desc"), null, null);
@@ -2332,7 +2334,7 @@ namespace HoverExplorer
             if (_pvVideoDelayToggle != null) Config.VideoPreviewDelayEnabled = _pvVideoDelayToggle.On;
             if (_pvVideoDelayStepper != null) Config.VideoPreviewDelay = _pvVideoDelayStepper.Value;
             if (_pvEdgeCombo != null) Config.PreviewEdgeMode = Math.Max(0, Math.Min(3, _pvEdgeCombo.SelectedIndex));
-            if (_pvEdgeWidthStepper != null) Config.PreviewEdgeWidth = _pvEdgeWidthStepper.Value;
+                        if (_spacePreviewToggle != null) Config.SpacePreviewEnabled = _spacePreviewToggle.On;
             if (_pvAudioToggle != null) Config.PreviewAudio = _pvAudioToggle.On;
             if (_pvDocToggle != null) Config.PreviewDocument = _pvDocToggle.On;
             if (_pvTextToggle != null) Config.PreviewText = _pvTextToggle.On;

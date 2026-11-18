@@ -147,10 +147,12 @@ namespace HoverExplorer
         // 开关关闭或边缘触发开启时视频不加延时（防误触已由触发区负责）
         public static bool VideoPreviewDelayEnabled = true;
         public static double VideoPreviewDelay = 0.8;
+        // 空格预览（QuickLook 式）：资源管理器/桌面里按空格预览/关闭光标下的文件
+        public static bool SpacePreviewEnabled = true;
         // 文件预览边缘触发：0=关(整个条目触发) 1=左缘 2=右缘 3=两侧。
         // 开着时条目中段不弹预览窗（留给改名/右键/拖拽），只有停在边缘触发区才预览
         public static int PreviewEdgeMode = 0;
-        public static int PreviewEdgeWidth = 48;
+        public static int PreviewEdgeRatio = 30;   // 边缘触发条宽度 = 条目宽度的百分比：横竖屏/桌面图标自动适配
 
         // 按类型的预览触发延时：视频走 VideoPreviewDelay（需开关开启），其余用全局 HoverDelay
         // （音频的 100ms 提速在 SchedulePreview 里叠加 min 处理）。
@@ -693,9 +695,10 @@ namespace HoverExplorer
                         case "PreviewVideo": PreviewVideo = Convert.ToBoolean(v); break;
                         case "VideoPreviewDelay": VideoPreviewDelay = Convert.ToDouble(v); break;
                         case "VideoPreviewDelayEnabled": VideoPreviewDelayEnabled = Convert.ToBoolean(v); break;
+                        case "SpacePreviewEnabled": SpacePreviewEnabled = Convert.ToBoolean(v); break;
                         case "PreviewVolume": PreviewVolume = Convert.ToDouble(v); break;
                         case "PreviewEdgeMode": PreviewEdgeMode = Convert.ToInt32(v); break;
-                        case "PreviewEdgeWidth": PreviewEdgeWidth = Convert.ToInt32(v); break;
+                        case "PreviewEdgeRatio": PreviewEdgeRatio = Convert.ToInt32(v); break;
                         case "PreviewAudio": PreviewAudio = Convert.ToBoolean(v); break;
                         case "PreviewDocument": PreviewDocument = Convert.ToBoolean(v); break;
                         case "PreviewText": PreviewText = Convert.ToBoolean(v); break;
@@ -872,9 +875,10 @@ namespace HoverExplorer
                 data["PreviewVideo"] = PreviewVideo;
                 data["VideoPreviewDelay"] = VideoPreviewDelay;
                 data["VideoPreviewDelayEnabled"] = VideoPreviewDelayEnabled;
+                data["SpacePreviewEnabled"] = SpacePreviewEnabled;
                 data["PreviewVolume"] = PreviewVolume;
                 data["PreviewEdgeMode"] = PreviewEdgeMode;
-                data["PreviewEdgeWidth"] = PreviewEdgeWidth;
+                data["PreviewEdgeRatio"] = PreviewEdgeRatio;
                 data["PreviewAudio"] = PreviewAudio;
                 data["PreviewDocument"] = PreviewDocument;
                 data["PreviewText"] = PreviewText;

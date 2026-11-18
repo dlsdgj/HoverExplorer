@@ -1756,8 +1756,8 @@ namespace HoverExplorer
                 bool inEdge = false;
                 if (!hoverRect.IsEmpty && !lpActive)
                 {
-                    int cap = hoverIsDesktop ? (int)(hoverRect.Width * 0.4) : hoverRect.Width / 3;
-                    int w = Math.Max(8, Math.Min(Config.PreviewEdgeWidth, cap));
+                    // 触发条 = 条目宽度的百分比：横竖屏缩略图、桌面图标自动适配，无固定 px 的错配
+                    int w = Math.Max(8, (int)(hoverRect.Width * Config.PreviewEdgeRatio / 100.0));
                     inEdge = ((Config.PreviewEdgeMode & 1) != 0 && mx < hoverRect.Left + w)
                           || ((Config.PreviewEdgeMode & 2) != 0 && mx >= hoverRect.Right - w);
                 }

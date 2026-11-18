@@ -6508,6 +6508,17 @@ namespace HoverExplorer
             form.SetHeader(name, meta);
         }
 
+        // 空格预览/筛选架点击的立即预览入口：悬停流程由 Schedule 先登记 _extPreviewPath，
+        // 而 LoadFilePreview 校验路径一致——直接调用会因登记缺失静默退出（空格预览
+        // 出生即坏的根因）。这里先登记再加载
+        internal static void PreviewNow(string full, Point mouse)
+        {
+            if (string.IsNullOrEmpty(full)) return;
+            CancelFilePreview();
+            _extPreviewPath = full;
+            LoadFilePreview(full, mouse);
+        }
+
         internal static void LoadFilePreview(string full, Point mouse)
         {
             if (full == null || _extPreviewPath != full) return;
