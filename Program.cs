@@ -506,7 +506,7 @@ namespace HoverExplorer
             if (!Config.PreviewFiles || !PreviewProvider.CanPreview(path)) return;
             if (PopupForm.ExtPreviewActive() && string.Equals(PopupForm.ExtPreviewFilePath(), path, StringComparison.OrdinalIgnoreCase))
             {
-                PopupForm.CancelFilePreview();   // 同一文件：空格 = 关闭
+                if (!PopupForm.ExtPreviewPinned()) PopupForm.CancelFilePreview();   // 同一文件：空格 = 关闭（钉住的不响应，避免解除引用后重复开窗）
                 return;
             }
             PopupForm.CancelFilePreview();

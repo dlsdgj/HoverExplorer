@@ -6369,6 +6369,12 @@ namespace HoverExplorer
             return ExtPreviewActive() ? _extPreviewForm.FilePath : null;
         }
 
+        // 当前外部预览是否被钉住（空格不响应钉住预览的开关——用户钉住就是要它留着）
+        internal static bool ExtPreviewPinned()
+        {
+            return _extPreviewForm != null && !_extPreviewForm.IsDisposed && _extPreviewForm.Pinned;
+        }
+
         // 外部预览 ←/→ 切换：图片原地换图，其余按鼠标当前位置重建（LoadFilePreview 自带定位）
         internal static void NavigateExtPreview(int dir)
         {
