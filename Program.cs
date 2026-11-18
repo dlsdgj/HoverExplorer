@@ -465,16 +465,30 @@ namespace HoverExplorer
                 // 资源管理器/桌面且无修饰键、非输入态时才拦；钩子里只做轻量前台判定（微秒级），
                 // 真正的文件检测在 UI 线程 tick 里做（_spacePending，检测可能上百毫秒不能进钩子）
                 if (vk == VK_SPACE && !hasMod && !IsKeyboardInputFocus() && !IsEditingInForeground()
-                    && _hoverEnabled && Config.PreviewFiles && ForegroundIsShell())
+                    && _hoverEnabled && Config.PreviewFiles && Config.SpacePreviewEnabled && ForegroundIsShell())
                 {
-                    _spacePending = true;
+                    // 自动重复防护：按住空格的重复键在 300ms 死区里静默吞掉——
+                    // tick 每 80ms 才消费一个 pending，按住会让预览开/关疯狂打乒乓
+                    int now = Environment.TickCount;
+                    if (!_spacePending && (uint)(now - _lastSpaceIntercept) > 300)
+                    {
+                        _lastSpaceIntercept = now;
+                        _spacePending = true;
+                        DebugLog("[space] intercepted");
+                    }
                     return (IntPtr)1;
                 }
                 // M 标记：把外部预览正显示的文件收进/移出筛选架（须有预览开着）
                 if (vk == 0x4D && !hasMod && !IsKeyboardInputFocus() && !IsEditingInForeground()
                     && ForegroundIsShell() && PopupForm.ExtPreviewActive())
                 {
-                    _markPending = true;
+                    int now = Environment.TickCount;
+                    if (!_markPending && (uint)(now - _lastMarkIntercept) > 300)
+                    {
+                        _lastMarkIntercept = now;
+                        _markPending = true;
+                        DebugLog("[space] mark-intercepted");
+                    }
                     return (IntPtr)1;
                 }
             }
@@ -490,6 +504,8 @@ namespace HoverExplorer
         private static volatile bool _spacePending;
         // M 标记待处理标志
         private static volatile bool _markPending;
+        // 自动重复死区（按住键的重复键不重复触发，避免开关状态打乒乓）
+        private static int _lastSpaceIntercept, _lastMarkIntercept;
 
         // 前台是否资源管理器窗口或桌面（空格预览只在 shell 语境拦空格；聊天/浏览器里空格是文本）
         private static bool ForegroundIsShell()
@@ -504,15 +520,33 @@ namespace HoverExplorer
             catch { return false; }
         }
 
-        // 空格预览：同一文件再按 = 关闭；否则立即打开（零延时——主动操作不需要防误触）
+        // 空格预览：同一文件再按 = 关闭；否则立即打开（零延时——主动操作不需要防误触）。
+        // 光标不在条目上时回退到 QuickLook 语义：取 Explorer 当前选中的单个条目
         private static void SpacePreview(int mx, int my)
         {
             Rectangle rect = Rectangle.Empty; bool isDir = false;
             string path = null;
-            if (NativeMethods.PointOnDesktop(mx, my)) path = DetectDesktopItem(mx, my, out rect, out isDir);
-            else if (Config.ExplorerEnabled) path = ExplorerSupport.DetectHoverItem(mx, my, out rect, out isDir, true);
+            if (NativeMethods.PointOnDesktop(mx, my))
+            {
+                path = DetectDesktopItem(mx, my, out rect, out isDir);
+                DebugLog("[space] desktop-detect: " + (path ?? "null"));
+            }
+            else if (Config.ExplorerEnabled)
+            {
+                path = ExplorerSupport.DetectHoverItem(mx, my, out rect, out isDir, true);
+                DebugLog("[space] cursor-detect: " + (path ?? "null"));
+                if (string.IsNullOrEmpty(path))
+                {
+                    IntPtr fg = NativeMethods.GetForegroundWindow();
+                    if (fg != IntPtr.Zero && NativeMethods.GetClassOf(fg) == "CabinetWClass")
+                    {
+                        path = ExplorerSupport.GetExplorerSelectedPath(fg);
+                        DebugLog("[space] selection-fallback: " + (path ?? "null"));
+                    }
+                }
+            }
             if (string.IsNullOrEmpty(path) || isDir) return;
-            if (!Config.PreviewFiles || !PreviewProvider.CanPreview(path)) return;
+            if (!Config.PreviewFiles || !PreviewProvider.CanPreview(path)) { DebugLog("[space] not-previewable: " + path); return; }
             if (PopupForm.ExtPreviewActive() && string.Equals(PopupForm.ExtPreviewFilePath(), path, StringComparison.OrdinalIgnoreCase))
             {
                 if (!PopupForm.ExtPreviewPinned()) PopupForm.CancelFilePreview();   // 同一文件：空格 = 关闭（钉住的不响应，避免解除引用后重复开窗）

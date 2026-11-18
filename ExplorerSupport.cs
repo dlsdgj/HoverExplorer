@@ -210,6 +210,44 @@ namespace HoverExplorer
             return null;
         }
 
+// QuickLook 语义的后半段：取 Explorer 前台窗口当前选中的单个条目（光标不在条目上时用）。
+        // 与 ResolveNamespaceItem 同款后期绑定 ShellWindows：按 HWND 匹配 → Document.SelectedItems → Path
+        internal static string GetExplorerSelectedPath(IntPtr explorerHwnd)
+        {
+            try
+            {
+                var t = Type.GetTypeFromCLSID(new Guid("9BA05972-F6A8-11CF-A442-00A0C90A8F39"));
+                var obj = Activator.CreateInstance(t);
+                foreach (var w in (System.Collections.IEnumerable)obj)
+                {
+                    try
+                    {
+                        IntPtr hwnd = (IntPtr)(long)w.GetType().InvokeMember("HWND",
+                            System.Reflection.BindingFlags.GetProperty, null, w, null);
+                        if (hwnd != explorerHwnd) continue;
+                        object doc = w.GetType().InvokeMember("Document",
+                            System.Reflection.BindingFlags.GetProperty, null, w, null);
+                        if (doc == null) continue;
+                        object sel = doc.GetType().InvokeMember("SelectedItems",
+                            System.Reflection.BindingFlags.GetProperty, null, doc, null);
+                        if (sel == null) continue;
+                        int count = (int)sel.GetType().InvokeMember("Count",
+                            System.Reflection.BindingFlags.GetProperty, null, sel, null);
+                        if (count != 1) return null;   // 多选/无选中：没有单一预览对象
+                        object item = sel.GetType().InvokeMember("Item",
+                            System.Reflection.BindingFlags.InvokeMethod, null, sel, new object[] { 0 });
+                        string path = item.GetType().InvokeMember("Path",
+                            System.Reflection.BindingFlags.GetProperty, null, item, null) as string;
+                        if (!string.IsNullOrEmpty(path) && (File.Exists(path) || Directory.Exists(path)))
+                            return path;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            return null;
+        }
+
         private static string DetectNavPaneFolder(IntPtr explorerHwnd, int mx, int my)
         {
             IntPtr treeHwnd = IntPtr.Zero;
