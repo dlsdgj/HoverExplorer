@@ -552,15 +552,36 @@ namespace HoverExplorer
                     }
                 }
             }
-            if (string.IsNullOrEmpty(path) || isDir) return;
+            if (string.IsNullOrEmpty(path)) return;
+            if (isDir)
+            {
+                // 光标下是文件夹：空格直接弹出它的面板（主动操作零延时）；已开着同路径面板则不动
+                if (_panels.Any(p => !p.IsDisposed && p.CurrentPath == path))
+                {
+                    DebugLog("[space] panel already open " + path);
+                    return;
+                }
+                DebugLog("[space] open panel " + path);
+                foreach (var p in _panels.Where(pp => !pp.Pinned)) p.ClosePanel();
+                _panels.RemoveAll(p => !p.Pinned);
+                var p2 = new PopupForm(0, OpenSub, DropResolver, ScheduleCloseAfter);
+                if (p2.ShowPanel(path, mx + Config.PopupOffset, my + Config.PopupOffset))
+                {
+                    ShowHighlight(rect);
+                    _panels.Add(p2);
+                    p2.Show();
+                    NativeMethods.SetWindowPos(p2.Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+                        NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+                }
+                return;
+            }
             if (!Config.PreviewFiles || !PreviewProvider.CanPreview(path)) { DebugLog("[space] not-previewable: " + path); return; }
             if (PopupForm.ExtPreviewActive() && string.Equals(PopupForm.ExtPreviewFilePath(), path, StringComparison.OrdinalIgnoreCase))
             {
                 if (!PopupForm.ExtPreviewPinned()) PopupForm.CancelFilePreview();   // 同一文件：空格 = 关闭（钉住的不响应，避免解除引用后重复开窗）
                 return;
             }
-            PopupForm.CancelFilePreview();
-            PopupForm.LoadFilePreview(path, new Point(mx, my));
+            PopupForm.PreviewNow(path, new Point(mx, my));
             DebugLog("[preview] space " + path);
         }
 

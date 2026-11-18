@@ -175,7 +175,7 @@ namespace HoverExplorer
                     if (e.Button == MouseButtons.Left)
                     {
                         var sp = card.PointToScreen(new Point(card.Width / 2, card.Height / 2));
-                        PopupForm.LoadFilePreview(path, sp);   // 点卡片：原地预览这个文件
+                        PopupForm.PreviewNow(path, sp);   // 点卡片：原地预览这个文件
                     }
                     else if (e.Button == MouseButtons.Right) CullTray.Remove(path);
                 };
