@@ -5882,6 +5882,13 @@ namespace HoverExplorer
 
         private void SchedulePreview(RowLabel row, bool immediate)
         {
+            // 级联抑制：更深层子面板开着时，本层（父层）行预览一律不再调度——用户已"下钻"，
+            // 父层应休眠；否则扫过父层残余可见行会弹出带声预览，穿透子面板（核心 bug：跨层出声）
+            if (Program.Panels.Any(p => !p.IsDisposed && p.Level > _level))
+            {
+                Program.DebugLog("[panel-preview] suppressed (deeper panel open) level=" + _level + " " + row.Full);
+                return;
+            }
             if (_previewForm != null && _previewPath == row.Full) { Program.DebugLog("[panel-preview] keep-existing level=" + _level + " " + row.Full); return; }
             Program.DebugLog("[panel-preview] schedule level=" + _level + " lang=" + I18n.Lang + " " + row.Full + " delay=" + Config.HoverDelayMs + " (hadTimer=" + (_previewTimer != null) + " hadForm=" + (_previewForm != null) + ")");
             CancelPreview();
@@ -6356,6 +6363,12 @@ namespace HoverExplorer
             return _extPreviewForm != null && !_extPreviewForm.IsDisposed && !string.IsNullOrEmpty(_extPreviewForm.FilePath);
         }
 
+        // 当前外部预览显示的文件路径（未开预览返回 null）；空格预览的开关判定用
+        internal static string ExtPreviewFilePath()
+        {
+            return ExtPreviewActive() ? _extPreviewForm.FilePath : null;
+        }
+
         // 外部预览 ←/→ 切换：图片原地换图，其余按鼠标当前位置重建（LoadFilePreview 自带定位）
         internal static void NavigateExtPreview(int dir)
         {
@@ -6433,7 +6446,7 @@ namespace HoverExplorer
             form.SetHeader(name, meta);
         }
 
-        private static void LoadFilePreview(string full, Point mouse)
+        internal static void LoadFilePreview(string full, Point mouse)
         {
             if (full == null || _extPreviewPath != full) return;
             Program.DebugLog("[preview] timer-fired, generate start " + full);

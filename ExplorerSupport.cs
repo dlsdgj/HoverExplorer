@@ -64,7 +64,7 @@ namespace HoverExplorer
         private static IntPtr _missHwnd;
         private static DateTime _missAt = DateTime.MinValue;
 
-        public static string DetectHoverItem(int mx, int my, out System.Drawing.Rectangle rect, out bool isDir)
+        public static string DetectHoverItem(int mx, int my, out System.Drawing.Rectangle rect, out bool isDir, bool force = false)
         {
             rect = System.Drawing.Rectangle.Empty;
             isDir = false;
@@ -85,11 +85,11 @@ namespace HoverExplorer
             // miss 节流：Win11 新版 Explorer 的 UIA 全量检测一次 130-500ms（44 条目的
             // FindAll+逐条矩形），鼠标移动时每 tick 都 miss 都全量跑 → UI 线程饱和
             // （实测 tick slow 527ms，关闭逻辑被饿死、置顶窗僵死）。上次未命中且还在
-            // 节流窗口内 → 直接判空；悬停延时本来 ≥150ms，感知无损
-            if (_missHwnd == explorerHwnd && (DateTime.UtcNow - _missAt).TotalMilliseconds < 250)
+            // 节流窗口内 → 直接判空；悬停延时本来 ≥150ms，感知无损。force（空格预览）绕过
+            if (!force && _missHwnd == explorerHwnd && (DateTime.UtcNow - _missAt).TotalMilliseconds < 250)
                 return null;
 
-            if (_stillHwnd == explorerHwnd && mx == _stillX && my == _stillY
+            if (!force && _stillHwnd == explorerHwnd && mx == _stillX && my == _stillY
                 && (DateTime.UtcNow - _stillAt).TotalMilliseconds < 250)
             {
                 rect = _stillRect; isDir = _stillIsDir;
