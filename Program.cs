@@ -535,6 +535,13 @@ namespace HoverExplorer
             {
                 path = ExplorerSupport.DetectHoverItem(mx, my, out rect, out isDir, true);
                 DebugLog("[space] cursor-detect: " + (path ?? "null"));
+                // 拼出的路径在磁盘上不存在 = 路径还原失败（搜索结果视图/命名空间条目）——
+                // 转入选中回退：shell 的 SelectedItems 在这些视图里照样给得出真实路径
+                if (!string.IsNullOrEmpty(path) && !isDir && !File.Exists(path))
+                {
+                    DebugLog("[space] cursor-path missing on disk: " + path);
+                    path = null;
+                }
                 if (string.IsNullOrEmpty(path))
                 {
                     IntPtr fg = NativeMethods.GetForegroundWindow();
