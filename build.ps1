@@ -24,7 +24,7 @@ foreach ($g in $gacRefs) {
 }
 
 if (Test-Path $out) { Set-ItemProperty $out -Name IsReadOnly -Value $false }
-$srcFiles = @('AssemblyInfo.cs','CardPalette.cs','Config.cs','EntryListForm.cs','IMediaSession.cs','MciAudioSession.cs','FfmpegAudioSession.cs','FfmpegDownload.cs','GeneratorLinks.cs','ExplorerSupport.cs','ExplorerUia.cs','I18n.cs','Ingest.cs','MediaDecoder.cs','MediaPreview.cs','NativeMethods.cs','PaletteListForm.cs','PerchSupport.cs','PinCardForm.cs','PopupForm.cs','PreviewProvider.cs','Program.cs','RemoteReader.cs','SettingsForm.cs','ShellContextMenu.cs','SlimScrollBar.cs','TcSupport.cs','Win11.cs','WaveDecoder.cs','WpfControls.cs','WpfSettingsBinding.cs','WpfSettingsWindow.cs') | ForEach-Object { "$src\$_" }
+$srcFiles = @('AssemblyInfo.cs','CardPalette.cs','Config.cs','EntryListForm.cs','IMediaSession.cs','MciAudioSession.cs','FfmpegAudioSession.cs','FfmpegDownload.cs','GeneratorLinks.cs','ExplorerSupport.cs','ExplorerUia.cs','I18n.cs','Ingest.cs','MediaDecoder.cs','MediaPreview.cs','NativeMethods.cs','PaletteListForm.cs','PerchSupport.cs','PinCardForm.cs','PopupForm.cs','PreviewProvider.cs','Program.cs','RemoteReader.cs','SettingsForm.cs','ShellContextMenu.cs','SlimScrollBar.cs','TcSupport.cs','Win11.cs','WaveDecoder.cs','CullTrayForm.cs','WpfControls.cs','WpfSettingsBinding.cs','WpfSettingsWindow.cs') | ForEach-Object { "$src\$_" }
 
 # WPF 设置面板：XAML 作为嵌入资源，运行时由 XamlReader 加载（无需 XAML 编译/MSBuild）
 $xamlDir = "$src\WpfSettings"

@@ -853,6 +853,19 @@ namespace HoverExplorer
         // 不抢前台：预览仅为悬停展示，激活会打断当前窗口的焦点
         protected override bool ShowWithoutActivation { get { return true; } }
 
+        // 诞生即置顶：Windows 在 Show 时会清掉 WS_EX_TOPMOST 样式位，靠 tick 的
+        // EnsureWinTopmost 补会有 ~50ms 排在普通窗口后面的"裸奔帧"（快速开关预览时
+        // 看起来就是预览窗藏在 Explorer 后面）。直接写进 CreateParams，第一帧就置顶
+        protected override CreateParams CreateParams
+        {
+            get
+            {
+                var cp = base.CreateParams;
+                cp.ExStyle |= 0x8;   // WS_EX_TOPMOST
+                return cp;
+            }
+        }
+
         // ── 配色：预览窗跟随列表配色（List* 调色板），视觉上和列表面板同一套 ──
         private static Color PvBg { get { return Config.ListBg; } }
         private static Color PvFg { get { return Config.ListFg; } }
@@ -891,6 +904,11 @@ namespace HoverExplorer
         private Label _renameBtn, _openBtn;   // 左上角：重命名 / 用默认程序打开
         private Label _nameLbl;
         private Label _metaLbl;
+
+        // Ctrl+拖头部 = 拖出文件（OLE FileDrop）；ExtDragActive 冻结拖放期间的预览窗关闭
+        private bool _fileDragArmed;
+        private Point _fileDragPt;
+        internal static bool ExtDragActive;
         private Label _pinBtn;
 
         private Label _copyBtn;
@@ -979,7 +997,7 @@ namespace HoverExplorer
         private Size _pvSizeMoveStart;
         // 手动 resize：FormBorderStyle.None 下系统 HTBOTTOM sizing loop 会拖顶部，改手动保持 top/left 不变
         private bool _pvResize;
-        private int _pvResizeMode, _pvResizeSX, _pvResizeSY, _pvResizeSW, _pvResizeSH;
+        private int _pvResizeMode, _pvResizeSX, _pvResizeSY, _pvResizeSW, _pvResizeSH, _pvResizeT0;
         // 双击标题打开文件夹的手动判定
         private int _pvHdrLastTick;
         private Point _pvHdrLastPos;
@@ -2117,6 +2135,16 @@ namespace HoverExplorer
                 // 音频操作栏：点击 seek / 拖动挪窗口，二义性由 AudioBarDown 处理
                 if (_audio != null) { AudioBarDown(s, e); return; }
                 if (e.Button != MouseButtons.Left) return;
+                // Ctrl+拖头部 = 拖出文件（OLE FileDrop，可直接丢进达芬奇/资源管理器/聊天）：
+                // 武装后在 MouseMove 里越过 3px 阈值才真正进 DoDragDrop（模态循环），
+                // 拖放期间 CloseExtPreviewForm 被 ExtDragActive 冻结，预览窗不会中途消失
+                if (Control.ModifierKeys.HasFlag(Keys.Control) && !string.IsNullOrEmpty(FilePath))
+                {
+                    _fileDragArmed = true;
+                    _fileDragPt = ((Control)s).PointToScreen(e.Location);
+                    return;
+                }
+                _fileDragArmed = false;
                 // 双击标题 = 打开所在文件夹（手动判定）
                 int nowTick = Environment.TickCount;
                 var curPos = Cursor.Position;
@@ -2143,8 +2171,24 @@ namespace HoverExplorer
             _metaLbl.MouseDown += drag;
             foreach (var ctl in new Control[] { _toolbar, _nameLbl, _metaLbl })
             {
-                ctl.MouseMove += (s, e) => { var c = (Control)s; var sp = c.PointToScreen(e.Location); UpdateResizeCursor(c, sp.X, sp.Y); };
+                ctl.MouseMove += (s, e) =>
+                {
+                    var c = (Control)s; var sp = c.PointToScreen(e.Location);
+                    UpdateResizeCursor(c, sp.X, sp.Y);
+                    // Ctrl 拖出文件：越过阈值进模态 DoDragDrop（数据是路径副本，预览窗生死不影响落点）
+                    if (_fileDragArmed && !string.IsNullOrEmpty(FilePath)
+                        && Math.Abs(sp.X - _fileDragPt.X) + Math.Abs(sp.Y - _fileDragPt.Y) > 3)
+                    {
+                        _fileDragArmed = false;
+                        ExtDragActive = true;
+                        try { DoDragDrop(new DataObject(DataFormats.FileDrop, new[] { FilePath }), DragDropEffects.Copy | DragDropEffects.Move); }
+                        catch { }
+                        ExtDragActive = false;
+                    }
+                };
                 ctl.MouseLeave += (s, e) => { ((Control)s).Cursor = null; };
+                ctl.MouseUp += (s, e) => { if (e.Button == MouseButtons.Left) _fileDragArmed = false; };
+                Tips.Set(ctl, I18n.T("tip_pv_drag"));
             }
             BuildInfoBar();
             BindResize(_scrollPanel);
@@ -2208,7 +2252,7 @@ namespace HoverExplorer
             if (x >= Right - br && y >= Bottom - br) return 0x11;
             if (x <= Left + b) return 0x0A;
             if (x >= Right - b) return 0x0B;
-            if (y <= Top + b) return 0x0C;
+            if (y <= Top + b) return 0x1C;   // 顶边：专用内部标签（HTTOP 0x0C=12 与内部底边模式撞车）
             if (y >= Bottom - b) return 0x0F;
             return 0;
         }
@@ -2235,12 +2279,15 @@ namespace HoverExplorer
                 if (ht == 12 || ht == 11 || ht == 17)
                 {
                     _pvResize = true;
-                    _pvResizeMode = ht == 12 ? 1 : (ht == 11 ? 2 : 3);
+                    // 0x1C = 顶边专用内部标签：HTTOP(0x0C) 十进制就是 12，与底边的内部
+                    // "高度模式"标签 12 撞车——顶边被当成底边式缩放，往下拉反而越拉越长
+                    _pvResizeMode = ht == 12 ? 1 : (ht == 11 ? 2 : (ht == 0x1C ? 4 : 3));
                     var sp0 = Cursor.Position;
                     _pvResizeSX = sp0.X;
                     _pvResizeSY = sp0.Y;
                     _pvResizeSW = Width;
                     _pvResizeSH = Height;
+                    _pvResizeT0 = Top;
                     Capture = true;
                     return;
                 }
@@ -2248,6 +2295,14 @@ namespace HoverExplorer
             else if (_pvResize && m.Msg == 0x200)   // WM_MOUSEMOVE
             {
                 var sp = Cursor.Position;
+                if (_pvResizeMode == 4)
+                {
+                    // 顶边：上沿跟随光标、下沿固定，最小高 60
+                    int nh = Math.Max(60, _pvResizeSH - (sp.Y - _pvResizeSY));
+                    Top = _pvResizeT0 + _pvResizeSH - nh;
+                    Height = nh;
+                    return;
+                }
                 if ((_pvResizeMode & 1) != 0) Height = Math.Max(60, _pvResizeSH + (sp.Y - _pvResizeSY));
                 if ((_pvResizeMode & 2) != 0) Width = Math.Max(120, _pvResizeSW + (sp.X - _pvResizeSX));
                 return;
@@ -5882,6 +5937,13 @@ namespace HoverExplorer
 
         private void SchedulePreview(RowLabel row, bool immediate)
         {
+            // 级联抑制：更深层子面板开着时，本层（父层）行预览一律不再调度——用户已"下钻"，
+            // 父层应休眠；否则扫过父层残余可见行会弹出带声预览，穿透子面板（核心 bug：跨层出声）
+            if (Program.Panels.Any(p => !p.IsDisposed && p.Level > _level))
+            {
+                Program.DebugLog("[panel-preview] suppressed (deeper panel open) level=" + _level + " " + row.Full);
+                return;
+            }
             if (_previewForm != null && _previewPath == row.Full) { Program.DebugLog("[panel-preview] keep-existing level=" + _level + " " + row.Full); return; }
             Program.DebugLog("[panel-preview] schedule level=" + _level + " lang=" + I18n.Lang + " " + row.Full + " delay=" + Config.HoverDelayMs + " (hadTimer=" + (_previewTimer != null) + " hadForm=" + (_previewForm != null) + ")");
             CancelPreview();
@@ -6356,6 +6418,18 @@ namespace HoverExplorer
             return _extPreviewForm != null && !_extPreviewForm.IsDisposed && !string.IsNullOrEmpty(_extPreviewForm.FilePath);
         }
 
+        // 当前外部预览显示的文件路径（未开预览返回 null）；空格预览的开关判定用
+        internal static string ExtPreviewFilePath()
+        {
+            return ExtPreviewActive() ? _extPreviewForm.FilePath : null;
+        }
+
+        // 当前外部预览是否被钉住（空格不响应钉住预览的开关——用户钉住就是要它留着）
+        internal static bool ExtPreviewPinned()
+        {
+            return _extPreviewForm != null && !_extPreviewForm.IsDisposed && _extPreviewForm.Pinned;
+        }
+
         // 外部预览 ←/→ 切换：图片原地换图，其余按鼠标当前位置重建（LoadFilePreview 自带定位）
         internal static void NavigateExtPreview(int dir)
         {
@@ -6410,6 +6484,7 @@ namespace HoverExplorer
         private static void CloseExtPreviewForm()
         {
             if (_extPreviewForm == null) return;
+            if (PreviewForm.ExtDragActive) return;   // Ctrl 拖出文件进行中：冻结关闭，否则预览窗在 DoDragDrop 模态循环里被抽走、拖放视觉中断
             if (_extPreviewForm.Pinned) { Program.DebugLog("[preview] CLOSE detach (pinned)"); _extPreviewForm = null; return; }
             Program.DebugLog("[preview] CLOSE form"); try { _extPreviewForm.Close(); _extPreviewForm.Dispose(); } catch { } _extPreviewForm = null;
         }
@@ -6433,7 +6508,18 @@ namespace HoverExplorer
             form.SetHeader(name, meta);
         }
 
-        private static void LoadFilePreview(string full, Point mouse)
+        // 空格预览/筛选架点击的立即预览入口：悬停流程由 Schedule 先登记 _extPreviewPath，
+        // 而 LoadFilePreview 校验路径一致——直接调用会因登记缺失静默退出（空格预览
+        // 出生即坏的根因）。这里先登记再加载
+        internal static void PreviewNow(string full, Point mouse)
+        {
+            if (string.IsNullOrEmpty(full)) return;
+            CancelFilePreview();
+            _extPreviewPath = full;
+            LoadFilePreview(full, mouse);
+        }
+
+        internal static void LoadFilePreview(string full, Point mouse)
         {
             if (full == null || _extPreviewPath != full) return;
             Program.DebugLog("[preview] timer-fired, generate start " + full);

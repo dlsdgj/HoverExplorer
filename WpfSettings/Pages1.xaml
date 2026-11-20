@@ -170,7 +170,8 @@
                             <ComboBoxItem c:Cfg.I18n="edge_both"/>
                         </ComboBox>
                     </c:SettingRow>
-                    <c:SettingRow c:Cfg.I18n="pv_edge_width" c:Cfg.ShowIf="EdgeOn"><c:Stepper c:Cfg.Key="PreviewEdgeWidth" Value="50" Min="10" Max="300" Step="5" Suffix=" px"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="pv_edge_width" c:Cfg.ShowIf="EdgeOn"><c:Stepper c:Cfg.Key="PreviewEdgeRatio" Value="30" Min="10" Max="50" Step="5" Suffix=" %"/></c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="space_preview" c:Cfg.Desc="space_preview_desc"><ToggleButton c:Cfg.Key="SpacePreviewEnabled" Style="{DynamicResource Switch}" IsChecked="True"/></c:SettingRow>
                     <c:SettingRow c:Cfg.I18n="ffmpeg_path_row" c:Cfg.Desc="ffmpeg_path_desc">
                         <StackPanel Orientation="Horizontal">
                             <TextBox c:Cfg.Key="FfmpegPath" Width="150" Margin="0,0,6,0"/>

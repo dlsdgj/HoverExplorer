@@ -64,7 +64,7 @@ namespace HoverExplorer
         private static IntPtr _missHwnd;
         private static DateTime _missAt = DateTime.MinValue;
 
-        public static string DetectHoverItem(int mx, int my, out System.Drawing.Rectangle rect, out bool isDir)
+        public static string DetectHoverItem(int mx, int my, out System.Drawing.Rectangle rect, out bool isDir, bool force = false)
         {
             rect = System.Drawing.Rectangle.Empty;
             isDir = false;
@@ -85,11 +85,11 @@ namespace HoverExplorer
             // miss 节流：Win11 新版 Explorer 的 UIA 全量检测一次 130-500ms（44 条目的
             // FindAll+逐条矩形），鼠标移动时每 tick 都 miss 都全量跑 → UI 线程饱和
             // （实测 tick slow 527ms，关闭逻辑被饿死、置顶窗僵死）。上次未命中且还在
-            // 节流窗口内 → 直接判空；悬停延时本来 ≥150ms，感知无损
-            if (_missHwnd == explorerHwnd && (DateTime.UtcNow - _missAt).TotalMilliseconds < 250)
+            // 节流窗口内 → 直接判空；悬停延时本来 ≥150ms，感知无损。force（空格预览）绕过
+            if (!force && _missHwnd == explorerHwnd && (DateTime.UtcNow - _missAt).TotalMilliseconds < 250)
                 return null;
 
-            if (_stillHwnd == explorerHwnd && mx == _stillX && my == _stillY
+            if (!force && _stillHwnd == explorerHwnd && mx == _stillX && my == _stillY
                 && (DateTime.UtcNow - _stillAt).TotalMilliseconds < 250)
             {
                 rect = _stillRect; isDir = _stillIsDir;
@@ -204,6 +204,44 @@ namespace HoverExplorer
                     var sb = new StringBuilder(520);
                     if (SHLoadIndirectString(Environment.ExpandEnvironmentVariables(val), sb, sb.Capacity, IntPtr.Zero) == 0 && sb.Length > 0)
                         return sb.ToString();
+                }
+            }
+            catch { }
+            return null;
+        }
+
+// QuickLook 语义的后半段：取 Explorer 前台窗口当前选中的单个条目（光标不在条目上时用）。
+        // 与 ResolveNamespaceItem 同款后期绑定 ShellWindows：按 HWND 匹配 → Document.SelectedItems → Path
+        internal static string GetExplorerSelectedPath(IntPtr explorerHwnd)
+        {
+            try
+            {
+                var t = Type.GetTypeFromCLSID(new Guid("9BA05972-F6A8-11CF-A442-00A0C90A8F39"));
+                var obj = Activator.CreateInstance(t);
+                foreach (var w in (System.Collections.IEnumerable)obj)
+                {
+                    try
+                    {
+                        IntPtr hwnd = (IntPtr)(long)w.GetType().InvokeMember("HWND",
+                            System.Reflection.BindingFlags.GetProperty, null, w, null);
+                        if (hwnd != explorerHwnd) continue;
+                        object doc = w.GetType().InvokeMember("Document",
+                            System.Reflection.BindingFlags.GetProperty, null, w, null);
+                        if (doc == null) continue;
+                        object sel = doc.GetType().InvokeMember("SelectedItems",
+                            System.Reflection.BindingFlags.GetProperty, null, doc, null);
+                        if (sel == null) continue;
+                        int count = (int)sel.GetType().InvokeMember("Count",
+                            System.Reflection.BindingFlags.GetProperty, null, sel, null);
+                        if (count != 1) return null;   // 多选/无选中：没有单一预览对象
+                        object item = sel.GetType().InvokeMember("Item",
+                            System.Reflection.BindingFlags.InvokeMethod, null, sel, new object[] { 0 });
+                        string path = item.GetType().InvokeMember("Path",
+                            System.Reflection.BindingFlags.GetProperty, null, item, null) as string;
+                        if (!string.IsNullOrEmpty(path) && (File.Exists(path) || Directory.Exists(path)))
+                            return path;
+                    }
+                    catch { }
                 }
             }
             catch { }

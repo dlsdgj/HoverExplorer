@@ -461,6 +461,36 @@ namespace HoverExplorer
                 bool nav = vk == VK_UP || vk == VK_DOWN || vk == VK_LEFT || vk == VK_RIGHT
                     || vk == VK_RETURN || vk == VK_ESCAPE;
                 if (nav && !hasMod && !IsKeyboardInputFocus() && RoutePanelKeys(vk)) return (IntPtr)1;
+                // 空格预览（QuickLook 式）：预览/关闭光标下的文件。空格是文本字符——仅当前台是
+                // 资源管理器/桌面且无修饰键、非输入态时才拦；钩子里只做轻量前台判定（微秒级），
+                // 真正的文件检测在 UI 线程 tick 里做（_spacePending，检测可能上百毫秒不能进钩子）
+                if (vk == VK_SPACE && !hasMod && !IsKeyboardInputFocus() && !IsEditingInForeground()
+                    && _hoverEnabled && Config.PreviewFiles && Config.SpacePreviewEnabled && ForegroundIsShell())
+                {
+                    // 自动重复防护：按住空格的重复键在 300ms 死区里静默吞掉——
+                    // tick 每 80ms 才消费一个 pending，按住会让预览开/关疯狂打乒乓
+                    int now = Environment.TickCount;
+                    if (!_spacePending && (uint)(now - _lastSpaceIntercept) > 300)
+                    {
+                        _lastSpaceIntercept = now;
+                        _spacePending = true;
+                        DebugLog("[space] intercepted");
+                    }
+                    return (IntPtr)1;
+                }
+                // M 标记：把外部预览正显示的文件收进/移出筛选架（须有预览开着）
+                if (vk == 0x4D && !hasMod && !IsKeyboardInputFocus() && !IsEditingInForeground()
+                    && ForegroundIsShell() && PopupForm.ExtPreviewActive())
+                {
+                    int now = Environment.TickCount;
+                    if (!_markPending && (uint)(now - _lastMarkIntercept) > 300)
+                    {
+                        _lastMarkIntercept = now;
+                        _markPending = true;
+                        DebugLog("[space] mark-intercepted");
+                    }
+                    return (IntPtr)1;
+                }
             }
             return NativeMethods.CallNextHookEx(_kbHook, nCode, wParam, lParam);
         }
@@ -468,6 +498,92 @@ namespace HoverExplorer
         // 面板键盘导航/预览切换用（钩子内裸键判定）
         private const int VK_LEFT = 0x25, VK_UP = 0x26, VK_RIGHT = 0x27, VK_DOWN = 0x28;
         private const int VK_RETURN = 0x0D, VK_ESCAPE = 0x1B, VK_DELETE = 0x2E, VK_F2 = 0x71;
+        private const int VK_SPACE = 0x20;
+
+        // 空格预览待处理标志（钩子置位 → UI 线程 tick 消费）
+        private static volatile bool _spacePending;
+        // M 标记待处理标志
+        private static volatile bool _markPending;
+        // 自动重复死区（按住键的重复键不重复触发，避免开关状态打乒乓）
+        private static int _lastSpaceIntercept, _lastMarkIntercept;
+
+        // 前台是否资源管理器窗口或桌面（空格预览只在 shell 语境拦空格；聊天/浏览器里空格是文本）
+        private static bool ForegroundIsShell()
+        {
+            try
+            {
+                IntPtr fg = NativeMethods.GetForegroundWindow();
+                if (fg == IntPtr.Zero) return false;
+                string cls = NativeMethods.GetClassOf(fg);
+                return cls == "CabinetWClass" || cls == "Progman" || cls == "WorkerW";
+            }
+            catch { return false; }
+        }
+
+        // 空格预览：同一文件再按 = 关闭；否则立即打开（零延时——主动操作不需要防误触）。
+        // 光标不在条目上时回退到 QuickLook 语义：取 Explorer 当前选中的单个条目
+        private static void SpacePreview(int mx, int my)
+        {
+            Rectangle rect = Rectangle.Empty; bool isDir = false;
+            string path = null;
+            if (NativeMethods.PointOnDesktop(mx, my))
+            {
+                path = DetectDesktopItem(mx, my, out rect, out isDir);
+                DebugLog("[space] desktop-detect: " + (path ?? "null"));
+            }
+            else if (Config.ExplorerEnabled)
+            {
+                path = ExplorerSupport.DetectHoverItem(mx, my, out rect, out isDir, true);
+                DebugLog("[space] cursor-detect: " + (path ?? "null"));
+                // 拼出的路径在磁盘上不存在 = 路径还原失败（搜索结果视图/命名空间条目）——
+                // 转入选中回退：shell 的 SelectedItems 在这些视图里照样给得出真实路径
+                if (!string.IsNullOrEmpty(path) && !isDir && !File.Exists(path))
+                {
+                    DebugLog("[space] cursor-path missing on disk: " + path);
+                    path = null;
+                }
+                if (string.IsNullOrEmpty(path))
+                {
+                    IntPtr fg = NativeMethods.GetForegroundWindow();
+                    if (fg != IntPtr.Zero && NativeMethods.GetClassOf(fg) == "CabinetWClass")
+                    {
+                        path = ExplorerSupport.GetExplorerSelectedPath(fg);
+                        DebugLog("[space] selection-fallback: " + (path ?? "null"));
+                    }
+                }
+            }
+            if (string.IsNullOrEmpty(path)) return;
+            if (isDir)
+            {
+                // 光标下是文件夹：空格直接弹出它的面板（主动操作零延时）；已开着同路径面板则不动
+                if (_panels.Any(p => !p.IsDisposed && p.CurrentPath == path))
+                {
+                    DebugLog("[space] panel already open " + path);
+                    return;
+                }
+                DebugLog("[space] open panel " + path);
+                foreach (var p in _panels.Where(pp => !pp.Pinned)) p.ClosePanel();
+                _panels.RemoveAll(p => !p.Pinned);
+                var p2 = new PopupForm(0, OpenSub, DropResolver, ScheduleCloseAfter);
+                if (p2.ShowPanel(path, mx + Config.PopupOffset, my + Config.PopupOffset))
+                {
+                    ShowHighlight(rect);
+                    _panels.Add(p2);
+                    p2.Show();
+                    NativeMethods.SetWindowPos(p2.Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
+                        NativeMethods.SWP_NOMOVE | NativeMethods.SWP_NOSIZE | NativeMethods.SWP_NOACTIVATE);
+                }
+                return;
+            }
+            if (!Config.PreviewFiles || !PreviewProvider.CanPreview(path)) { DebugLog("[space] not-previewable: " + path); return; }
+            if (PopupForm.ExtPreviewActive() && string.Equals(PopupForm.ExtPreviewFilePath(), path, StringComparison.OrdinalIgnoreCase))
+            {
+                if (!PopupForm.ExtPreviewPinned()) PopupForm.CancelFilePreview();   // 同一文件：空格 = 关闭（钉住的不响应，避免解除引用后重复开窗）
+                return;
+            }
+            PopupForm.PreviewNow(path, new Point(mx, my));
+            DebugLog("[preview] space " + path);
+        }
 
         // ===== 键盘导航会话（固定窗口不再长期占用方向键）=====
         // 固定（Pinned）面板/预览长期可见 → 钩子常驻，若无条件接管就会一直抢走前台方向键。
@@ -1344,7 +1460,7 @@ namespace HoverExplorer
                 var p = _panels[i];
                 if (p != null && !p.IsDisposed && p.Visible) { anyPanelVis = true; break; }
             }
-            SyncKeyboardHook(anyPanelVis || PopupForm.ExtPreviewActive());   // 外部预览存活时也要装钩（无面板时 ←→ 才收得到）
+            SyncKeyboardHook(anyPanelVis || PopupForm.ExtPreviewActive() || (Config.PreviewFiles && _hoverEnabled));   // 空格预览要常驻钩子（严格条件下才拦键）
             bool menuOpen = ShellMenuOpen || IsSystemMenuOpen();
             // shell 原生菜单模态期间 WM_TIMER 照常派发（Tick 仍在跑）：
             // 此期间任何 SetWindowPos 提顶都可能把卡片/面板提到菜单上面 → 菜单被盖、点击失效。
@@ -1362,6 +1478,23 @@ namespace HoverExplorer
             int mx = pt.X, my = pt.Y;
             bool mouseMoved = (mx != _lastTickX || my != _lastTickY);
             _lastTickX = mx; _lastTickY = my;
+
+            // 空格预览：钩子置位 → 这里（UI 线程）做真正的文件检测与预览开关
+            if (_spacePending)
+            {
+                _spacePending = false;
+                if (!menuOpen) SpacePreview(mx, my);
+            }
+            // M 标记：预览正显示的文件收进/移出筛选架
+            if (_markPending)
+            {
+                _markPending = false;
+                if (!menuOpen)
+                {
+                    var mp = PopupForm.ExtPreviewFilePath();
+                    if (mp != null) CullTray.Toggle(mp);
+                }
+            }
 
             _dragSessionActive = false;
             bool dragSession = false;
@@ -1610,16 +1743,21 @@ namespace HoverExplorer
             // 门控只拦各自功能：文件夹被拦不弹面板，预览被拦不弹预览（未拦的一方正常走）
             if (folderSup) hoverFolder = null;
             if (previewSup) hoverFile = null;
+            // 空格预览模式：悬停不再弹文件预览（QuickLook 式，统一走空格开/关）——
+            // 两种触发方式互斥，不和边缘触发/延时打架。文件夹面板照常悬停
+            if (hoverFile != null && Config.SpacePreviewEnabled) hoverFile = null;
             // 文件预览边缘触发区：条目中段不弹预览窗（留给改名/右键/拖拽），只有停在
             // 左/右缘触发区才预览。长按预览模式按住左键=主动操作，不受限。
-            // 桌面图标是垂直布局（图标上文字下），X 方向窄，边缘分区无意义 → 跳过
-            if (hoverFile != null && Config.PreviewEdgeMode != 0 && !hoverIsDesktop)
+            // 桌面同样受管，但触发条放宽到图标宽度的 40%——v1.1.5 曾因"够不着"整个豁免桌面，
+            // 结果桌面 0.15s 全格误触；窄图标要的是放宽比例而不是取消分区
+            if (hoverFile != null && Config.PreviewEdgeMode != 0)
             {
                 bool lpActive = Config.LongPressFor(true) && Config.IsLeftDown();
                 bool inEdge = false;
                 if (!hoverRect.IsEmpty && !lpActive)
                 {
-                    int w = Math.Max(8, Math.Min(Config.PreviewEdgeWidth, hoverRect.Width / 3));
+                    // 触发条 = 条目宽度的百分比：横竖屏缩略图、桌面图标自动适配，无固定 px 的错配
+                    int w = Math.Max(8, (int)(hoverRect.Width * Config.PreviewEdgeRatio / 100.0));
                     inEdge = ((Config.PreviewEdgeMode & 1) != 0 && mx < hoverRect.Left + w)
                           || ((Config.PreviewEdgeMode & 2) != 0 && mx >= hoverRect.Right - w);
                 }
@@ -1888,6 +2026,9 @@ namespace HoverExplorer
             // 定位基准是触发悬停的面板（sender）。不能用 _panels[level]：level 是级联层级
             // 不是数组索引，pinned 面板占据索引 0 时 level 与索引错位
             if (sender == null || sender.IsDisposed || !sender.IsHandleCreated) { DebugLog("[cascade] OpenSub 中止：触发面板不存在 level=" + level); return; }
+            // 下钻即父层休眠：关掉父层正开着的行预览（含音频），否则旧预览继续出声、
+            // 且 TopMost 会盖在子面板上——跨层穿透的另一半
+            sender.ClosePreviewIfAny();
             int x = sender.RightEdge() + Config.SubGap;
             int y = rowScreenY;
             // 右边缘放不下时改展开到父面板左侧，避免 ClampPos 钳回右侧与父面板重叠闪烁
