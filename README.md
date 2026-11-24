@@ -12,9 +12,8 @@
 
 ![文件列表面板](images/hover_list.png)
 
-**浏览器中的悬停浏览** —— 在 GitHub 等网页的文件列表上悬停，即时弹出面板查看目录内容
+**音频文件换封面** 支持从浏览器直接拖拽图片到音频预览窗口来设置封面.
 
-**Hover browsing in browsers** — Hover file lists on web pages such as GitHub to instantly pop up a panel of directory contents
 
 ![浏览器悬停演示](images/github_hover.gif)
 
