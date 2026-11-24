@@ -13,7 +13,7 @@ namespace HoverExplorer
 {
     internal static class Program
     {
-        public const string Version = "1.1.9";
+        public const string Version = "1.2.0";
 
         private static string _desktopPath;
         private static string _publicDesktopPath;
@@ -355,6 +355,7 @@ namespace HoverExplorer
                 if (_hotkey != null) _hotkey.Unregister();
                 if (_reader != null) _reader.Dispose();
                 if (_entryIndicator != null) { try { _entryIndicator.Dispose(); } catch { } _entryIndicator = null; }
+                if (_desktopHistoryIcon != null) { try { _desktopHistoryIcon.Dispose(); } catch { } _desktopHistoryIcon = null; }
                 if (_singleInstance != null) { try { _singleInstance.ReleaseMutex(); _singleInstance.Close(); } catch { } }
             };
 
@@ -367,6 +368,7 @@ namespace HoverExplorer
             // 已设置的触发区域：启动即显示桌面色块指示
             UpdateEntryIndicator();
             UpdatePauseIndicator();
+            UpdateDesktopHistoryIcon();
 
             Application.Run();
         }
@@ -1113,6 +1115,7 @@ namespace HoverExplorer
             foreach (var c in _pinCards) { if (!c.IsDisposed) c.ApplyPalette(); }
             EntryListForm.NotifyChanged();
             if (_entryCardForm != null && !_entryCardForm.IsDisposed) _entryCardForm.Relayout();
+            if (_desktopHistoryIcon != null && !_desktopHistoryIcon.IsDisposed) _desktopHistoryIcon.Relayout();
             HoverExplorer.Wpf.WpfSettingsWindow.SyncTheme();
         }
 
@@ -2314,6 +2317,7 @@ namespace HoverExplorer
         private static System.Windows.Forms.Timer _entryTimer;
         private static EntryIndicatorForm _entryIndicator;
         private static EntryCardForm _entryCardForm;   // 折叠后的常驻卡片
+        private static DesktopHistoryIconForm _desktopHistoryIcon;   // 桌面"历史"虚拟文件夹
         private static DateTime _lastExplorerPathAt;   // 前台 Explorer 路径轮询节流
 
         // 窗口边角风格切换 → 重刷存活窗口的 DWM 圆角偏好并重画描边（新弹出的窗口自动用新风格）
@@ -2350,6 +2354,7 @@ namespace HoverExplorer
             }
             if (_entryCardForm != null && !_entryCardForm.IsDisposed && _entryCardForm.IsHandleCreated)
                 _entryCardForm.ApplyPalette();
+            if (_desktopHistoryIcon != null && !_desktopHistoryIcon.IsDisposed) _desktopHistoryIcon.Relayout();
         }
 
         // 设置面板即改即生效：统一落盘 + 桌面色块/托盘文案刷新，按需重注册热键、刷新存活面板
@@ -2359,6 +2364,7 @@ namespace HoverExplorer
         internal static void ApplySettingsLive(bool hotkeys, bool panels)
         {            Config.Save();
             UpdateEntryIndicator();
+            UpdateDesktopHistoryIcon();
             // 设置窗改了 Explorer 悬停 / 文件预览 → 托盘勾选态跟上（程序化赋值触发
             // CheckedChanged 把同值写回 Config，无副作用）
             if (_trayExplorerItem != null) _trayExplorerItem.Checked = Config.ExplorerEnabled;
@@ -2407,6 +2413,26 @@ namespace HoverExplorer
             _entryIndicator.Apply(rect, argb);
         }
 
+        // 桌面"历史"虚拟文件夹：开关变化时创建/移除；语言/主题/配色变化后重绘
+        internal static void UpdateDesktopHistoryIcon()
+        {
+            if (!Config.DesktopHistoryIcon)
+            {
+                if (_desktopHistoryIcon != null)
+                {
+                    try { _desktopHistoryIcon.Close(); _desktopHistoryIcon.Dispose(); } catch { }
+                    _desktopHistoryIcon = null;
+                }
+                return;
+            }
+            if (_desktopHistoryIcon == null || _desktopHistoryIcon.IsDisposed)
+            {
+                _desktopHistoryIcon = new DesktopHistoryIconForm();
+                _desktopHistoryIcon.Show();
+            }
+            _desktopHistoryIcon.Relayout();
+        }
+
         private static EntryIndicatorForm _pauseIndicator;
 
         // 暂停触控区的桌面标识块：双色表达悬停开关状态——绿色=悬停启用、红色=已暂停，
@@ -2435,12 +2461,18 @@ namespace HoverExplorer
         // 弹出 收藏·历史 列表（触发区域悬停 / 全局热键 / 拖拽进入）
         internal static void ShowEntryList(int x, int y)
         {
-            ShowEntryList(x, y, false);
+            ShowEntryList(x, y, false, false);
         }
 
         // underCursor=true（快捷键弹出）：列表水平居中于光标、主体在鼠标下方，光标压进顶部
-        // 标题带（表头 26px 拖动区）——光标在列表外会被离开判定在关闭延迟后收起
         internal static void ShowEntryList(int x, int y, bool underCursor)
+        {
+            ShowEntryList(x, y, underCursor, false);
+        }
+
+        // 桌面"历史"虚拟文件夹专用：historyOnly=true 面板只显示历史、隐藏收藏分组
+        // 标题带（表头 26px 拖动区）——光标在列表外会被离开判定在关闭延迟后收起
+        internal static void ShowEntryList(int x, int y, bool underCursor, bool historyOnly)
         {
             CloseEntryList();
             // 面板行拖出进行中：保留源面板（保 GiveFeedback 光标反馈），只弹列表；
@@ -2452,6 +2484,15 @@ namespace HoverExplorer
                 f = new EntryListForm(OpenFolderInExplorer);
             }
             catch (Exception ex) { DebugLog("[entry] construct fail: " + ex + "\n" + ex.StackTrace); return; }
+            if (historyOnly) f.SetHistoryOnly(true);
+            // 文件对话框仍开着时，从历史·收藏选中的条目填入对话框，而不是打开文件/文件夹。
+            // ResolveActiveDialog 会在首次打开、尚未点过任何文件时从前台窗口探测对话框
+            IntPtr dlgHwnd = DialogSupport.ResolveActiveDialog();
+            if (dlgHwnd != IntPtr.Zero)
+            {
+                f.DialogHwnd = dlgHwnd;
+                f.RefreshDialogTitle();
+            }
             _entryListForm = f;
             try
             {
@@ -2805,7 +2846,7 @@ namespace HoverExplorer
             return null;
         }
 
-        private static IntPtr GetDesktopListview()
+        internal static IntPtr GetDesktopListview()
         {
             var progman = NativeMethods.FindWindow("Progman", null);
             var view = NativeMethods.FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
@@ -3211,6 +3252,7 @@ namespace HoverExplorer
                     EntryListForm.NotifyChanged();
                     ApplyTrayIcon();   // 语言切换后刷新托盘 tooltip（含更新提示文案）
                     if (_entryCardForm != null && !_entryCardForm.IsDisposed) _entryCardForm.Relayout();
+                    if (_desktopHistoryIcon != null && !_desktopHistoryIcon.IsDisposed) _desktopHistoryIcon.Relayout();
                     if (HoverExplorer.Wpf.WpfSettingsWindow.IsOpen)
                         HoverExplorer.Wpf.WpfSettingsWindow.Rebuild();
                     refreshExitText();

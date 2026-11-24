@@ -243,6 +243,10 @@ namespace HoverExplorer
         public static int GroupHoverDelayMs = 0;
         // 历史·收藏分组标题展开模式：关闭=省略号截断，开启=完整标题自动换行
         public static bool EntryGroupTitleExpand = false;
+        // 桌面"历史"虚拟文件夹：开启后桌面显示历史图标，悬停弹出历史·收藏面板
+        public static bool DesktopHistoryIcon = false;
+        // 图标位置（逻辑像素；0,0 = 未设置，启动时放桌面右上角）
+        public static int DesktopHistoryIconX = 0, DesktopHistoryIconY = 0;
         // 暂停触控区驻留延时（毫秒）：驻留多久切换悬停启用/暂停，与收藏·历史触发区域延时相互独立
         public static int PauseRectDelayMs = 300;
         // 暂停触控区：鼠标驻留屏幕角落切换悬停启用/暂停（0=关 1=左上 2=右上 3=左下 4=右下）
@@ -813,6 +817,9 @@ namespace HoverExplorer
                         case "EntryRectDelayMs": EntryRectDelayMs = Convert.ToInt32(v); break;
                         case "GroupHoverDelayMs": GroupHoverDelayMs = Math.Max(0, Convert.ToInt32(v)); break;
                         case "EntryGroupTitleExpand": EntryGroupTitleExpand = Convert.ToBoolean(v); break;
+                        case "DesktopHistoryIcon": DesktopHistoryIcon = Convert.ToBoolean(v); break;
+                        case "DesktopHistoryIconX": DesktopHistoryIconX = Convert.ToInt32(v); break;
+                        case "DesktopHistoryIconY": DesktopHistoryIconY = Convert.ToInt32(v); break;
                         case "PauseRectDelayMs": PauseRectDelayMs = Convert.ToInt32(v); break;
                         case "PreviewMaxRatio": PreviewMaxRatio = Convert.ToDouble(v); break;
                         case "PanelWidth": PanelWidth = Convert.ToInt32(v); break;
@@ -1189,6 +1196,9 @@ namespace HoverExplorer
                 data["EntryRectDelayMs"] = EntryRectDelayMs;
                 data["GroupHoverDelayMs"] = GroupHoverDelayMs;
                 data["EntryGroupTitleExpand"] = EntryGroupTitleExpand;
+                data["DesktopHistoryIcon"] = DesktopHistoryIcon;
+                data["DesktopHistoryIconX"] = DesktopHistoryIconX;
+                data["DesktopHistoryIconY"] = DesktopHistoryIconY;
                 data["PauseRectDelayMs"] = PauseRectDelayMs;
                 data["PreviewMaxRatio"] = PreviewMaxRatio;
                 data["PanelWidth"] = PanelWidth;

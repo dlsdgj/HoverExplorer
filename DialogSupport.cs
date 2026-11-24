@@ -68,9 +68,50 @@ namespace HoverExplorer
         [DllImport("user32.dll")]
         private static extern bool IsWindow(IntPtr h);
 
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetForegroundWindow();
+
         internal static bool IsDialogAlive(IntPtr dlg)
         {
             try { return dlg != IntPtr.Zero && IsWindow(dlg); } catch { return false; }
+        }
+
+        // 对话框是否处于前台（或其所属进程窗口在前台）：历史·收藏面板据此判断"选入对话框"还是"打开"
+        internal static bool IsDialogForeground(IntPtr dlg)
+        {
+            if (!IsDialogAlive(dlg)) return false;
+            try
+            {
+                IntPtr fg = GetForegroundWindow();
+                if (fg == dlg) return true;
+                // 对话框本身可能不是前台（HE 面板 TopMost 抢焦点），前台是桌/资源管理器时不应算对话框场景
+                uint pid;
+                NativeMethods.GetWindowThreadProcessId(dlg, out pid);
+                uint fgPid;
+                NativeMethods.GetWindowThreadProcessId(fg, out fgPid);
+                return pid != 0 && pid == fgPid;
+            }
+            catch { return false; }
+        }
+
+        // 当前应视为"文件对话框场景"的句柄：优先最近命中的对话框；
+        // 否则从前台窗口向上探测（首次打开对话框、还没点任何文件时 ActiveDialog 仍是 0）。
+        // 用"存在文件名输入框"确认是真文件对话框，避免把 MessageBox 等普通 #32770 误判。
+        internal static IntPtr ResolveActiveDialog()
+        {
+            if (IsDialogForeground(ActiveDialog) && FindFileNameEdit(ActiveDialog) != null) return ActiveDialog;
+            try
+            {
+                IntPtr fg = GetForegroundWindow();
+                if (fg == IntPtr.Zero) return IntPtr.Zero;
+                IntPtr dlg = AncestorOfClass(fg, "#32770");
+                if (dlg == IntPtr.Zero || !IsDialogAlive(dlg)) return IntPtr.Zero;
+                if (FindFileNameEdit(dlg) == null) return IntPtr.Zero;
+                if (!IsDialogForeground(dlg)) return IntPtr.Zero;
+                ActiveDialog = dlg;   // 回填，供后续面板/行操作沿用同一次会话
+                return dlg;
+            }
+            catch { return IntPtr.Zero; }
         }
 
         private static IntPtr _fnDlg;
@@ -148,6 +189,30 @@ namespace HoverExplorer
             bool ok = SetEditValue(edit, sb.ToString());
             Log("fill:" + dlg, "fill count=" + names.Count + " ok=" + ok + " text=" + sb);
             return ok;
+        }
+
+        // 把完整路径选入对话框的文件名框（文件/文件夹均可），不提交时用户仍需点对话框的"打开/保存"。
+        // 用完整路径而非 Name，这样从 HE 面板（当前目录可能已 Navigate 到别处）选中的条目也能正确定位。
+        internal static bool SelectInDialog(IntPtr dlg, string path, bool submit)
+        {
+            if (!IsDialogAlive(dlg) || string.IsNullOrEmpty(path)) return false;
+            var edit = FindFileNameEdit(dlg);
+            if (edit == null) return false;
+            string quoted = "\"" + path.Replace("\"", "") + "\"";
+            if (!SetEditValue(edit, quoted)) return false;
+            Log("select:" + path, "select in dialog ok=" + true + " submit=" + submit);
+            if (!submit) return true;
+            try
+            {
+                IntPtr okBtn = NativeMethods.GetDlgItem(dlg, 1);
+                if (okBtn != IntPtr.Zero)
+                {
+                    NativeMethods.SendMessageW(okBtn, 0x00F5, IntPtr.Zero, IntPtr.Zero);   // BM_CLICK
+                    return true;
+                }
+            }
+            catch { }
+            return false;
         }
 
         // 让对话框进入指定文件夹：路径补结尾反斜杠后触发对话框默认按钮（AutomationId=1），

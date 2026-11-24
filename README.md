@@ -1,36 +1,22 @@
 # HoverExplorer
 
-![HoverExplorer](images/1_cover.png)
-
 鼠标悬停即可浏览文件夹内容与预览文件，无需点击打开。
 
 > Hover to browse folder contents and preview files — no clicks needed.
 
 ## 界面预览 / Screenshots
 
-**文件列表面板** —— 悬停桌面/资源管理器文件夹即时弹出；触发区域可自定义，半透明色块实时预览
+**文件列表面板** —— 悬停桌面/资源管理器文件夹即时弹出；浅色/深色配色、格式筛选标签、行内操作按钮
 
-**File list panel** — Hover desktop/Explorer folders to pop up instantly; trigger area customizable with semi-transparent color preview
+**File list panel** — Hover desktop/Explorer folders to pop up instantly; light/dark palettes, format-filter chips and row action buttons
 
-![文件列表面板](images/2_layout.png)
+![文件列表面板](images/hover_list.png)
 
-**收藏·历史列表** —— 桌面触发区或 `Ctrl+Shift+E` 热键呼出，行首星标一键收藏/取消
+**WPF 设置面板** —— 侧栏分页、7 语言与深浅主题分段切换；播放器倍速、暂停触控区、分类触发带均可配置
 
-**Favorites · History list** — Summon via desktop trigger area or `Ctrl+Shift+E` hotkey; star icon to favorite/unfavorite
+**WPF settings panel** — Sidebar pages, 7-language and light/dark segmented switches; player speed, pause corner and categorized trigger zones are all configurable
 
-![收藏·历史列表](images/3_favorites.png)
-
-**桌面卡片** —— 文件钉成桌面浮动卡片，卡片上滚轮切换 11 套配色（逐张独立记忆）
-
-**Desktop cards** — Pin files as floating cards; scroll on a card to cycle 11 color schemes (per-card memory)
-
-![桌面卡片配色](images/4_ai_colors.png)
-
-**音频波形播放器** —— Media Foundation 后台解码整段文件生成峰值/RMS 波形，波形即进度，点击/拖动跳转
-
-**Audio waveform player** — Media Foundation decodes full file in background to peak/RMS waveform; waveform = progress, click/drag to seek
-
-![音频波形播放器](images/5_waveform.png)
+![设置面板](images/settings.png)
 
 ## 功能 / Features
 
@@ -96,6 +82,9 @@
 - **资源占用显示 / Resource usage readout**: 可选在列表标题右侧紧凑显示 `2.4% · 112M`（CPU 全核占比 + 私有工作集，与任务管理器同口径），约 1 秒刷新，默认关闭 — Optional compact `2.4% · 112M` at the right of the list title (CPU share of all cores + private working set, same as Task Manager), refreshed about once per second; off by default
 - **识别场景可扩展 / Extensible hover scenes**: 悬停检测拆成可插拔场景（桌面/文件对话框/TC/资源管理器/Perch/通用 UIA 列表），设置里单独开关，附实时「场景诊断」显示窗口类、进程、UIA 元素与最近命中 — Hover detection is now a pluggable provider list (desktop, file dialogs, TC, Explorer, Perch, generic UIA), each with its own switch plus a live "scene diagnostics" page
 - **文件对话框悬停 / File dialog hover**: 在打开/另存为对话框中悬停文件即可预览、悬停文件夹即可展开列表；UIA 只认列表项，不干扰输入框与按钮 — Hover files in Open/Save dialogs to preview, folders to expand; only list items respond
+- **文件对话框选入 / Pick into file dialog**: 对话框场景下 HE 列表/历史·收藏中单击文件或文件夹即填入对话框文件名框（不提交），历史·收藏面板带醒目提示标题；首次打开对话框即可识别 — In dialog scene, clicking files/folders in HE lists fills the dialog's filename box (not submitted); history panel shows a prominent hint, recognized from first open
+- **桌面"历史"虚拟文件夹（施工中）/ Desktop "History" virtual folder (WIP)**: 设置中开启后，桌面图标区空位出现"历史"文件夹，悬停/点击弹出仅含历史项目的面板；可拖动记住位置 — Enable in settings to place a "History" folder among desktop icons; hover/click opens a history-only panel; draggable with position memory
+- **高 DPI 适配 / High-DPI support**: PerMonitorV2 感知，逻辑像素与物理像素换算统一，200% 缩放下字体与布局不重复放大 — PerMonitorV2 aware with unified logical/physical pixel conversion; no double-scaling at 200%
 - **通用 UIA 文件列表 / Generic UIA lists**: 实验性兜底，尝试识别 Everything、OneCommander 等未适配程序的列表项并预览，默认关闭 — Experimental fallback for unadapted apps such as Everything and OneCommander; off by default
 - **文本颜色色块 / Color swatches**: 文本预览里的 `#RRGGBB`、`rgb()/rgba()` 直接在原取值旁内联渲染色块（不再是顶部独立色块条） — Hex and rgb()/rgba() values in text previews render a swatch inline right next to the original token (no separate strip at the top)
 - **列表预览触发带 / Right-side trigger band**: 文件列表右侧固定一条可调宽度的预览触发带，带左侧有与「名称靠右」分栏线同款的 1px 分隔线；拖动分隔线调整宽度，触发带失效时整行触发；名称靠左时行内操作按钮排在分隔线左侧 — Each list row has a fixed preview-trigger band on the right with a draggable 1px divider matching the swap-layout splitter; drag it to resize (0 = whole row), and row action buttons stay left of the divider when names are left-aligned

@@ -510,4 +510,38 @@
             </Setter.Value>
         </Setter>
     </Style>
+
+    <!-- 表格内颜色行：项目列已显示名称，这里不再重复 Label，只留色块/hex/取色 -->
+    <Style x:Key="ColorRowNoLabel" TargetType="{x:Type c:ColorRow}" BasedOn="{StaticResource {x:Type c:ColorRow}}">
+        <Setter Property="Margin" Value="2,0"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="{x:Type c:ColorRow}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="34"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Width="22" Height="22" HorizontalAlignment="Left" CornerRadius="3"
+                                BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
+                                Background="{Binding Brush, RelativeSource={RelativeSource TemplatedParent}}"/>
+                        <TextBox x:Name="PART_Text" Grid.Column="1" MinWidth="70" Margin="0,0,8,0" HorizontalAlignment="Stretch"
+                                 FontFamily="Consolas"
+                                 Text="{Binding Text, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                        <Button x:Name="PART_Pick" Grid.Column="2" Width="26" Height="22" MinWidth="0" Margin="0,0,6,0"
+                                Padding="0" Style="{DynamicResource FlatButton}"
+                                HorizontalAlignment="Right" VerticalAlignment="Center"
+                                ToolTip="屏幕取色（点击进入，再次点击选中，WASD 微调）">
+                            <Grid Width="14" Height="14">
+                                <Rectangle Width="1.5" Height="14" RadiusX="0.75" RadiusY="0.75" Fill="{DynamicResource TextBrush}" HorizontalAlignment="Center"/>
+                                <Rectangle Width="14" Height="1.5" RadiusX="0.75" RadiusY="0.75" Fill="{DynamicResource TextBrush}" VerticalAlignment="Center"/>
+                                <Ellipse Width="4" Height="4" Stroke="{DynamicResource TextBrush}" StrokeThickness="1"/>
+                            </Grid>
+                        </Button>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
 </ResourceDictionary>

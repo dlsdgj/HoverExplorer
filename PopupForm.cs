@@ -1600,7 +1600,7 @@ namespace HoverExplorer
             _sourceBox = new TextBox
             {
                 Multiline = true,
-                Font = new Font("Consolas", Dpi.S(9f)),
+                Font = new Font("Consolas", 9f),   // pt 随系统 DPI 自动放大，勿再乘 Dpi.S() 造成二次缩放
                 BorderStyle = BorderStyle.None,
                 BackColor = PvBg,
                 ForeColor = PvFg,
@@ -6216,11 +6216,11 @@ namespace HoverExplorer
                 // 表头横向空间有限（排序按钮已占满），正文用"填入"，完整说明放 tooltip
                 _fillDlgBtn = new Label
                 {
-                    Text = I18n.T("dlg_fill"),
-                    Font = Config.ListHeaderFont(),
+                    Text = I18n.T("dlg_scene_title"),   // 文件对话框场景醒目标题：点击填入
+                    Font = new Font(Config.ListHeaderFont(), FontStyle.Bold),
                     AutoSize = true,
                     BackColor = Config.ListBg,
-                    ForeColor = Config.ListFg,
+                    ForeColor = Config.Accent,
                     Cursor = Cursors.Hand,
                     Margin = new Padding(0, 0, 2, 0),
                     Padding = new Padding(5, 1, 5, 1),
@@ -6230,7 +6230,7 @@ namespace HoverExplorer
                 _fillDlgBtn.Click += (s, e) =>
                 {
                     if (!DialogSupport.IsDialogAlive(DialogHwnd)) { ShowToast(I18n.T("dlg_gone")); return; }
-                    var files = SelRows().Where(r => !r.IsDir).Select(r => r.Name).ToList();
+                    var files = SelRows().Where(r => !r.IsDir).Select(r => r.Full).ToList();
                     if (files.Count == 0) { ShowToast(I18n.T("dlg_fill_none")); return; }
                     if (DialogSupport.FillFileNames(DialogHwnd, files)) ShowToast(I18n.T("dlg_fill_ok"));
                 };
@@ -8611,7 +8611,7 @@ namespace HoverExplorer
             ActivateRow(row);
         }
 
-        // 打开行：来源是文件对话框且该行是文件夹时，让对话框进入该目录，并在本面板继续列出其内容
+        // 打开行：文件对话框场景下，文件夹行进目录（继续浏览），文件行选入对话框（不再 Process.Start 打开文件）
         private void ActivateRow(RowLabel row)
         {
             if (row == null) return;
@@ -8628,6 +8628,16 @@ namespace HoverExplorer
                         if (!IsDisposed) ShowPanel(dir, Location.X, Location.Y);
                     });
                     return;
+                }
+                else if (!row.IsDir)
+                {
+                    // 选入对话框的文件名框（不提交），用户仍可多选后点对话框的"打开/保存"
+                    if (DialogSupport.SelectInDialog(DialogHwnd, row.Full, false))
+                    {
+                        Program.DebugLog("[dialog] select-file " + row.Full);
+                        ShowToast(I18n.T("dlg_fill_ok"));
+                        return;
+                    }
                 }
             }
             OpenPath(row.Full);

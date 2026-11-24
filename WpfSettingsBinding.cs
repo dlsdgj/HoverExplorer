@@ -676,6 +676,7 @@ namespace HoverExplorer.Wpf
                         Config.RefreshSortLabels();
                         Config.Save();
                         Program.RebuildTrayMenu();
+                        Program.UpdateDesktopHistoryIcon();
                         Application.Current.Dispatcher.BeginInvoke(new Action(delegate { WpfSettingsWindow.Rebuild(); }));
                         return;
                     }

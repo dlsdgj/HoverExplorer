@@ -461,6 +461,16 @@ namespace HoverExplorer
     internal partial class EntryListForm : Form
     {
         private readonly Action<string, Point> _onOpenFolder;
+        internal IntPtr DialogHwnd;   // 文件对话框场景：命中条目选入对话框而非打开
+
+        // 对话框上下文赋值后刷新标题（构造时 Head 已建立，但 DialogHwnd 是之后才传入的）
+        internal void RefreshDialogTitle()
+        {
+            if (_titleLbl == null) return;
+            bool inDialog = DialogHwnd != IntPtr.Zero && DialogSupport.IsDialogAlive(DialogHwnd);
+            _titleLbl.Text = inDialog ? I18n.T("dlg_scene_title") : I18n.T("entry_title");
+            _titleLbl.ForeColor = inDialog ? Config.Accent : Config.ListFg;
+        }
         private readonly List<Control> _rows = new List<Control>();   // 分组标签+行（重建时清除）
         private readonly HashSet<string> _selectedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase); // Ctrl+点击/Shift+区间多选
         private int _anchorIndex = -1;               // Shift+点击区间的锚点行索引
@@ -499,6 +509,7 @@ namespace HoverExplorer
         private bool _suppressEnter;              // 拖放后抑制一次 MouseEnter 重建
         private Timer _groupHoverTimer;           // 分组标签悬停延迟计时器
         private int _pendingGroup = int.MinValue; // int.MinValue=无待激活；-1=历史
+        private bool _historyOnly = false;        // 桌面"历史"图标专用：只显示历史、隐藏收藏分组
         private const string DragFmtRow = "EntryRowDrag";   // 内部行拖动数据格式
         internal class RowDragData { public List<string> Paths = new List<string>(); public int? FromG; public int? FromH; public FavoriteGroup FromGroup; }
         private int _listTop;   // 列表区顶部 y（拖放插入指示用）
@@ -778,18 +789,28 @@ namespace HoverExplorer
             _fnBuildRows();
         }
 
+        // 桌面"历史"图标专用：强制历史分组并隐藏收藏分组栏
+        internal void SetHistoryOnly(bool v)
+        {
+            if (_historyOnly == v) return;
+            _historyOnly = v;
+            if (v) _curG = -1;
+            _fnBuildRows();
+        }
+
         private void _fnBuildRows()
         {
 
             foreach (var r in _rows) { try { Controls.Remove(r); r.Dispose(); } catch { } }
             _rows.Clear();
             var grp = CurrentGroup();
-            bool isHist = _curG < 0;
+            bool isHist = _historyOnly || _curG < 0;
 
             // 顶部标题栏与面板同底色：不叠加独立色块，圆角由窗体 DWM 统一裁切
             Color headBg = Config.ListBg;
-            string headTxt = isHist ? "🕘 " + I18n.T("hist_bar") : grp.Name;
-            Color headFg = Config.ListFg;
+            bool inDialog = DialogHwnd != IntPtr.Zero && DialogSupport.IsDialogAlive(DialogHwnd);
+            string headTxt = inDialog ? I18n.T("dlg_scene_title") : (isHist ? "🕘 " + I18n.T("hist_bar") : grp.Name);
+            Color headFg = inDialog ? Config.Accent : Config.ListFg;
 
             List<string> items;
             if (isHist) items = Config.RecentFolders.Where(LinkEntry.IsEntryValid).ToList();
@@ -800,7 +821,8 @@ namespace HoverExplorer
 
             // 左侧分组栏：默认 38px 只显示首字；展开模式按最长组名撑开并换行显示全名
             _sideItemH = Dpi.S(36);
-            if (Config.EntryGroupTitleExpand)
+            if (_historyOnly) _sideW = 0;   // 仅历史：不渲染分组栏，列表占满整宽
+            else if (Config.EntryGroupTitleExpand)
             {
                 using (var g = CreateGraphics())
                 {
@@ -846,12 +868,12 @@ namespace HoverExplorer
             int y = _headerH + Dpi.S(2);
 
             // ---- 左侧分组栏 + 右侧列表区 ----
-            int rightX = ListPadLr + _sideW + SideGap;
+            int rightX = ListPadLr + _sideW + (_historyOnly ? 0 : SideGap);
             int rightW = _listW - rightX - ListPadLr;
             if (rightW < Dpi.S(120)) rightW = Dpi.S(120);
 
-            // 左侧分组栏（纵向，历史置顶）
-            int sideBarH = _fnBuildSideBar(y, _sideW, font);
+            // 左侧分组栏（纵向，历史置顶）；仅历史模式不渲染收藏分组
+            int sideBarH = _historyOnly ? 0 : _fnBuildSideBar(y, _sideW, font);
 
 
             // ---- 右侧原型式列表区（工具栏 + 分组区块 + 底栏）----
@@ -959,9 +981,18 @@ namespace HoverExplorer
             _dirty = true; _fnSave(); _fnBuildRows();
         }
 
-        // 行点击打开：文件用默认程序，文件夹走 _onOpenFolder
+        // 行点击：文件对话框场景下选入对话框；否则文件用默认程序打开、文件夹走 _onOpenFolder
         private void _fnOpenPath(string path, Point pt)
         {
+            if (DialogHwnd != IntPtr.Zero)
+            {
+                if (!DialogSupport.IsDialogAlive(DialogHwnd)) DialogHwnd = IntPtr.Zero;
+                else if (DialogSupport.SelectInDialog(DialogHwnd, path, false))
+                {
+                    Program.DebugLog("[dialog] entry-select " + path);
+                    return;
+                }
+            }
             if (LinkEntry.IsLink(path)) { _fnOpenLink(path); return; }
             if (File.Exists(path))
             {
@@ -2568,6 +2599,250 @@ namespace HoverExplorer
         {
             if (_hoverTimer != null) { _hoverTimer.Stop(); _hoverTimer.Dispose(); _hoverTimer = null; }
             base.OnFormClosed(e);
+        }
+    }
+
+    // 桌面"历史"虚拟文件夹：分层窗口自绘文件夹图标 + 名称，悬停/点击弹出历史·收藏面板。
+    // 交互语义与折叠卡片 EntryCardForm 一致；字体用 pt、像素用 Dpi.S，跟随高 DPI。
+    internal class DesktopHistoryIconForm : Form
+    {
+        private Timer _hoverTimer;
+        private bool _hover;
+        private Point _pressPos;
+        private static int IconW { get { return Dpi.S(80); } }
+        private static int IconH { get { return Dpi.S(96); } }
+
+        protected override bool ShowWithoutActivation { get { return true; } }
+
+        protected override CreateParams CreateParams
+        {
+            get { var cp = base.CreateParams; cp.ExStyle |= 0x00080000; return cp; }   // WS_EX_LAYERED
+        }
+
+        public DesktopHistoryIconForm()
+        {
+            FormBorderStyle = FormBorderStyle.None;
+            TopMost = true;
+            ShowInTaskbar = false;
+            StartPosition = FormStartPosition.Manual;
+            AutoScaleMode = AutoScaleMode.None;
+            DoubleBuffered = true;
+            ClientSize = new Size(IconW, IconH);
+
+            // 位置存逻辑像素；0,0 = 未设置 → 自动落在桌面图标网格的第一个空位；拖动后记住新位置
+            Point pos = (Config.DesktopHistoryIconX > 0 && Config.DesktopHistoryIconY > 0)
+                ? new Point(Dpi.S(Config.DesktopHistoryIconX), Dpi.S(Config.DesktopHistoryIconY))
+                : FindDesktopIconSlot();
+            var wa = Screen.PrimaryScreen.WorkingArea;
+            Location = new Point(
+                Math.Max(wa.Left, Math.Min(pos.X, wa.Right - IconW)),
+                Math.Max(wa.Top, Math.Min(pos.Y, wa.Bottom - IconH)));
+
+            MouseDown += (s, e) =>
+            {
+                if (e.Button == MouseButtons.Middle) { Close(); return; }
+                if (e.Button == MouseButtons.Left)
+                {
+                    _pressPos = Location;
+                    NativeMethods.ReleaseCapture();
+                    NativeMethods.SendMessage(Handle, 0xA1, 0x2, 0);
+                }
+            };
+            MouseUp += (s, e) =>
+            {
+                if (e.Button != MouseButtons.Left || Location == _pressPos) return;
+                Config.DesktopHistoryIconX = Dpi.UnS(Location.X);
+                Config.DesktopHistoryIconY = Dpi.UnS(Location.Y);
+                Program.SaveConfigDebounced();
+            };
+            MouseClick += (s, e) => { if (e.Button == MouseButtons.Left) OpenList(); };
+            MouseEnter += (s, e) =>
+            {
+                _hover = true;
+                Render();
+                if (_hoverTimer == null)
+                {
+                    _hoverTimer = new Timer { Interval = 400 };
+                    _hoverTimer.Tick += (s2, e2) => { _hoverTimer.Stop(); if (!IsDisposed) OpenList(); };
+                }
+                _hoverTimer.Stop();
+                _hoverTimer.Start();
+            };
+            MouseLeave += (s, e) =>
+            {
+                _hover = false;
+                Render();
+                if (_hoverTimer != null) _hoverTimer.Stop();
+            };
+        }
+
+        // 读取桌面图标坐标，按网格找第一个空位，让"历史"与其他桌面图标排在一起
+        private static Point FindDesktopIconSlot()
+        {
+            var wa = Screen.PrimaryScreen.WorkingArea;
+            Point fallback = new Point(wa.Left + Dpi.S(12), wa.Top + Dpi.S(12));
+            try
+            {
+                IntPtr lv = Program.GetDesktopListview();
+                if (lv == IntPtr.Zero) return fallback;
+                using (var reader = new RemoteReader(lv))
+                {
+                    int count = reader.GetItemCount();
+                    if (count <= 0) return fallback;
+                    var all = new List<Point>();
+                    for (int i = 0; i < count; i++)
+                    {
+                        var p = reader.GetItemScreenPos(i);
+                        if (p != Point.Empty) all.Add(p);
+                    }
+                    if (all.Count == 0) return fallback;
+
+                    int minX = all[0].X, minY = all[0].Y;
+                    foreach (var p in all) { minX = Math.Min(minX, p.X); minY = Math.Min(minY, p.Y); }
+
+                    // 从相邻图标推断网格间距（桌面默认列优先：先填满一列再换列）
+                    int cellW = Dpi.S(84), cellH = Dpi.S(92);
+                    int probe = Math.Min(all.Count, 16);
+                    for (int i = 0; i < probe && cellW == Dpi.S(84); i++)
+                        for (int j = i + 1; j < probe; j++)
+                            if (Math.Abs(all[i].Y - all[j].Y) < Dpi.S(10) && all[j].X > all[i].X)
+                            { cellW = all[j].X - all[i].X; break; }
+                    for (int i = 0; i < probe && cellH == Dpi.S(92); i++)
+                        for (int j = i + 1; j < probe; j++)
+                            if (Math.Abs(all[i].X - all[j].X) < Dpi.S(10) && all[j].Y > all[i].Y)
+                            { cellH = all[j].Y - all[i].Y; break; }
+                    if (cellW < Dpi.S(40)) cellW = Dpi.S(84);
+                    if (cellH < Dpi.S(40)) cellH = Dpi.S(92);
+
+                    var occupied = new HashSet<string>();
+                    foreach (var p in all)
+                    {
+                        int col = (int)Math.Round((p.X - minX) / (double)cellW);
+                        int row = (int)Math.Round((p.Y - minY) / (double)cellH);
+                        occupied.Add(col + "," + row);
+                    }
+
+                    int maxCol = Math.Max(1, (wa.Width - IconW) / cellW);
+                    int maxRow = Math.Max(1, (wa.Height - IconH) / cellH);
+                    for (int c = 0; c < maxCol; c++)
+                        for (int r = 0; r < maxRow; r++)
+                        {
+                            int px = minX + c * cellW, py = minY + r * cellH;
+                            if (px < wa.Left || py < wa.Top || px + IconW > wa.Right || py + IconH > wa.Bottom) continue;
+                            if (!occupied.Contains(c + "," + r)) return new Point(px, py);
+                        }
+                }
+            }
+            catch { }
+            return fallback;
+        }
+
+        private void OpenList()
+        {
+            if (IsDisposed || !Program._entryArmed) return;
+            Program.ShowEntryList(Left, Bottom + Dpi.S(4), false, true);
+        }
+
+        // 语言/主题变化后重绘（名称跟随 I18n，配色跟随 Config）
+        public void Relayout() { if (!IsDisposed) Render(); }
+
+        protected override void OnHandleCreated(EventArgs e)
+        {
+            base.OnHandleCreated(e);
+            try { Win11.RemoveDropShadow(Handle); Win11.ForceSquareCorners(Handle); Win11.RemoveNcBorder(Handle); } catch { }
+            Render();
+        }
+
+        protected override void OnFormClosed(FormClosedEventArgs e)
+        {
+            if (_hoverTimer != null) { _hoverTimer.Stop(); _hoverTimer.Dispose(); _hoverTimer = null; }
+            base.OnFormClosed(e);
+        }
+
+        private void Render()
+        {
+            if (IsDisposed || !IsHandleCreated || Width <= 0 || Height <= 0) return;
+            int w = Width, h = Height;
+            using (var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb))
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
+                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+                g.Clear(Color.Transparent);
+
+                int labelTop = h - Dpi.S(24);
+                if (_hover)
+                    using (var br = new SolidBrush(Color.FromArgb(48, Config.Accent.R, Config.Accent.G, Config.Accent.B)))
+                        g.FillRectangle(br, 0, 0, w, labelTop);
+
+                // 文件夹图标（标签凸起 + 主体 + 高光）
+                int isz = Dpi.S(44), ix = (w - isz) / 2, iy = Dpi.S(10), tabH = Dpi.S(10);
+                using (var br = new SolidBrush(Config.Accent))
+                {
+                    g.FillRectangle(br, ix, iy, isz / 2, tabH);
+                    g.FillRectangle(br, ix, iy + tabH - Dpi.S(2), isz, isz - tabH + Dpi.S(2));
+                }
+                using (var br = new SolidBrush(Color.FromArgb(70, 255, 255, 255)))
+                    g.FillRectangle(br, ix + Dpi.S(3), iy + tabH + Dpi.S(2), isz - Dpi.S(6), Dpi.S(4));
+
+                using (var f = new Font(Config.FontName, 9f))
+                using (var br = new SolidBrush(Config.ListFg))
+                {
+                    var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+                    g.DrawString(I18n.T("desktop_history_label"), f, br,
+                        new RectangleF(0, labelTop, w, Dpi.S(22)), sf);
+                }
+
+                // 预乘 alpha → UpdateLayeredWindow（与 EntryCardForm 同一渲染体系）
+                byte[] px;
+                var bd = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+                px = new byte[bd.Stride * h];
+                Marshal.Copy(bd.Scan0, px, 0, px.Length);
+                for (int k = 0; k < px.Length; k += 4)
+                {
+                    byte a = px[k + 3];
+                    if (a < 255)
+                    {
+                        px[k] = (byte)(px[k] * a / 255);
+                        px[k + 1] = (byte)(px[k + 1] * a / 255);
+                        px[k + 2] = (byte)(px[k + 2] * a / 255);
+                    }
+                }
+                Marshal.Copy(px, 0, bd.Scan0, px.Length);
+                bmp.UnlockBits(bd);
+
+                IntPtr hdcScreen = NativeMethods.GetDC(IntPtr.Zero);
+                try
+                {
+                    var bmi = new NativeMethods.BITMAPINFO();
+                    bmi.bmiHeader.biSize = Marshal.SizeOf(typeof(NativeMethods.BITMAPINFOHEADER));
+                    bmi.bmiHeader.biWidth = w;
+                    bmi.bmiHeader.biHeight = -h;
+                    bmi.bmiHeader.biPlanes = 1;
+                    bmi.bmiHeader.biBitCount = 32;
+                    bmi.bmiHeader.biCompression = 0;
+                    IntPtr bits;
+                    IntPtr dib = NativeMethods.CreateDIBSection(hdcScreen, ref bmi, 0, out bits, IntPtr.Zero, 0);
+                    Marshal.Copy(px, 0, bits, px.Length);
+                    IntPtr hdcMem = NativeMethods.CreateCompatibleDC(hdcScreen);
+                    IntPtr hOld = NativeMethods.SelectObject(hdcMem, dib);
+                    var ptDst = new NativeMethods.POINT { X = Left, Y = Top };
+                    var ptSrc = new NativeMethods.POINT { X = 0, Y = 0 };
+                    var sz = new Size(w, h);
+                    var blend = new NativeMethods.BLENDFUNCTION
+                    {
+                        BlendOp = NativeMethods.AC_SRC_OVER,
+                        BlendFlags = 0,
+                        SourceConstantAlpha = 255,
+                        AlphaFormat = NativeMethods.AC_SRC_ALPHA
+                    };
+                    NativeMethods.UpdateLayeredWindow(Handle, hdcScreen, ref ptDst, ref sz, hdcMem, ref ptSrc, 0, ref blend, NativeMethods.ULW_ALPHA);
+                    NativeMethods.SelectObject(hdcMem, hOld);
+                    NativeMethods.DeleteObject(dib);
+                    NativeMethods.DeleteDC(hdcMem);
+                }
+                finally { NativeMethods.ReleaseDC(IntPtr.Zero, hdcScreen); }
+            }
         }
     }
 

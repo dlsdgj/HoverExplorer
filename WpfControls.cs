@@ -453,10 +453,6 @@ namespace HoverExplorer.Wpf
     // 颜色行用 ColorRow + Cfg.Key，保持设置窗现有的配色读写链路。
     public class AppearanceTable : UserControl
     {
-        private static readonly string[] PalKeys =
-            { "bg", "zb", "fg", "mu", "hv", "sel", "selfg", "bar", "drop", "ac", "acfg", "bd", "sb", "hdbg", "btnhv" };
-        private static readonly string[] PalNames =
-            { "行背景(奇)", "斑马(偶)", "名称文字", "大小/数量", "悬停高亮", "选中背景", "选中文字", "大小背景条", "拖拽放置", "排序按钮底", "排序按钮字", "边框分隔线", "滚动条", "表头底色", "按钮悬停" };
         // 表格行：颜色键 / 字体分区 / 项目名 / 副说明
         private static readonly string[] RowColor = { "", "", "bg", "zb", "fg", "mu", "hv", "sel", "selfg", "bar", "drop", "ac", "acfg", "bd", "sb", "hdbg", "btnhv", "", "" };
         private static readonly string[] RowFont = { "ui", "", "", "", "title", "meta", "", "", "item", "", "", "", "", "", "", "", "", "header", "subtitle" };
@@ -476,10 +472,11 @@ namespace HoverExplorer.Wpf
             try { using (var ifc = new InstalledFontCollection()) foreach (var f in ifc.Families) _famList.Add(f.Name); } catch { }
 
             var root = new Grid { Margin = new Thickness(12, 6, 12, 10) };
-            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
-            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(190) });
-            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(210) });
-            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(110) });
+            // 比例列：随内容区宽度自适应，避免固定 630 DIP 在窄窗口/高缩放下被裁切
+            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.20, GridUnitType.Star) });
+            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.90, GridUnitType.Star) });
+            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(2.10, GridUnitType.Star) });
+            root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1.10, GridUnitType.Star) });
             int row = 0;
             root.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
             AddCell(root, 0, 0, I18n.T("col_item"), true, "col_item");
@@ -514,8 +511,13 @@ namespace HoverExplorer.Wpf
                 {
                     var cr = new ColorRow();
                     Cfg.SetKey(cr, "pal:" + ck);
-                    Cfg.SetI18n(cr, "pal_lbl_" + ck);
-                    cr.Label = PalNames[Array.IndexOf(PalKeys, ck)];
+                    // 项目列已显示名称，颜色列不再重复 Label；紧凑样式去掉标签列，
+                    // 也不再绑 pal_lbl_* 的 i18n（否则切语言又把 Label 写回来）
+                    if (Application.Current != null)
+                    {
+                        var compact = Application.Current.Resources["ColorRowNoLabel"] as Style;
+                        if (compact != null) cr.Style = compact;
+                    }
                     Grid.SetRow(cr, r); Grid.SetColumn(cr, 1);
                     cr.VerticalAlignment = VerticalAlignment.Center;
                     root.Children.Add(cr);

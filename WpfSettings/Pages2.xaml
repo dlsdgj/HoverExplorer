@@ -109,6 +109,9 @@
                 <c:SettingRow c:Cfg.I18n="group_title_expand_row" c:Cfg.Desc="group_title_expand_desc">
                     <ToggleButton c:Cfg.Key="EntryGroupTitleExpand" Style="{DynamicResource Switch}" IsChecked="False"/>
                 </c:SettingRow>
+                <c:SettingRow c:Cfg.I18n="entry_desktop_icon_row" c:Cfg.Desc="entry_desktop_icon_desc">
+                    <ToggleButton c:Cfg.Key="DesktopHistoryIcon" Style="{DynamicResource Switch}" IsChecked="False"/>
+                </c:SettingRow>
                 <Border Style="{DynamicResource Hint}"><TextBlock c:Cfg.I18n="hint_fav_features" Foreground="{DynamicResource HintTextBrush}"/></Border>
             </StackPanel>
         </HeaderedContentControl>
