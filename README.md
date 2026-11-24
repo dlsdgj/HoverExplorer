@@ -12,6 +12,12 @@
 
 ![文件列表面板](images/hover_list.png)
 
+**浏览器中的悬停浏览** —— 在 GitHub 等网页的文件列表上悬停，即时弹出面板查看目录内容
+
+**Hover browsing in browsers** — Hover file lists on web pages such as GitHub to instantly pop up a panel of directory contents
+
+![浏览器悬停演示](images/github_hover.gif)
+
 **WPF 设置面板** —— 侧栏分页、7 语言与深浅主题分段切换；播放器倍速、暂停触控区、分类触发带均可配置
 
 **WPF settings panel** — Sidebar pages, 7-language and light/dark segmented switches; player speed, pause corner and categorized trigger zones are all configurable
