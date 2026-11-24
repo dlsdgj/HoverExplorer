@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>配色方案批量生成器</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font:14px/1.5 "Microsoft YaHei",system-ui,sans-serif;background:#f3f4f6;color:#222}
+header{padding:14px 20px;background:#fff;border-bottom:1px solid #ddd;display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+header h1{font-size:16px;margin:0 8px 0 0}
+label{display:flex;align-items:center;gap:6px;white-space:nowrap}
+select,input[type=number],button,textarea{font:inherit}
+select,input[type=number]{padding:3px 6px;border:1px solid #bbb;border-radius:4px;background:#fff}
+input[type=number]{width:64px}
+button{padding:4px 12px;border:1px solid #bbb;border-radius:4px;background:#fff;cursor:pointer}
+button:hover{background:#eef}
+button.pri{background:#2f6fed;color:#fff;border-color:#2f6fed}
+button.pri:hover{background:#1f5cd8}
+#lang{margin-left:auto;border-color:#bbb;color:#555}
+#lang:hover{background:#eef}
+main{display:flex;flex-wrap:wrap;gap:20px;padding:20px;align-items:flex-start}
+.panel{background:#fff;border:1px solid #ddd;border-radius:6px;padding:14px}
+.panel h2{font-size:14px;margin:0 0 10px}
+#editor{display:grid;grid-template-columns:auto 34px 82px;gap:4px 8px;align-items:center}
+#editor input[type=color]{width:34px;height:24px;padding:0;border:1px solid #bbb;background:none}
+#editor input[type=text]{width:82px;padding:2px 6px;border:1px solid #bbb;border-radius:4px;font-family:Consolas,monospace}
+#editor span{font-family:Consolas,monospace}
+#editor small{color:#888;margin-left:4px}
+.nameRow{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.nameRow span{font-family:Consolas,monospace}
+.nameRow input{flex:1;padding:2px 6px;border:1px solid #bbb;border-radius:4px}
+textarea#out{width:210px;height:300px;font-family:Consolas,monospace;font-size:13px;padding:6px;border:1px solid #bbb;border-radius:4px;resize:vertical}
+#batchWrap{padding:0 20px 30px}
+#cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}
+.card{background:#fff;border:1px solid #ddd;border-radius:6px;padding:8px;cursor:pointer}
+.card:hover{border-color:#2f6fed}
+.card .cap{display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:12px;color:#666}
+.card .cap small{display:block;font-weight:normal;color:#999;font-size:11px}
+.card .cap span{font-weight:600;color:#333}
+.card .cap button{padding:1px 8px;font-size:12px}
+.pvbox{overflow:hidden}
+/* ===== 预览（仿 HoverExplorer 窗口，无外框） ===== */
+.pvbox{width:fit-content;margin:0 auto;border:1px solid #e2e2e2;border-radius:14px;overflow:hidden}
+#mainPv{width:fit-content;border:1px solid #e2e2e2;border-radius:14px;overflow:hidden}
+.pv{border-radius:14px;overflow:hidden;width:300px;background:var(--bg);color:var(--fg);font-size:12.5px;user-select:none}
+.card .pv{zoom:.6}
+.pv .ttl{display:flex;align-items:center;gap:8px;padding:10px 12px 4px}
+.pv .ttl b{font-size:13.5px}
+.pv .ttl .tc{color:var(--mu);font-size:11.5px}
+.pv .sp{flex:1}
+.pv .ic{color:var(--fg);font-size:13px;line-height:1;padding:1px 2px;border-radius:3px}
+.pv .tbar{display:flex;align-items:center;gap:6px;padding:6px 12px 0}
+.pv .b{padding:1px 10px;border:1px solid var(--bd);border-radius:5px;color:var(--fg);font-size:11.5px;cursor:default}
+.pv .b:hover{background:var(--btnhv)}
+.pv .list{position:relative;max-height:258px;overflow:hidden;margin-top:8px}
+.pv .row{display:flex;align-items:center;gap:8px;min-height:29px;padding-left:12px}
+.pv .row:nth-child(even){background:var(--zb)}
+.pv .row:hover,.pv .row.hov{background:var(--hv)}
+.pv .row.sel{background:var(--sel);color:var(--selfg)}
+.pv .row .icn{font-size:15px;width:18px;text-align:center;line-height:1}
+.pv .row .nm{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pv .row .meta{flex:none;align-self:stretch;margin:3px 14px 3px 0;display:flex;align-items:center;justify-content:flex-end;padding:0 8px;background:linear-gradient(90deg,var(--bar),color-mix(in srgb,var(--bar) 12%,transparent));color:var(--fg);font-size:10.5px;border-radius:10px 0 0 10px}
+.pv .row .meta.pl{background:none;color:var(--mu);width:auto;}
+.pv .sbar{position:absolute;right:4px;top:0;width:4px;height:72px;border-radius:2px;background:var(--bd)}
+.pv .ft{display:flex;flex-wrap:wrap;gap:6px;padding:10px 12px 12px}
+.pv .tag{border:1px solid var(--bd);border-radius:7px;padding:0 8px;font-size:10.5px;line-height:18px;color:var(--mu)}
+</style>
+</head>
+<body>
+<header>
+  <h1 data-i18n="title">配色方案批量生成器</h1>
+  <label><span data-i18n="mode">模式</span>
+    <select id="mode"><option value="rand" data-i18n="optMode.rand">随机</option><option value="light" data-i18n="optMode.light">浅色</option><option value="dark" data-i18n="optMode.dark">深色</option></select>
+  </label>
+  <label><span data-i18n="rel">强调色关系</span>
+    <select id="rel"><option value="rand" data-i18n="optRel.rand">随机</option><option value="comp" data-i18n="optRel.comp">互补</option><option value="ana" data-i18n="optRel.ana">邻近</option><option value="tri" data-i18n="optRel.tri">三角</option><option value="mono" data-i18n="optRel.mono">同色系</option></select>
+  </label>
+  <label><input type="checkbox" id="hueRand" checked><span data-i18n="hueRand">随机色相</span></label>
+  <label><span data-i18n="hue">色相</span> <input type="range" id="hue" min="0" max="359" value="200" disabled><span id="hueV">200</span></label>
+  <label><span data-i18n="cnt">数量</span> <input type="number" id="cnt" min="1" max="60" value="12"></label>
+  <button class="pri" id="go" data-i18n="go">批量生成</button>
+  <button id="copyAll" data-i18n="copyAll">复制全部</button>
+  <button id="lang">English</button>
+</header>
+
+<main>
+  <div class="panel">
+    <h2 data-i18n="pv">预览（点击行可选中）</h2>
+    <div id="mainPv"></div>
+  </div>
+  <div class="panel">
+    <h2 data-i18n="tune">微调</h2>
+    <div class="nameRow"><span data-i18n="name">名称</span><input id="nm" type="text" spellcheck="false"></div>
+    <div id="editor"></div>
+  </div>
+  <div class="panel">
+    <h2><span data-i18n="out">输出</span> <button id="copyOne" data-i18n="copy" style="float:right;padding:1px 10px">复制</button></h2>
+    <textarea id="out" spellcheck="false"></textarea>
+  </div>
+</main>
+
+<div id="batchWrap"><div id="cards"></div></div>
+
+<script>
+const KEYS=['bg','zb','fg','mu','hv','sel','selfg','bar','bd','btnhv'];
+const HUE_ZH=[[15,'赤霞'],[35,'焰橙'],[50,'蜜金'],[70,'芥黄'],[95,'橄榄'],[140,'苔绿'],[175,'薄荷'],[200,'海盐'],[225,'湖蓝'],[255,'靛青'],[285,'紫藤'],[320,'品红'],[345,'蔷薇'],[360,'樱粉']];
+const HUE_EN=[[15,'Crimson Dawn'],[35,'Ember'],[50,'Honey'],[70,'Mustard'],[95,'Olive'],[140,'Moss'],[175,'Mint'],[200,'Seafoam'],[225,'Lake'],[255,'Indigo'],[285,'Wisteria'],[320,'Magenta'],[345,'Rose'],[360,'Blossom']];
+const hueOf=(list,h)=>{for(const[m,n]of list)if(h<m)return n;return list[list.length-1][1]};
+
+/* ---------- 多语言 ---------- */
+const I18N={
+ zh:{title:'配色方案批量生成器',mode:'模式',rel:'强调色关系',hueRand:'随机色相',hue:'色相',cnt:'数量',
+  go:'批量生成',copyAll:'复制全部',pv:'预览（点击行可选中）',tune:'微调',out:'输出',name:'名称',copy:'复制',copied:'已复制',
+  optMode:{rand:'随机',light:'浅色',dark:'深色'},
+  optRel:{rand:'随机',comp:'互补',ana:'邻近',tri:'三角',mono:'同色系'},
+  folder:'新建文件夹',items:n=>`${n} 项`,bName:'名称',bSize:'大小',bDate:'日期 ▾',
+  tone:{light:'浅',dark:'深'},relT:{comp:'互补',ana:'邻近',tri:'三角',mono:'同色'},
+  labels:{bg:'窗口背景',zb:'斑马行背景',fg:'主要文字',mu:'次要文字',hv:'行悬停',sel:'选中行背景',selfg:'选中行文字',
+   bar:'大小条',bd:'边框/按钮描边',btnhv:'按钮悬停'},lang:'English'},
+ en:{title:'Color Scheme Batch Generator',mode:'Mode',rel:'Accent relation',hueRand:'Random hue',hue:'Hue',cnt:'Count',
+  go:'Generate',copyAll:'Copy all',pv:'Preview (click a row to select)',tune:'Fine-tune',out:'Output',name:'Name',copy:'Copy',copied:'Copied',
+  optMode:{rand:'Random',light:'Light',dark:'Dark'},
+  optRel:{rand:'Random',comp:'Complementary',ana:'Analogous',tri:'Triadic',mono:'Monochromatic'},
+  folder:'New folder',items:n=>`${n} items`,bName:'Name',bSize:'Size',bDate:'Date ▾',
+  tone:{light:'Light',dark:'Dark'},relT:{comp:'Comp',ana:'Analog',tri:'Triad',mono:'Mono'},
+  labels:{bg:'Window background',zb:'Zebra row',fg:'Primary text',mu:'Secondary text',hv:'Row hover',sel:'Selected row',
+   selfg:'Selected text',bar:'Size bar',bd:'Border / button outline',btnhv:'Button hover'},lang:'中文'}
+};
+let lang=localStorage.getItem('scheme-lang')==='en'?'en':'zh';
+const t=()=>I18N[lang];
+const tr=p=>p.split('.').reduce((o,k)=>o&&o[k],t());
+const autoName=(h,mode)=>lang==='en'?`${hueOf(HUE_EN,h)} ${mode==='light'?'Light':'Dark'}`:(mode==='light'?'浅':'深')+hueOf(HUE_ZH,h);
+const $=id=>document.getElementById(id);
+const rnd=(a,b)=>a+Math.random()*(b-a);
+const pick=a=>a[Math.floor(Math.random()*a.length)];
+
+function hsl(h,s,l){
+  h=((h%360)+360)%360;s=Math.max(0,Math.min(100,s))/100;l=Math.max(0,Math.min(100,l))/100;
+  const k=n=>(n+h/30)%12,a=s*Math.min(l,1-l);
+  const f=n=>l-a*Math.max(-1,Math.min(k(n)-3,Math.min(9-k(n),1)));
+  return [f(0),f(8),f(4)].map(x=>Math.round(x*255).toString(16).padStart(2,'0')).join('').toUpperCase();
+}
+
+function gen(o){
+  const h=o.hueRand?rnd(0,360):o.hue;
+  const mode=o.mode==='rand'?pick(['light','dark']):o.mode;
+  const rel=o.rel==='rand'?pick(['comp','ana','tri','mono']):o.rel;
+  let off={comp:180,ana:pick([-35,35]),tri:pick([120,240]),mono:0}[rel];
+  const ah=h+off;
+  let c;
+  if(mode==='light'){
+    const bl=rnd(94,97),bs=rnd(16,32);
+    c={bg:hsl(h,bs,bl),zb:hsl(h,bs,bl-rnd(0,2.5)),fg:hsl(h,rnd(55,85),rnd(24,32)),
+       mu:hsl(h,rnd(14,24),rnd(42,52)),hv:hsl(h,rnd(38,55),rnd(86,91)),
+       sel:hsl(h,rnd(70,90),rnd(26,34)),selfg:'FFFFFF',bar:hsl(h,rnd(45,65),rnd(54,64)),
+       bd:hsl(ah,rnd(60,90),rnd(74,82)),btnhv:hsl(h,rnd(30,45),rnd(82,88))};
+  }else{
+    const bl=rnd(9,14);
+    c={bg:hsl(h,rnd(10,20),bl),zb:hsl(h,rnd(10,20),bl+2),fg:hsl(h,rnd(15,30),rnd(86,93)),
+       mu:hsl(h,rnd(10,20),rnd(58,68)),hv:hsl(h,rnd(20,35),bl+9),
+       sel:hsl(h,rnd(55,75),rnd(34,44)),selfg:hsl(h,20,rnd(94,98)),bar:hsl(h,rnd(35,55),bl+12),
+       bd:hsl(ah,rnd(40,70),rnd(38,50)),btnhv:hsl(h,rnd(20,35),bl+13)};
+  }
+  if(Math.random()<.4)c.zb=c.bg;
+  c._mode=mode;c._rel=rel;c._hue=h;c._auto=true;
+  c.name=autoName(h,mode);
+  return c;
+}
+
+function setVars(pv,s){
+  KEYS.forEach(k=>pv.style.setProperty('--'+k,'#'+s[k]));
+}
+
+const ROWS=[
+ ['📁','link_assets',7],['📁','.git',15],['📁','_issue12',2],['📁','WpfSettings',5],['📁','images',5],['📁','.trae',1],['📁','.codeartsdoer',10],
+ ['📄','hover_debug.log','2.1 MB'],['📄','config.json','17.4 KB'],['📄','drag_debug.log','167.4 KB'],
+ ['🖥️','Mp3Fixer.exe','19.5 KB'],['🖥️','HoverExplorer.exe','1.2 MB'],['📄','README.md','4.2 KB']
+];
+const TAGS=['CS','PS1','DIR','EXE','LOG','MD','PNG','GITIGNORE','ICO','JSON','MANIFEST'];
+function barW(str){
+  const [n,u]=str.split(' ');const b=parseFloat(n)*(u==='MB'?1e6:1e3);
+  return Math.round(Math.max(44,Math.min(96,44+52*(Math.log10(b)-3.2)/1.9)));
+}
+function buildPV(s,interactive){
+  const pv=document.createElement('div');pv.className='pv';
+  const rows=ROWS.map((r,i)=>{
+    const cls=['row'];if(i===9)cls.push('sel');if(i===8)cls.push('hov');
+    const isDir=typeof r[2]==='number';
+    const meta=isDir?`<span class="meta pl">${t().items(r[2])}</span>`:`<span class="meta" style="width:${barW(r[2])}px">${r[2]}</span>`;
+    return `<div class="${cls.join(' ')}"><span class="icn">${r[0]}</span><span class="nm">${r[1]}</span>${meta}</div>`;
+  }).join('');
+  pv.innerHTML=`<div class="win">
+   <div class="ttl"><span class="ic">❐</span><span class="ic">✎</span><b>cs</b><span class="tc">${t().items(88)}</span><span class="sp"></span><span class="ic">◧</span><span class="ic">●</span></div>
+   <div class="tbar"><span class="b">+</span><span class="b">${t().bName}</span><span class="b">${t().bSize}</span><span class="b">${t().bDate}</span><span class="sp"></span><span class="ic">↻</span></div>
+   <div class="list">${rows}<i class="sbar"></i></div>
+   <div class="ft">${TAGS.map(x=>`<span class="tag">${x}</span>`).join('')}</div>
+  </div>`;
+  setVars(pv,s);
+  if(interactive){
+    pv.querySelector('.list').addEventListener('click',e=>{
+      const row=e.target.closest('.row');if(!row)return;
+      pv.querySelectorAll('.row.sel').forEach(x=>x.classList.remove('sel'));row.classList.add('sel');
+    });
+  }
+  return pv;
+}
+
+let cur=gen({hueRand:true,mode:'light',rel:'rand'});
+let batch=[];
+
+function toText(s){return `# ${s.name}\n`+KEYS.map(k=>k+'='+s[k]).join('\n')}
+
+function renderMain(){
+  const box=$('mainPv');box.innerHTML='';box.appendChild(buildPV(cur,true));
+  $('nm').value=cur.name;
+  const ed=$('editor');ed.innerHTML='';
+  KEYS.forEach(k=>{
+    const lb=document.createElement('span');lb.innerHTML=`${k}<small>${t().labels[k]}</small>`;
+    const cp=document.createElement('input');cp.type='color';cp.value='#'+cur[k];
+    const tx=document.createElement('input');tx.type='text';tx.value=cur[k];tx.maxLength=6;
+    cp.oninput=()=>{set(k,cp.value.slice(1).toUpperCase());tx.value=cur[k]};
+    tx.oninput=()=>{if(/^[0-9a-fA-F]{6}$/.test(tx.value)){set(k,tx.value.toUpperCase());cp.value='#'+cur[k]}};
+    ed.append(lb,cp,tx);
+  });
+  $('out').value=toText(cur);
+}
+function set(k,v){
+  cur[k]=v;
+  const pv=$('mainPv').firstChild;pv.style.setProperty('--'+k,'#'+v);
+  $('out').value=toText(cur);
+}
+$('nm').oninput=()=>{cur.name=$('nm').value;cur._auto=false;$('out').value=toText(cur)};
+
+function opts(){return{mode:$('mode').value,rel:$('rel').value,hueRand:$('hueRand').checked,hue:+$('hue').value}}
+
+function renderCards(){
+  const c=$('cards');c.innerHTML='';
+  batch.forEach(s=>{
+    const d=document.createElement('div');d.className='card';
+    const w=document.createElement('div');w.className='pvbox';w.appendChild(buildPV(s,false));
+    const cap=document.createElement('div');cap.className='cap';
+    cap.innerHTML=`<span>${s.name}<small>${t().tone[s._mode]} · H${Math.round(s._hue)} · ${t().relT[s._rel]}</small></span>`;
+    const b=document.createElement('button');b.textContent=t().copy;
+    b.onclick=e=>{e.stopPropagation();copy(toText(s),b)};
+    cap.appendChild(b);d.append(w,cap);
+    d.onclick=()=>{cur=Object.assign({},s);renderMain();window.scrollTo({top:0,behavior:'smooth'})};
+    c.appendChild(d);
+  });
+}
+
+function copy(txt,btn){
+  const done=()=>{if(!btn)return;const o=btn.textContent;btn.textContent=t().copied;setTimeout(()=>btn.textContent=o,900)};
+  if(navigator.clipboard&&window.isSecureContext){navigator.clipboard.writeText(txt).then(done,()=>fb())}else fb();
+  function fb(){const ta=document.createElement('textarea');ta.value=txt;document.body.appendChild(ta);ta.select();try{document.execCommand('copy')}catch(e){}ta.remove();done()}
+}
+
+$('go').onclick=()=>{
+  const n=Math.max(1,Math.min(60,+$('cnt').value||12));
+  batch=Array.from({length:n},()=>gen(opts()));
+  cur=Object.assign({},batch[0]);
+  renderMain();renderCards();
+};
+$('copyAll').onclick=e=>{
+  if(!batch.length)return;
+  copy(batch.map(toText).join('\n\n'),e.target);
+};
+$('copyOne').onclick=e=>copy($('out').value,e.target);
+$('hueRand').onchange=()=>{$('hue').disabled=$('hueRand').checked};
+$('hue').oninput=()=>$('hueV').textContent=$('hue').value;
+$('out').oninput=()=>{
+  let changed=false;
+  $('out').value.split(/\r?\n/).forEach(l=>{
+    const nm=l.trim().match(/^#\s*(.+)$/);
+    if(nm){cur.name=nm[1].trim();changed=true;return}
+    const m=l.trim().match(/^(\w+)=#?([0-9a-fA-F]{6})$/);
+    if(m&&KEYS.includes(m[1])){cur[m[1]]=m[2].toUpperCase();changed=true}
+  });
+  if(changed){
+    const t=$('out').value;renderMain();$('out').value=t;
+  }
+};
+
+function applyLang(){
+  document.documentElement.lang=lang==='en'?'en':'zh-CN';
+  document.title=t().title;
+  document.querySelectorAll('[data-i18n]').forEach(el=>{
+    const v=tr(el.dataset.i18n);if(typeof v==='string')el.textContent=v;
+  });
+  $('lang').textContent=t().lang;
+  if(cur._auto)cur.name=autoName(cur._hue,cur._mode);
+  batch.forEach(s=>{if(s._auto)s.name=autoName(s._hue,s._mode)});
+  renderMain();renderCards();
+}
+$('lang').onclick=()=>{lang=lang==='en'?'zh':'en';localStorage.setItem('scheme-lang',lang);applyLang()};
+
+applyLang();
+$('go').click();
+</script>
+</body>
+</html>

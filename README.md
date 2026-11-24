@@ -49,7 +49,7 @@
 - **收藏·历史列表 / Favorites · History**: 自定义触发区域或热键弹出常用文件夹；星标收藏；行悬停操作按钮；宽度可拖拽记忆 — Custom trigger area or hotkey; star to favorite; row hover action buttons; draggable width with memory
 - **关闭延迟可调 / Adjustable close delay**: 50–2000ms 统一控制列表/预览/收藏离开后关闭速度 — 50–2000ms unified close speed for list/preview/favorites after mouse leaves
 - **设置即改即生效 / Live settings**: 无确定/取消按钮，任何改动实时保存生效 — No OK/Cancel; all changes save and apply instantly
-- **外观自定义 / Appearance**: 列表 5 分区字体/字号（表头/名称/列表/格式标签/数量·大小）+ 实时预览；列表与卡片配色方案下拉框滚轮直接切换、改动实时预览 — Per-zone fonts & sizes with live preview; scroll to cycle list/card color schemes, all previewed live
+- **外观自定义 / Appearance**: 设置「自定义颜色」以四列表格（项目/颜色/字体/字号）统一配置，统一界面字体 + 各文字部位单独覆盖（表头/标题/副标题/正文/代码/徽标/元信息/来源）；列表与卡片配色方案下拉框滚轮直接切换、改动即时生效 — Settings "Custom colors" uses a 4-column table (item/color/font/size), one global interface font with per-part overrides (header/title/subtitle/body/code/badge/meta/source); scroll to cycle list/card color schemes, all applied live
 - **设置窗口可调 / Resizable settings**: 拖边缘调整设置面板尺寸，记忆恢复 — Drag edges to resize the settings panel; size remembered
 - **快捷键切换 / Hotkey toggle**: 全局快捷键启用/禁用悬停（默认 `Ctrl+Alt+Q`，可自定义） — Global hotkey to enable/disable hover (default `Ctrl+Alt+Q`, customizable)
 - **悬停延时可调 / Adjustable hover delay**: 自定义触发延时，文件夹和文件统一生效 — Custom trigger delay, applies to folders and files
@@ -79,7 +79,7 @@
 - **文本预览编码保留 / Text encoding preservation**: 保存按原 BOM 写回（UTF-8/16/32），不丢 BOM — Save preserves original BOM (UTF-8/16/32)
 - **悬停触发更精准 / Precise hover trigger**: 指针必须移动才触发；重命名/地址栏输入时不弹 — Pointer must move to trigger; suppressed during rename/address input
 - **输入法友好 / IME friendly**: 输入框持焦点时暂停置顶，候选窗不被遮挡 — Pause topmost when input focused; IME candidate not occluded
-- **WPF 设置面板 / WPF settings shell**: 设置窗改用 WPF 外壳（XAML 作为嵌入资源运行时加载），侧栏分页、深浅主题跟随；加载失败自动回退旧 WinForms 面板 — WPF shell with runtime-loaded XAML resources, sidebar pages and dark/light themes; falls back to the WinForms panel
+- **WPF 设置面板 / WPF settings shell**: 设置窗改用 WPF 外壳（XAML 作为嵌入资源运行时加载），侧栏分页、深浅主题跟随；顶栏左侧 7 语言分段切换、右侧深浅主题分段按钮，配色对齐统一蓝灰色相（激活项浅蓝底、侧栏撑满、实线分隔）— WPF shell with runtime-loaded XAML resources, sidebar pages and dark/light themes; top bar has 7-language and theme segmented buttons, palette unified to a blue-grey scheme (light-blue active nav, full-height sidebar, solid separators)
 - **键盘导航 / Keyboard navigation**: `↑`/`↓` 选择行、`→` 显示选中行预览、`←` 返回列表；预览窗激活时 `←`/`→` 切换同目录文件，`Esc` 退出键盘模式 — Arrow keys select, preview and return; Esc leaves keyboard mode
 - **预览窗标题栏操作 / Preview header actions**: 左上角重命名按钮与「默认程序打开」按钮 — Rename and open-with-default-app buttons at the header
 - **复制确认 / Copy feedback**: 复制后按钮显示 `√`，窗口底部同时提示「已复制文件/路径/文本…」，均 1000ms 后自动还原 — Copy button shows `√` and a bottom-bar "Copied file/path/text…" hint; both revert after 1000ms
@@ -93,7 +93,12 @@
 - **快捷方式标题标记 / Shortcut title marker**: 从文件夹快捷方式（.lnk）打开的列表面板，标题名称后显示 `· lnk`，一眼看出这是快捷方式的目标目录 — Panels opened from a folder shortcut show `· lnk` after the title
 - **预览窗配色跟随列表 / Preview matches list palette**: 预览窗底色、文字、悬停、强调与分隔线全部取自列表配色（含滚动条深浅），两个界面上同一套视觉 — Preview chrome uses the list palette (background, text, hover, accent, separators, scrollbar tone), so both surfaces share one look
 - **预览窗细节统一 / Unified preview chrome**: 文本/图片内容留白、操作栏与信息栏细分隔线、标题 13px 半粗 + 规格 11px 次要色、图片 6% 棋盘格底与右下角淡色手柄 — Content padding, hairline separators, 13px semibold title + 11px muted meta, 6% checkerboard behind images and a faint corner grip
-- **资源占用显示 / Resource usage readout**: 可选在列表面板计数右侧显示 HE 自身的 `CPU x% · xxxMB`，约 1 秒刷新，默认关闭 — Optional `CPU x% · xxxMB` readout next to the item count, refreshed about once per second; off by default
+- **资源占用显示 / Resource usage readout**: 可选在列表标题右侧紧凑显示 `2.4% · 112M`（CPU 全核占比 + 私有工作集，与任务管理器同口径），约 1 秒刷新，默认关闭 — Optional compact `2.4% · 112M` at the right of the list title (CPU share of all cores + private working set, same as Task Manager), refreshed about once per second; off by default
+- **识别场景可扩展 / Extensible hover scenes**: 悬停检测拆成可插拔场景（桌面/文件对话框/TC/资源管理器/Perch/通用 UIA 列表），设置里单独开关，附实时「场景诊断」显示窗口类、进程、UIA 元素与最近命中 — Hover detection is now a pluggable provider list (desktop, file dialogs, TC, Explorer, Perch, generic UIA), each with its own switch plus a live "scene diagnostics" page
+- **文件对话框悬停 / File dialog hover**: 在打开/另存为对话框中悬停文件即可预览、悬停文件夹即可展开列表；UIA 只认列表项，不干扰输入框与按钮 — Hover files in Open/Save dialogs to preview, folders to expand; only list items respond
+- **通用 UIA 文件列表 / Generic UIA lists**: 实验性兜底，尝试识别 Everything、OneCommander 等未适配程序的列表项并预览，默认关闭 — Experimental fallback for unadapted apps such as Everything and OneCommander; off by default
+- **文本颜色色块 / Color swatches**: 文本预览里的 `#RRGGBB`、`rgb()/rgba()` 直接在原取值旁内联渲染色块（不再是顶部独立色块条） — Hex and rgb()/rgba() values in text previews render a swatch inline right next to the original token (no separate strip at the top)
+- **列表预览触发带 / Right-side trigger band**: 文件列表右侧固定一条可调宽度的预览触发带，带左侧有与「名称靠右」分栏线同款的 1px 分隔线；拖动分隔线调整宽度，触发带失效时整行触发；名称靠左时行内操作按钮排在分隔线左侧 — Each list row has a fixed preview-trigger band on the right with a draggable 1px divider matching the swap-layout splitter; drag it to resize (0 = whole row), and row action buttons stay left of the divider when names are left-aligned
 - **文字卡片 / Text cards**: 剪贴板文字卡片徽章显示 `TEXT`；卡片关闭时固定中的预览窗保留；预览窗「固定为卡片」按文本类型重建卡片 — Text cards show a `TEXT` badge; a pinned preview survives closing the card; "pin to card" re-creates a text card
 - **列表与预览修复 / List & preview fixes**: exe/ico/lnk 等按完整路径缓存图标（不再整类共用一个图标）、行内按钮上下移动不再残留悬停高亮、ffmpeg 兜底视频音轨从当前位置起播（不再重复/静音） — Per-file icon caching for exe/ico/lnk, no stale row hover when moving over action buttons, ffmpeg-fallback audio starts at the current position (no double or missing sound)
 

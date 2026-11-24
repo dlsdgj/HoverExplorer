@@ -19,17 +19,19 @@ namespace HoverExplorer
     // 不抢焦点（ShowWithoutActivation + MA_NOACTIVATE），否则会打断用户正在操作的窗口。
     internal class PaletteListForm : Form
     {
-        private const int RowH = 24;
-        private const int PadX = 8;
-        private const int PadY = 5;
-        private const int TapeW = 46;
-        private const int TapeH = 12;
+        private static int RowH { get { return Dpi.S(24); } }
+        private static int PadX { get { return Dpi.S(8); } }
+        private static int PadY { get { return Dpi.S(5); } }
+        private static int TapeW { get { return Dpi.S(46); } }
+        private static int TapeH { get { return Dpi.S(12); } }
         private const int LeaveDelay = 350;   // 离开后延迟关闭：卡片与列表之间 4px 缝隙要放行
         private const int PollInterval = 120;
 
         private static PaletteListForm _inst;
 
         private int _index;
+        private int _scroll;                // 首行索引：列表高于可用空间时滚动显示，选中项始终可见
+        private int _contentH;              // 全部方案所需高度（未限高）
         private IPaletteTarget _owner;   // Form 基类带 Bounds/IsDisposed，接口只补 SetPalette
         private readonly Timer _timer;      // 轮询：鼠标是否还在卡片/列表上
         private DateTime _leaveSince = DateTime.MinValue;
@@ -49,7 +51,7 @@ namespace HoverExplorer
             BackColor = Config.BG;
             Font = new Font(Config.FontName, 9f);
 
-            Width = 232;
+            Width = Dpi.S(232);
             _fnSyncSize();
 
             _timer = new Timer { Interval = PollInterval };
@@ -73,6 +75,9 @@ namespace HoverExplorer
                     Program.ApplyThemeChange();     // 内含 Config.Save()，让所有卡片重绘
                     if (_owner != null && !_owner.IsDisposed) _owner.SetPalette(_index, true);
                     _leaveSince = DateTime.MinValue;
+                    _fnSyncSize();
+                    if (_owner != null && !_owner.IsDisposed) _fnPlace(_owner.Bounds);
+                    _fnEnsureVisible();
                     Invalidate();
                     return;
                 }
@@ -98,15 +103,17 @@ namespace HoverExplorer
             f._leaveSince = DateTime.MinValue;
             f._fnSyncSize();   // 方案数可能已变（批量导入/删除），单例高度不能沿用构造时的值
             f._fnPlace(anchor);
+            f._fnEnsureVisible();
             if (!f.Visible) f.Show();
             f.Invalidate();
             f._timer.Start();
         }
 
-        // 高度按当前方案数重算；_fnPlace 依赖 Height，必须先同步再定位
+        // 计算全部方案所需高度；_fnPlace 会按工作区可用空间限高，先同步再定位
         private void _fnSyncSize()
         {
-            Height = PadY * 2 + Math.Max(1, CardPalettes.All.Count) * RowH;
+            _contentH = PadY * 2 + Math.Max(1, CardPalettes.All.Count) * RowH;
+            Height = _contentH;
         }
 
         // 设置面板里保存/删除/批量导入后即时通知浮层，不必等下次滚轮或重启进程
@@ -117,6 +124,8 @@ namespace HoverExplorer
             int n = CardPalettes.All.Count;
             if (f._index >= n) f._index = Math.Max(0, n - 1);
             f._fnSyncSize();
+            if (f._owner != null && !f._owner.IsDisposed) f._fnPlace(f._owner.Bounds);
+            f._fnEnsureVisible();
             f._leaveSince = DateTime.MinValue;
             f.Invalidate();
         }
@@ -135,11 +144,18 @@ namespace HoverExplorer
             if (IsHandleCreated && Visible) Hide();
         }
 
-        private static int HitRow(Point p)
+        private int HitRow(Point p)
         {
-            int i = (p.Y - PadY) / RowH;
-            if (i < 0 || i >= CardPalettes.All.Count) return -1;
+            if (p.Y < PadY || p.Y >= Height - PadY) return -1;
+            int i = _scroll + (p.Y - PadY) / RowH;
+            if (i < _scroll || i >= CardPalettes.All.Count) return -1;
+            if (i >= _scroll + VisibleRows()) return -1;
             return i;
+        }
+
+        private int VisibleRows()
+        {
+            return Math.Max(1, (Height - PadY * 2) / RowH);
         }
 
         // 鼠标离开卡片（也不在列表上）→ 延迟一小会儿关闭；卡片没了也立刻关
@@ -157,14 +173,45 @@ namespace HoverExplorer
             if ((DateTime.UtcNow - _leaveSince).TotalMilliseconds >= LeaveDelay) _fnHide();
         }
 
-        // 定位：优先放卡片下方，放不下翻到上方，整体钳在工作区内
+        // 定位：优先卡片下方，放不下翻上方；两侧都放不下时限高并在列表内滚动，
+        // 保证浮层始终落在卡片之外的空白区域，不遮挡卡片本身。
         private void _fnPlace(Rectangle anchor)
         {
             var wa = Screen.GetWorkingArea(new Point(anchor.Left, anchor.Top));
-            int x = Math.Min(anchor.Left, wa.Right - Width - 4);
-            int y = anchor.Bottom + 4;
-            if (y + Height > wa.Bottom) y = anchor.Top - Height - 4;
-            Location = new Point(Math.Max(wa.Left + 4, x), Math.Max(wa.Top + 4, y));
+            int gap = Dpi.S(4);
+            int above = Math.Max(0, anchor.Top - wa.Top - gap);
+            int below = Math.Max(0, wa.Bottom - anchor.Bottom - gap);
+            int minH = PadY * 2 + RowH;
+
+            bool up = (_contentH > below) && (above >= _contentH || above > below);
+            int room = up ? above : below;
+            if (room < minH)
+            {
+                if (!up && above > room) { up = true; room = above; }
+                else if (up && below > room) { up = false; room = below; }
+            }
+            if (room < minH) room = minH;
+
+            int h = Math.Min(_contentH, room);
+            Height = h;
+            int x = Math.Max(wa.Left + gap, Math.Min(anchor.Left, wa.Right - Width - gap));
+            int y = up ? anchor.Top - gap - h : anchor.Bottom + gap;
+            if (up) y = Math.Max(wa.Top + gap, y);
+            else y = Math.Min(y, wa.Bottom - gap - h);
+            Location = new Point(x, y);
+        }
+
+        // 选中行随滚轮实时高亮；限高时把选中行滚进可见区，避免"选中了却看不到"
+        private void _fnEnsureVisible()
+        {
+            int count = CardPalettes.All.Count;
+            int visible = VisibleRows();
+            int maxScroll = Math.Max(0, count - visible);
+            if (_scroll > maxScroll) _scroll = maxScroll;
+            if (_scroll < 0) _scroll = 0;
+            if (_index < _scroll) _scroll = _index;
+            else if (_index >= _scroll + visible) _scroll = _index - visible + 1;
+            if (_scroll > maxScroll) _scroll = maxScroll;
         }
 
         protected override bool ShowWithoutActivation { get { return true; } }
@@ -180,10 +227,11 @@ namespace HoverExplorer
             base.OnPaint(e);
             var g = e.Graphics;
             var list = CardPalettes.All;
-            for (int i = 0; i < list.Count; i++)
+            int last = Math.Min(list.Count, _scroll + VisibleRows());
+            for (int i = _scroll; i < last; i++)
             {
                 var p = list[i];
-                int top = PadY + i * RowH;
+                int top = PadY + (i - _scroll) * RowH;
                 bool sel = i == _index;
                 if (sel)
                 {
@@ -199,7 +247,7 @@ namespace HoverExplorer
                 using (var b = new SolidBrush(p.StripColor))
                     g.FillRectangle(b, tx, ty, 4, TapeH);
                 using (var b = new SolidBrush(p.BadgeBg))
-                    g.FillRectangle(b, tx + TapeW - 11, ty + 2, 9, TapeH - 4);
+                    g.FillRectangle(b, tx + TapeW - Dpi.S(11), ty + Dpi.S(2), Dpi.S(9), TapeH - Dpi.S(4));
                 if (p.StripWidth > 0 && p.StripColor.A > 0)
                 {
                     using (var pen = new Pen(p.StripColor, p.StripWidth))
@@ -213,7 +261,7 @@ namespace HoverExplorer
 
                 string text = (i + 1) + ". " + p.Name;
                 Color fg = sel ? Config.FG : Config.PlaceholderFg;
-                TextRenderer.DrawText(g, text, Font, new Point(tx + TapeW + 8, top + 5), fg,
+                TextRenderer.DrawText(g, text, Font, new Point(tx + TapeW + Dpi.S(8), top + Dpi.S(5)), fg,
                     TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis);
             }
             using (var pen = new Pen(Config.Border))

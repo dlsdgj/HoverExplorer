@@ -6,8 +6,10 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Markup;
+using System.Windows.Media;
 using System.Windows.Media.Animation;
 
 namespace HoverExplorer.Wpf
@@ -15,7 +17,6 @@ namespace HoverExplorer.Wpf
     // 阶段①：用 WPF 重写设置面板的外壳（顶栏 / 侧栏 / 页面 / 深浅主题）。
     // XAML 来自 D:\下载\HESettings 原型，作为嵌入资源由 XamlReader 在运行时加载，
     // 因此无需 MSBuild/XAML 编译，也不改变主程序的 .NET Framework + csc 构建链。
-    // 旧 WinForms SettingsForm 保留作为加载失败时的回退。
     internal static class WpfSettingsWindow
     {
         private const string ResPrefix = "HoverExplorer.Wpf.Xaml.";
@@ -28,15 +29,10 @@ namespace HoverExplorer.Wpf
         private static bool _hasPos;
         private static double _left;
         private static double _top;
-        private static SettingsForm _fallbackForm;
 
         internal static bool IsOpen
         {
-            get
-            {
-                if (_win != null && _win.IsVisible) return true;
-                return _fallbackForm != null && !_fallbackForm.IsDisposed && _fallbackForm.Visible;
-            }
+            get { return _win != null && _win.IsVisible; }
         }
 
         [DllImport("dwmapi.dll", PreserveSig = true)]
@@ -86,17 +82,76 @@ namespace HoverExplorer.Wpf
             }
             catch (Exception ex)
             {
-                // 阶段①安全网：WPF 资源/加载异常时回退到旧 WinForms 设置窗，功能不中断
-                try { System.Diagnostics.Debug.WriteLine("[WpfSettings] " + ex); } catch { }
+                // 不再回退到旧 WinForms 设置窗：记录完整异常并提示，避免两套 UI 混用
+                Program.DebugLog("[wpf-settings] 加载失败: " + ex);
                 _win = null;
                 _pageHost = null;
                 _pageScroll = null;
-                if (_fallbackForm != null && !_fallbackForm.IsDisposed) { _fallbackForm.Activate(); return; }
-                _fallbackForm = new SettingsForm();
-                _fallbackForm.FormClosed += delegate { _fallbackForm = null; };
-                _fallbackForm.Show();
+                try
+                {
+                    MessageBox.Show(ex.Message, I18n.T("settings_load_fail"),
+                        MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+                catch { }
             }
         }
+
+        // 顶栏分段按钮：浅色容器 + 圆角 + 激活白底蓝字，参照原型 lang-seg
+        private static Border BuildSegment(string[] labels, string[] tooltips, int selected, Action<int> onSelect)
+        {
+            var panel = new StackPanel { Orientation = Orientation.Horizontal };
+            var border = new Border
+            {
+                BorderThickness = new Thickness(1),
+                CornerRadius = new CornerRadius(8),
+                Padding = new Thickness(3),
+                Child = panel
+            };
+            border.SetResourceReference(Border.BackgroundProperty, "NavBrush");
+            border.SetResourceReference(Border.BorderBrushProperty, "LineBrush");
+            var buttons = new List<Button>();
+            for (int i = 0; i < labels.Length; i++)
+            {
+                int idx = i;
+                var btn = new Button
+                {
+                    Content = labels[i],
+                    ToolTip = tooltips != null && i < tooltips.Length ? tooltips[i] : null,
+                    Style = (Style)Application.Current.Resources["SegmentButton"],
+                    Background = Brushes.Transparent
+                };
+                btn.Click += delegate { onSelect(idx); };
+                panel.Children.Add(btn);
+                buttons.Add(btn);
+            }
+            border.Tag = buttons;
+            ApplySegmentSelection(border, selected);
+            return border;
+        }
+
+        private static void ApplySegmentSelection(Border seg, int selected)
+        {
+            var buttons = seg.Tag as List<Button>;
+            if (buttons == null) return;
+            for (int i = 0; i < buttons.Count; i++)
+            {
+                bool on = i == selected;
+                if (on)
+                {
+                    buttons[i].SetResourceReference(Button.BackgroundProperty, "PanelBrush");
+                    buttons[i].SetResourceReference(Button.ForegroundProperty, "AccentBrush");
+                    buttons[i].Effect = new System.Windows.Media.Effects.DropShadowEffect { BlurRadius = 3, ShadowDepth = 1, Opacity = 0.18 };
+                }
+                else
+                {
+                    buttons[i].Background = Brushes.Transparent;
+                    buttons[i].SetResourceReference(Button.ForegroundProperty, "SubTextBrush");
+                    buttons[i].Effect = null;
+                }
+            }
+        }
+
+        private static Border _langSegment, _themeSegment;
 
         private static void ShowCore()
         {
@@ -105,20 +160,41 @@ namespace HoverExplorer.Wpf
 
             _win = (Window)XamlReader.Parse(ReadXaml("Shell.xaml"));
             _win.Title = "HoverExplorer v" + Program.Version + " " + I18n.T("settings");
+            // 恢复上次调整的宽度（Config.SettingsW；0=默认宽度），并限制在工作区内
+            if (Config.SettingsW > 0)
+            {
+                double maxW = SystemParameters.WorkArea.Width - 20;
+                _win.Width = Math.Max(_win.MinWidth, Math.Min(Config.SettingsW, maxW));
+            }
             Cfg.Owner = _win;
 
             _pageHost = FindChild<ContentControl>(_win, "PageHost");
             _pageScroll = FindChild<ScrollViewer>(_win, "PageScroll");
 
-            TextBlock title = FindChild<TextBlock>(_win, "TitleText");
-            if (title != null) title.Text = _win.Title;
-
-            Button themeBtn = FindChild<Button>(_win, "ThemeButton");
-            if (themeBtn != null)
+            // 左上：语言分段按钮（中/EN/日/한/FR/RU/ES）
+            string[] langShort = { "中", "EN", "日", "한", "FR", "RU", "ES" };
+            int langSel = Array.IndexOf(I18n.LangCodes, Config.Language);
+            if (langSel < 0) langSel = 0;
+            _langSegment = BuildSegment(langShort, I18n.LangNames, langSel, delegate(int idx)
             {
-                themeBtn.Content = "◐ " + I18n.T("theme_dark") + "/" + I18n.T("theme_light");
-                themeBtn.Click += ThemeClick;
-            }
+                string code = I18n.LangCodes[idx];
+                if (code == Config.Language) return;
+                Cfg.Write("Language", code);
+                ApplySegmentSelection(_langSegment, idx);
+            });
+            ContentControl langHost = FindChild<ContentControl>(_win, "LangHost");
+            if (langHost != null) langHost.Content = _langSegment;
+
+            // 右上：深浅主题分段按钮
+            string[] themeLabels = { I18n.T("theme_light"), I18n.T("theme_dark") };
+            _themeSegment = BuildSegment(themeLabels, null, _dark ? 1 : 0, delegate(int idx)
+            {
+                if ((idx == 1) == _dark) return;
+                ThemeClick(null, null);
+                ApplySegmentSelection(_themeSegment, _dark ? 1 : 0);
+            });
+            ContentControl themeHost = FindChild<ContentControl>(_win, "ThemeHost");
+            if (themeHost != null) themeHost.Content = _themeSegment;
             foreach (RadioButton rb in FindAll<RadioButton>(_win))
                 rb.Click += NavClick;
 
@@ -130,6 +206,7 @@ namespace HoverExplorer.Wpf
             };
             _win.Closed += delegate
             {
+                Cfg.Detach();   // 关闭前解绑，避免卸载途中的事件写回 Config
                 SavePos();
                 _win = null;
                 _pageHost = null;
@@ -148,7 +225,7 @@ namespace HoverExplorer.Wpf
             // 窗口显示后视觉树才完整：本地化导航项、填充语言下拉，再绑定首屏页面
             // （首屏必须在 Show 之后绑定，否则 DataTemplate 内容尚未生成，SettingRow 文案不会写入）
             Cfg.AttachShell(_win);
-            ShowPage("TriggerPage");
+            ShowPage("HoverPreviewPage");
         }
 
         private static void ShowPage(string key)
@@ -156,6 +233,8 @@ namespace HoverExplorer.Wpf
             if (_win == null || _pageHost == null) return;
             DataTemplate dt = _win.TryFindResource(key) as DataTemplate;
             if (dt == null) return;
+            // 先解绑旧页控件，再换模板卸载它们——否则旧下拉框在卸载途中把值写回 Config
+            Cfg.Detach();
             _pageHost.ContentTemplate = dt;
             _pageHost.Content = new object();
             if (_pageScroll != null) _pageScroll.ScrollToTop();
@@ -185,6 +264,7 @@ namespace HoverExplorer.Wpf
             }
             Config.Theme = _dark ? "dark" : "light";
             Program.ApplyThemeChange();
+            if (_themeSegment != null) ApplySegmentSelection(_themeSegment, _dark ? 1 : 0);
         }
 
         // 托盘菜单/系统自动切换主题时，同步 WPF 资源字典与标题栏深色
@@ -215,17 +295,11 @@ namespace HoverExplorer.Wpf
                 _win.Show();
                 _win.Activate();
             }
-            else if (_fallbackForm != null && !_fallbackForm.IsDisposed)
-            {
-                _fallbackForm.Show();
-                _fallbackForm.Activate();
-            }
         }
 
         internal static void Close()
         {
             if (_win != null) _win.Close();
-            else if (_fallbackForm != null && !_fallbackForm.IsDisposed) _fallbackForm.Close();
         }
 
         // 语言切换时重建窗口（阶段②接 I18n 后页面文案也会随之切换）
@@ -240,7 +314,6 @@ namespace HoverExplorer.Wpf
         // 托盘菜单状态变化：回读 Config 到当前页面（模式下拉、开关等）
         internal static void SyncFromTray()
         {
-            if (_fallbackForm != null && !_fallbackForm.IsDisposed) _fallbackForm.SyncFromTray();
             if (_win != null) Cfg.Refresh();
         }
 
@@ -250,11 +323,32 @@ namespace HoverExplorer.Wpf
             _left = _win.Left;
             _top = _win.Top;
             _hasPos = true;
+            // 宽度持久化（高度不记录，避免页面切换/DPI 变化导致窗口过高）
+            int w = (int)Math.Round(_win.ActualWidth > 0 ? _win.ActualWidth : _win.Width);
+            if (w > 0 && w != Config.SettingsW)
+            {
+                Config.SettingsW = w;
+                Config.Save();
+            }
         }
 
         private static T FindChild<T>(DependencyObject root, string name) where T : FrameworkElement
         {
             if (root == null) return null;
+            // DataTemplate 生成的元素可能只在可视化树里，LogicalTreeHelper 找不到。
+            // 逻辑树里可能混有 Run/Inline 等非 Visual，直接传 VisualTreeHelper 会抛 InvalidOperationException。
+            if (root is Visual)
+            {
+                int count = VisualTreeHelper.GetChildrenCount(root);
+                for (int i = 0; i < count; i++)
+                {
+                    DependencyObject c = VisualTreeHelper.GetChild(root, i);
+                    T hit = c as T;
+                    if (hit != null && hit.Name == name) return hit;
+                    T sub = FindChild<T>(c, name);
+                    if (sub != null) return sub;
+                }
+            }
             foreach (object o in LogicalTreeHelper.GetChildren(root))
             {
                 DependencyObject c = o as DependencyObject;

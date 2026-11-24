@@ -104,7 +104,6 @@ namespace HoverExplorer
         private DarkCombo _cornerCombo;
         private DarkCombo _tcSortCombo;
         private DarkCombo _sortCombo;
-        private ListPreviewPanel _listPreview;   // 列表外观·实时预览（模拟弹出面板）
         private CardPreviewPanel _cardPreview;   // 桌面卡片·外观实时预览（模拟一张卡片）
         private ToggleSwitch _statusFilterToggle;   // 列表底部格式筛选开关
         private Label _areaLbl;
@@ -705,9 +704,9 @@ namespace HoverExplorer
                 b.FlatAppearance.BorderColor = Config.Border;
                 return b;
             };
-            const string preset = "bg=f7f3ee\nzb=f0e9de\nfg=3b2f25\nmu=8a7664\nhv=ecdcc3\nsel=8a5a3c\nselfg=ffffff\nbar=e6d2ab\ndrop=2d7a3d\nac=8a5a3c\nacfg=ffffff\nbd=d6c7b2\nsb=c4b399\nhdbg=f0e8dc\nbtnhv=e0d0b8\ncanvas=f7f3ee";
+            const string preset = "bg=f7f3ee\nzb=f0e9de\nfg=3b2f25\nmu=8a7664\nhv=ecdcc3\nsel=8a5a3c\nselfg=ffffff\nbar=e6d2ab\ndrop=2d7a3d\nac=8a5a3c\nacfg=ffffff\nbd=d6c7b2\nsb=c4b399\nhdbg=f0e8dc\nbtnhv=e0d0b8";
             var promptText = I18n.T("palette_keys_desc");
-            string[] palKeys = { "bg","zb","fg","mu","hv","sel","selfg","bar","drop","ac","acfg","bd","sb","hdbg","btnhv","canvas" };
+            string[] palKeys = { "bg","zb","fg","mu","hv","sel","selfg","bar","drop","ac","acfg","bd","sb","hdbg","btnhv" };
             string[] palLabels = Array.ConvertAll(palKeys, k => I18n.T("pal_lbl_" + k));
 
             // 行 1：方案下拉 + 删除 + 另存为（选中/改即应用，无应用按钮）；行 2：暖灰斑马 + 清空（拆行避免右侧溢出截断）
@@ -732,48 +731,202 @@ namespace HoverExplorer
             palGroup.Controls.Add(btnPreset); palGroup.Controls.Add(btnClear); palGroup.Controls.Add(btnWallpaper);
             Tips.Set(btnWallpaper, I18n.T("wallpaper_pick_desc"));
 
-            // 行 3：16 行可视化编辑器（中文标签 + 色块 + hex），色块点击弹 ColorDialog，改即应用
+            // 行 3：颜色/字体统一表格（项目 | 颜色 | 字体 | 字号），无实时预览
+            var famList = new List<string>();
+            try { using (var ifc = new InstalledFontCollection()) foreach (var f in ifc.Families) famList.Add(f.Name); } catch { }
             int row2Y = rowPresetY + 32;
-            int editorH = palKeys.Length * 24;
-            var editorPanel = new Panel { Location = new Point(12, row2Y), Size = new Size(palW, editorH), BackColor = Config.BG, Visible = false };
+            const int rowH = 40, headH = 26;
+            // 表格行：颜色键 / 字体分区 / 项目名 / 副说明
+            string[] tColor = { "", "", "bg", "zb", "fg", "mu", "hv", "sel", "selfg", "bar", "drop", "ac", "acfg", "bd", "sb", "hdbg", "btnhv", "", "" };
+            string[] tFont = { "ui", "", "", "", "title", "meta", "", "", "item", "", "", "", "", "", "", "", "", "header", "subtitle" };
+            string[] tName = {
+                I18n.T("font_ui"), "", palLabels[0], palLabels[1], palLabels[2], palLabels[3], palLabels[4], palLabels[5],
+                palLabels[6], palLabels[7], palLabels[8], palLabels[9], palLabels[10], palLabels[11], palLabels[12], palLabels[13], palLabels[14],
+                I18n.T("font_header"), I18n.T("font_subtitle")
+            };
+            string[] tSub = {
+                "全局默认:列表、表头、信息栏统一使用", "", "bg", "zb", "fg", "mu", "hv", "sel", "selfg", "bar",
+                "drop", "ac", "acfg", "bd", "sb", "hdbg", "btnhv", "列表标题行", "底部/副标题信息"
+            };
+            int tableRows = tColor.Length;
+            int editorH = headH + tableRows * rowH;
+            int colItem = 4, colColor = 128, colFont = 334, colSize = 548;
+            var editorPanel = new Panel { Location = new Point(12, row2Y), Size = new Size(Math.Max(palW, 680), editorH), BackColor = Config.BG, Visible = false };
             palGroup.Controls.Add(editorPanel);
             var hexBoxes = new TextBox[palKeys.Length];
             var colorBlocks = new Panel[palKeys.Length];
             Action applyNow = null;
-            // 测量标签最大宽度，色块/hex 留足间距，避免长语言文字覆盖色块
-            int lblMaxW = 0;
-            using (var lg = Graphics.FromHwnd(IntPtr.Zero)) using (var lf = new Font(Config.FontName, 9f))
-                foreach (var t in palLabels) lblMaxW = Math.Max(lblMaxW, (int)lg.MeasureString(t, lf).Width + 4);
-            int blockX = Math.Max(92, lblMaxW + 12);
-            int hexX = blockX + 30;
+            Action refreshFontCombos = null;
+            // 表头
+            foreach (var h in new[] { new { X = colItem, T = "项目" }, new { X = colColor, T = "颜色" }, new { X = colFont, T = "字体" }, new { X = colSize, T = "字号" } })
+                editorPanel.Controls.Add(new Label { Text = h.T, Font = new Font(Config.FontName, 9f, FontStyle.Bold), ForeColor = Config.FG, Location = new Point(h.X, 5), AutoSize = true });
+            editorPanel.Controls.Add(new Label { Location = new Point(0, headH - 2), Size = new Size(editorPanel.Width, 1), BackColor = Config.Border });
+
+            // 颜色控件按 palKeys 建一次，表格行按 key 取用
             for (int i = 0; i < palKeys.Length; i++)
             {
-                int ry = i * 24;
-                var lbl = new Label { Text = palLabels[i], Font = new Font(Config.FontName, 9f), ForeColor = Config.FG, Location = new Point(0, ry + 3), AutoSize = true };
-                var block = new Panel { Location = new Point(blockX, ry + 1), Size = new Size(24, 20), BorderStyle = BorderStyle.FixedSingle, Cursor = Cursors.Hand };
-                var hex = new TextBox { Location = new Point(hexX, ry), Size = new Size(100, 22), Font = new Font("Consolas", 9f), BorderStyle = BorderStyle.FixedSingle };
-                editorPanel.Controls.Add(lbl); editorPanel.Controls.Add(block); editorPanel.Controls.Add(hex);
+                var block = new Panel { Size = new Size(24, 20), BorderStyle = BorderStyle.FixedSingle, Cursor = Cursors.Hand };
+                var hex = new TextBox { Size = new Size(100, 22), Font = new Font("Consolas", 9f), BorderStyle = BorderStyle.FixedSingle };
                 hexBoxes[i] = hex; colorBlocks[i] = block;
                 int idx = i;
-                block.Click += (s, e) => { using (var cd = new ColorDialog()) { if (cd.ShowDialog() == DialogResult.OK) { colorBlocks[idx].BackColor = cd.Color; hexBoxes[idx].Text = ColorTranslator.ToHtml(cd.Color).TrimStart('#'); if (applyNow != null) applyNow(); } } };
+                block.Click += (s, e) => { using (var cd = new ColorDialog()) { if (cd.ShowDialog() == DialogResult.OK) { colorBlocks[idx].BackColor = cd.Color; hexBoxes[idx].Text = ColorTranslator.ToHtml(cd.Color).TrimStart('#'); applyNow(); } } };
+                hex.Leave += (s, e) => { try { colorBlocks[idx].BackColor = ColorTranslator.FromHtml("#" + hexBoxes[idx].Text); } catch { } applyNow(); };
             }
-            Action<string> fillEditor = delegate(string text)
+            var fontCombos = new Dictionary<string, ComboBox>();
+            var sizeCombos = new Dictionary<string, ComboBox>();
+            bool fontLoading = false;
+            Action<string> commitFont = delegate(string part)
             {
-                var map = Config.ParsePalette(text);
-                for (int i = 0; i < palKeys.Length; i++) { Color c; map.TryGetValue(palKeys[i], out c); colorBlocks[i].BackColor = c; hexBoxes[i].Text = ColorTranslator.ToHtml(c).TrimStart('#'); }
+                Config.Save();
+                Program.RefreshAllPanels();
+                refreshFontCombos();
             };
+            Func<string, ComboBox> makeFontCombo = delegate(string part)
+            {
+                var cb = new ComboBox { Font = new Font(Config.FontName, 9f), Width = 196, FlatStyle = FlatStyle.Flat, DropDownStyle = ComboBoxStyle.DropDownList };
+                cb.Items.Add("跟随全局");
+                foreach (var nm in famList) cb.Items.Add(nm);
+                cb.SelectedIndexChanged += (s, e) =>
+                {
+                    if (fontLoading || cb.SelectedIndex < 0) return;
+                    string partKey = (string)cb.Tag;
+                    if (cb.SelectedIndex == 0) Config.SetFontOverridden(partKey, false);
+                    else
+                    {
+                        float sz = Config.IsFontOverridden(partKey) ? HoverExplorer.Wpf.ListFontParts.FontSizeOf(partKey) : Config.UiScaledSize(partKey);
+                        HoverExplorer.Wpf.ListFontParts.Set(partKey, cb.SelectedItem.ToString(), sz);
+                        Config.SetFontOverridden(partKey, true);
+                    }
+                    commitFont(partKey);
+                };
+                cb.Tag = part;
+                return cb;
+            };
+            Func<string, ComboBox> makeSizeCombo = delegate(string part)
+            {
+                var cb = new ComboBox { Font = new Font(Config.FontName, 9f), Width = 92, FlatStyle = FlatStyle.Flat, DropDownStyle = ComboBoxStyle.DropDownList };
+                cb.Items.Add("跟随");
+                for (int n = 6; n <= 24; n++) cb.Items.Add(n.ToString());
+                cb.SelectedIndexChanged += (s, e) =>
+                {
+                    if (fontLoading || cb.SelectedIndex < 0) return;
+                    string partKey = (string)cb.Tag;
+                    if (cb.SelectedIndex == 0) Config.SetFontOverridden(partKey, false);
+                    else
+                    {
+                        string nm = Config.IsFontOverridden(partKey) ? HoverExplorer.Wpf.ListFontParts.FontNameOf(partKey) : Config.UiFontName;
+                        HoverExplorer.Wpf.ListFontParts.Set(partKey, nm, (float)Convert.ToInt32(cb.SelectedItem));
+                        Config.SetFontOverridden(partKey, true);
+                    }
+                    commitFont(partKey);
+                };
+                cb.Tag = part;
+                return cb;
+            };
+            var uiFontCombo = new ComboBox { Font = new Font(Config.FontName, 9f), Width = 196, FlatStyle = FlatStyle.Flat, DropDownStyle = ComboBoxStyle.DropDownList };
+            foreach (var nm in famList) uiFontCombo.Items.Add(nm);
+            uiFontCombo.Tag = "ui";
+            uiFontCombo.SelectedIndexChanged += (s, e) => { if (fontLoading || uiFontCombo.SelectedIndex < 0) return; Config.UiFontName = uiFontCombo.SelectedItem.ToString(); commitFont("ui"); };
+            var uiSizeCombo = new ComboBox { Font = new Font(Config.FontName, 9f), Width = 92, FlatStyle = FlatStyle.Flat, DropDownStyle = ComboBoxStyle.DropDownList };
+            for (int n = 6; n <= 24; n++) uiSizeCombo.Items.Add(n.ToString());
+            uiSizeCombo.Tag = "ui";
+            uiSizeCombo.SelectedIndexChanged += (s, e) => { if (fontLoading || uiSizeCombo.SelectedIndex < 0) return; Config.UiFontSize = (float)Convert.ToInt32(uiSizeCombo.SelectedItem); commitFont("ui"); };
+
+            refreshFontCombos = delegate
+            {
+                fontLoading = true;
+                try
+                {
+                    foreach (var kv in fontCombos)
+                    {
+                        string part = kv.Key;
+                        var cb = kv.Value;
+                        string nm = HoverExplorer.Wpf.ListFontParts.EffectiveName(part);
+                        cb.Items[0] = "跟随全局 · " + Config.UiFontName;
+                        if (!cb.Items.Contains(nm)) cb.Items.Add(nm);
+                        cb.SelectedIndex = Config.IsFontOverridden(part) ? cb.Items.IndexOf(nm) : 0;
+                    }
+                    foreach (var kv in sizeCombos)
+                    {
+                        string part = kv.Key;
+                        var cb = kv.Value;
+                        float sz = HoverExplorer.Wpf.ListFontParts.EffectiveSize(part);
+                        cb.Items[0] = "跟随 " + (int)Math.Round(Config.UiScaledSize(part));
+                        string szs = ((int)Math.Round(sz)).ToString();
+                        cb.SelectedIndex = Config.IsFontOverridden(part) && cb.Items.Contains(szs) ? cb.Items.IndexOf(szs) : 0;
+                    }
+                    uiFontCombo.Items.Clear();
+                    foreach (var nm in famList) uiFontCombo.Items.Add(nm);
+                    if (!uiFontCombo.Items.Contains(Config.UiFontName)) uiFontCombo.Items.Add(Config.UiFontName);
+                    uiFontCombo.SelectedIndex = Math.Max(0, uiFontCombo.Items.IndexOf(Config.UiFontName));
+                    uiSizeCombo.SelectedIndex = Math.Max(0, uiSizeCombo.Items.IndexOf(((int)Math.Round(Config.UiFontSize)).ToString()));
+                }
+                finally { fontLoading = false; }
+            };
+            var btnRestoreFont = new Button { Text = "全部恢复跟随", Font = new Font(Config.FontName, 9f), FlatStyle = FlatStyle.Flat, BackColor = Config.BG, ForeColor = Config.FG, Size = new Size(104, 24) };
+            btnRestoreFont.FlatAppearance.BorderColor = Config.Border;
+            btnRestoreFont.Click += (s, e) => { Config.ListFontOverrides = ""; Config.RebuildFontOverrides(); commitFont("ui"); };
+
+            for (int i = 0; i < tableRows; i++)
+            {
+                int ry = headH + i * rowH;
+                string colorKey = tColor[i], part = tFont[i];
+                editorPanel.Controls.Add(new Label { Text = tName[i], Font = new Font(Config.FontName, 9f, FontStyle.Bold), ForeColor = Config.FG, Location = new Point(colItem, ry + 3), AutoSize = true });
+                if (!string.IsNullOrEmpty(tSub[i]))
+                    editorPanel.Controls.Add(new Label { Text = tSub[i], Font = new Font(Config.FontName, 8f), ForeColor = Config.PlaceholderFg, Location = new Point(colItem, ry + 20), AutoSize = true });
+                if (!string.IsNullOrEmpty(colorKey))
+                {
+                    int ci = Array.IndexOf(palKeys, colorKey);
+                    if (ci >= 0)
+                    {
+                        colorBlocks[ci].Location = new Point(colColor, ry + 1);
+                        hexBoxes[ci].Location = new Point(colColor + 30, ry);
+                        editorPanel.Controls.Add(colorBlocks[ci]);
+                        editorPanel.Controls.Add(hexBoxes[ci]);
+                    }
+                }
+                else
+                {
+                    editorPanel.Controls.Add(new Label { Text = i == 0 ? "—" : "— 无单独颜色", Font = new Font(Config.FontName, 8f), ForeColor = Config.PlaceholderFg, Location = new Point(colColor, ry + 10), AutoSize = true });
+                }
+                if (!string.IsNullOrEmpty(part))
+                {
+                    ComboBox fc = part == "ui" ? uiFontCombo : makeFontCombo(part);
+                    ComboBox sc = part == "ui" ? uiSizeCombo : makeSizeCombo(part);
+                    fc.Location = new Point(colFont, ry);
+                    sc.Location = new Point(colSize, ry);
+                    editorPanel.Controls.Add(fc);
+                    editorPanel.Controls.Add(sc);
+                    fontCombos[part] = fc;
+                    sizeCombos[part] = sc;
+                    if (part == "ui")
+                    {
+                        btnRestoreFont.Location = new Point(colSize + 100, ry);
+                        editorPanel.Controls.Add(btnRestoreFont);
+                    }
+                }
+                else
+                {
+                    editorPanel.Controls.Add(new Label { Text = "—", ForeColor = Config.PlaceholderFg, Location = new Point(colFont, ry + 8), AutoSize = true });
+                }
+                editorPanel.Controls.Add(new Label { Location = new Point(0, ry + rowH - 2), Size = new Size(editorPanel.Width, 1), BackColor = Config.Border });
+            }
             applyNow = delegate()
             {
                 var sb = new System.Text.StringBuilder();
                 for (int i = 0; i < palKeys.Length; i++) sb.Append(palKeys[i]).Append('=').Append(hexBoxes[i].Text).Append('\n');
                 if (sb.Length > 0) sb.Length--;
                 Config.ListPalette = sb.ToString(); Config.ApplyListPalette(); Config.Save(); Program.RefreshAllPanels();
-                if (_listPreview != null) _listPreview.Invalidate();   // 配色变了同步重绘预览
             };
-            for (int i = 0; i < palKeys.Length; i++) { int idx = i; hexBoxes[i].Leave += (s, e) => { try { colorBlocks[idx].BackColor = ColorTranslator.FromHtml("#" + hexBoxes[idx].Text); } catch { } applyNow(); }; }
+            Action<string> fillEditor = delegate(string text)
+            {
+                var map = Config.ParsePalette(text);
+                for (int i = 0; i < palKeys.Length; i++) { Color c; map.TryGetValue(palKeys[i], out c); colorBlocks[i].BackColor = c; hexBoxes[i].Text = ColorTranslator.ToHtml(c).TrimStart('#'); }
+            };
             fillEditor(Config.ListPalette);
+            refreshFontCombos();
 
-            // 行 4：导入格式（复制格式说明 + 粘贴导入按钮），不再提供 AI 提示词
+            // 行 4：导入格式（复制格式说明 + 粘贴导入按钮）
             int row3Y = row2Y + editorH + 8;
             var promptLbl = new Label { Text = "", Font = new Font(Config.FontName, 9f, FontStyle.Bold), ForeColor = Config.FG, Location = new Point(12, row3Y + 4), AutoSize = true, Visible = false };
             palGroup.Controls.Add(promptLbl);
@@ -805,59 +958,8 @@ namespace HoverExplorer
                 return by + 64 + editorH + 42;
             });
 
-            // ==== 实时预览：模拟弹出列表面板（置于 AI 提示词下方、分区字体行之前）====
+            // ==== 颜色/字体统一表格（见下方 editorPanel）====
             int fy = row3Y - AccGroup.HeadH + 34;
-            fy = palGroup.AddRow(fy, I18n.T("appearance_preview"), null, null);
-            int pvH = 92;
-            _listPreview = new ListPreviewPanel { Location = new Point(12, AccGroup.HeadH + fy), Size = new Size(palGroup.Width - 24, pvH), Tag = "paint", Visible = palGroup.Open };
-            palGroup.Controls.Add(_listPreview);
-            palGroup.TagLastRow(w => 46 + pvH + 8, ry =>
-            {
-                _listPreview.Location = new Point(12, AccGroup.HeadH + ry + 46);
-                _listPreview.Width = Math.Max(200, palGroup.Width - 24);
-            });
-            palGroup.ExpandRow(fy + pvH + 8, 0);
-            fy += pvH + 8;
-
-            // ==== 分区字体 5 行（表头/标题/列表文字/格式标签/数量·大小信息）====
-            // 每行右侧 = 字体族下拉 + 字号步进器；改动即存并刷新存活面板与预览
-            string[] fKeys = { "header", "title", "item", "chip", "meta" };
-            var fNames = new[] { Config.ListHeaderFontName, Config.ListTitleFontName, Config.ListItemFontName, Config.ListChipFontName, Config.ListMetaFontName };
-            var fSizes = new[] { Config.ListHeaderFontSize, Config.ListTitleFontSize, Config.ListItemFontSize, Config.ListChipFontSize, Config.ListMetaFontSize };
-            var famList = new List<string>();
-            try { using (var ifc = new InstalledFontCollection()) foreach (var f in ifc.Families) famList.Add(f.Name); } catch { }
-            Action<int> applyFontRow = delegate(int i)
-            {
-                switch (i)
-                {
-                    case 0: Config.ListHeaderFontName = fNames[i]; Config.ListHeaderFontSize = fSizes[i]; break;
-                    case 1: Config.ListTitleFontName = fNames[i]; Config.ListTitleFontSize = fSizes[i]; break;
-                    case 2: Config.ListItemFontName = fNames[i]; Config.ListItemFontSize = fSizes[i]; break;
-                    case 3: Config.ListChipFontName = fNames[i]; Config.ListChipFontSize = fSizes[i]; break;
-                    default: Config.ListMetaFontName = fNames[i]; Config.ListMetaFontSize = fSizes[i]; break;
-                }
-                Config.Save();
-                Program.RefreshAllPanels();
-                if (_listPreview != null) _listPreview.Invalidate();
-            };
-            fy = row3Y - AccGroup.HeadH + 34;   // 预览已在上方插入，此处仅复位（值相同）
-            for (int i = 0; i < fKeys.Length; i++)
-            {
-                int idx = i;
-                var combo = new DarkCombo { Font = new Font(Config.FontName, 8.5f), Width = 140, Height = 24 };
-                foreach (var nm in famList) combo.Items.Add(nm);
-                if (combo.Items.Contains(fNames[idx])) combo.SelectedItem = fNames[idx];
-                else if (famList.Count > 0) { combo.Items.Add(fNames[idx]); combo.SelectedItem = fNames[idx]; }
-                var step = new FontStepper { Value = Math.Max(6, Math.Min(24, (int)fSizes[idx])) };
-                step.ValueChanged += (s, e) => { fSizes[idx] = step.Value; applyFontRow(idx); };
-                combo.SelectedIndexChanged += (s, e) => { var nm = (string)combo.SelectedItem; if (!string.IsNullOrEmpty(nm)) { fNames[idx] = nm; applyFontRow(idx); } };
-                fy = palGroup.AddRow(fy, I18n.T("font_" + fKeys[idx]), null, step);
-                // 字体族下拉摆在字号步进器左侧（AddRow 只贴右一个控件）
-                combo.Location = new Point(step.Left - 8 - combo.Width, step.Top + (step.Height - combo.Height) / 2);
-                palGroup.TagLastRow(null, cy => combo.Location = new Point(step.Left - 8 - combo.Width, step.Top + (step.Height - combo.Height) / 2));
-                palGroup.Controls.Add(combo);
-                combo.Visible = palGroup.Open;
-            }
 
             // 名称靠右（原"预览窗口"组）：行布局互换影响已开面板的按钮位置 → 应用时刷新存活面板
             _rowSwapToggle = new ToggleSwitch { On = Config.RowSwapSides };
@@ -906,7 +1008,7 @@ namespace HoverExplorer
 
             schemeCombo.SelectedIndexChanged += (s, e) => { if (schemeCombo.SelectedIndex >= 0) { fillEditor(schemes0[schemeCombo.SelectedIndex].Value); applyNow(); } };
             btnPreset.Click += (s, e) => { fillEditor(preset); applyNow(); };
-            btnClear.Click += (s, e) => { Config.ListPalette = ""; Config.ApplyListPalette(); Config.Save(); fillEditor(""); Program.RefreshAllPanels(); if (_listPreview != null) _listPreview.Invalidate(); };
+            btnClear.Click += (s, e) => { Config.ListPalette = ""; Config.ApplyListPalette(); Config.Save(); fillEditor(""); refreshFontCombos(); Program.RefreshAllPanels(); };
             btnWallpaper.Click += (s, e) =>
             {
                 string wpPath = null;
@@ -989,8 +1091,8 @@ namespace HoverExplorer
                 Config.ApplyListPalette();
                 Config.Save();
                 fillEditor(pal);
+                refreshFontCombos();
                 Program.RefreshAllPanels();
-                if (_listPreview != null) _listPreview.Invalidate();
             };
             btnDelScheme.Click += (s, e) =>
             {
@@ -1894,6 +1996,7 @@ namespace HoverExplorer
         {
             using (var f = new Form { Text = title, Width = 340, Height = 150, FormBorderStyle = FormBorderStyle.FixedDialog, StartPosition = FormStartPosition.CenterParent, BackColor = Config.BG })
             {
+                f.HandleCreated += delegate { Win11.RemoveDropShadow(f.Handle); };
                 var tb = new TextBox { Text = defaultName, Location = new Point(12, 12), Width = 300, Font = new Font(Config.FontName, 9f), BackColor = Config.BG, ForeColor = Config.FG };
                 var ok = new Button { Text = "OK", DialogResult = DialogResult.OK, Location = new Point(236, 44), Width = 76, Height = 26, Font = new Font(Config.FontName, 9f), BackColor = Config.BG, ForeColor = Config.FG, FlatStyle = FlatStyle.Flat };
                 var cancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, Location = new Point(154, 44), Width = 76, Height = 26, Font = new Font(Config.FontName, 9f), BackColor = Config.BG, ForeColor = Config.FG, FlatStyle = FlatStyle.Flat };
@@ -3876,13 +3979,14 @@ namespace HoverExplorer
                 // 卡片底：列表画布色 + 圆角描边，后续条带都裁进圆角内
                 using (var path = _fnRoundRect(0.5f, 0.5f, w - 1, h - 1, 4))
                 {
-                    using (var b = new SolidBrush(Config.ListCanvas)) g.FillPath(b, path);
+                    using (var b = new SolidBrush(Config.ListBg)) g.FillPath(b, path);
                     using (var p = new Pen(Config.ListBd)) g.DrawPath(p, path);
                     g.SetClip(path);
                 }
-                // 标题行：文件夹名（粗体）+ 右侧条目计数小字（同 PopupForm：ListHdbg 底、ListFg/ListMu）
+                // 标题行：文件夹名（标题·粗体）+ 右侧条目计数（元信息）+ 右上角来源角标（来源）
                 using (var fT = Config.ListTitleFont())
                 using (var fM = Config.ListMetaFont())
+                using (var fS = Config.ListSourceFont())
                 using (var bH = new SolidBrush(Config.ListHdbg))
                 using (var bFg = new SolidBrush(Config.ListFg))
                 using (var bMu = new SolidBrush(Config.ListMu))
@@ -3892,8 +3996,14 @@ namespace HoverExplorer
                     g.DrawString(title, fT, bFg, 8, 1 + (22 - fT.GetHeight(g)) / 2, StringFormat.GenericTypographic);
                     string cnt = I18n.T("panel_status_count", 185);
                     g.DrawString(cnt, fM, bMu, w - 8 - g.MeasureString(cnt, fM).Width, 1 + (22 - fM.GetHeight(g)) / 2, StringFormat.GenericTypographic);
+                    // 来源角标：标题条右侧、计数左边，避免与下方副标题行重叠
+                    g.DrawString("FILE", fS, bMu, w - 50, 2, StringFormat.GenericTypographic);
                 }
-                // 表头：排序按钮（同 PopupForm 排序栏：描边小按钮，当前项带 ▲）
+                // 副标题行：路径说明（副标题）
+                using (var fSub = Config.ListSubtitleFont())
+                using (var bMu = new SolidBrush(Config.ListMu))
+                    g.DrawString("D:\\work\\示例文件夹", fSub, bMu, 8, 36, StringFormat.GenericTypographic);
+                // 表头：排序按钮（表头）
                 using (var fH = Config.ListHeaderFont())
                 using (var bBg = new SolidBrush(Config.ListBg))
                 using (var pBd = new Pen(Config.ListBd))
@@ -3904,7 +4014,7 @@ namespace HoverExplorer
                     foreach (var lab in labs)
                     {
                         int bw = (int)g.MeasureString(lab, fH).Width + 14;
-                        var rc = new Rectangle(bx, 25, bw, 18);
+                        var rc = new Rectangle(bx, 54, bw, 18);
                         using (var path = _fnRoundRect(rc.X, rc.Y, rc.Width, rc.Height, 3))
                         {
                             g.FillPath(bBg, path);
@@ -3914,7 +4024,7 @@ namespace HoverExplorer
                         bx += bw + 4;
                     }
                 }
-                // 列表行：示例文件 + 行内大小小字（同 PopupForm：ListBg 底、ListFg 名称、ListMu 大小）
+                // 列表行：示例文件（正文）+ 行内大小（元信息）
                 using (var fI = Config.ListItemFont())
                 using (var fM = Config.ListMetaFont())
                 using (var bR = new SolidBrush(Config.ListBg))
@@ -3922,13 +4032,23 @@ namespace HoverExplorer
                 using (var bMu = new SolidBrush(Config.ListMu))
                 using (var pMu = new Pen(Config.ListMu))
                 {
-                    g.FillRectangle(bR, 1, 45, w - 2, 24);
-                    g.DrawRectangle(pMu, 8, 51, 10, 12);   // 图标位示意
-                    g.DrawString(I18n.T("preview_sample_file"), fI, bFg, 26, 45 + (24 - fI.GetHeight(g)) / 2, StringFormat.GenericTypographic);
+                    g.FillRectangle(bR, 1, 76, w - 2, 24);
+                    g.DrawRectangle(pMu, 8, 82, 10, 12);   // 图标位示意
+                    g.DrawString(I18n.T("preview_sample_file"), fI, bFg, 26, 76 + (24 - fI.GetHeight(g)) / 2, StringFormat.GenericTypographic);
                     string sz = "1.2 MB";
-                    g.DrawString(sz, fM, bMu, w - 8 - g.MeasureString(sz, fM).Width, 45 + (24 - fM.GetHeight(g)) / 2, StringFormat.GenericTypographic);
+                    g.DrawString(sz, fM, bMu, w - 8 - g.MeasureString(sz, fM).Width, 76 + (24 - fM.GetHeight(g)) / 2, StringFormat.GenericTypographic);
                 }
-                // 状态栏格式标签（同 PopupForm chips：ListHdbg 底、ListFg 文本）
+                // 代码行：等宽代码片段（代码）
+                using (var fC = Config.ListCodeFont())
+                using (var bCode = new SolidBrush(Config.ListHdbg))
+                using (var bFg = new SolidBrush(Config.ListFg))
+                {
+                    string code = "{\"hover\":130, \"mode\":\"always\"}";
+                    int cw = Math.Min(w - 14, (int)g.MeasureString(code, fC).Width + 14);
+                    g.FillRectangle(bCode, 6, 104, cw, 17);
+                    g.DrawString(code, fC, bFg, 13, 104 + (17 - fC.GetHeight(g)) / 2, StringFormat.GenericTypographic);
+                }
+                // 状态栏格式标签（徽标）
                 using (var fC = Config.ListChipFont())
                 using (var bH = new SolidBrush(Config.ListHdbg))
                 using (var bFg = new SolidBrush(Config.ListFg))
@@ -3937,8 +4057,8 @@ namespace HoverExplorer
                     foreach (var kind in new[] { "MP4", "JPG", "TXT" })
                     {
                         int cw = (int)g.MeasureString(kind, fC).Width + 12;
-                        g.FillRectangle(bH, cx, 73, cw, 16);
-                        g.DrawString(kind, fC, bFg, cx + 6, 73 + (16 - fC.GetHeight(g)) / 2, StringFormat.GenericTypographic);
+                        g.FillRectangle(bH, cx, 126, cw, 16);
+                        g.DrawString(kind, fC, bFg, cx + 6, 126 + (16 - fC.GetHeight(g)) / 2, StringFormat.GenericTypographic);
                         cx += cw + 4;
                     }
                 }

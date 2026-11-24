@@ -19,8 +19,39 @@ namespace HoverExplorer
 {
 internal static class MediaPreview
 {
+    // 底部控制栏走配色方案（与 PreviewForm 标题栏 Pv* 同源），不再用全局主题 Config.BG/FG。
+    // PvBd 为 Bg 与 Fg 按 88:12 混合，与 PreviewForm.cs 的定义保持一致。
+    internal static Color MBg { get { return Config.ListBg; } }
+    internal static Color MFg { get { return Config.ListFg; } }
+    internal static Color MMu { get { return Config.ListMu; } }
+    internal static Color MHv { get { return Config.ListHv; } }
+    // 边框色直接取配色方案的 ListBd（用户可在配色里用 bd= 指定）；
+    // 老配置/空值时退回 Bg+Fg 的 88:12 混合，保证仍有可见描边。
+    internal static Color MBd
+    {
+        get
+        {
+            Color bd = Config.ListBd;
+            if (!bd.IsEmpty && bd.A > 0) return bd;
+            Color a = Config.ListBg, b = Config.ListFg;
+            return Color.FromArgb((int)(a.R * 0.88f + b.R * 0.12f), (int)(a.G * 0.88f + b.G * 0.12f), (int)(a.B * 0.88f + b.B * 0.12f));
+        }
+    }
+    internal static Color MAc { get { return Config.ListAc; } }
+    // 未激活刻度点的淡色：背景与次要文字按 28% 混合，避免黑点过于显眼
+    internal static Color MFaint
+    {
+        get
+        {
+            Color a = MBg, b = MMu;
+            return Color.FromArgb((int)(a.R * 0.72f + b.R * 0.28f), (int)(a.G * 0.72f + b.G * 0.28f), (int)(a.B * 0.72f + b.B * 0.28f));
+        }
+    }
+
     // ===== 倍速 =====
     internal static readonly double[] SpeedSteps = { 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0 };
+    // 音频卡片原型 V4：8 档（无 1.75）
+    internal static readonly double[] AudioSpeedSteps = { 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0 };
 
     internal static string SpeedText(double s)
     {
@@ -28,52 +59,85 @@ internal static class MediaPreview
         return t + "×";
     }
 
-    // 刻度尺：常显在进度条上方，6档等宽，悬停预览/点击锁定/离开恢复
+    // 倍速鱼眼刻度尺（原型 F1）：9 档方点，鼠标邻近按高斯衰减连续放大（鱼眼），
+    // 当前档上方弹出 x× 气泡，点击锁定、离开恢复。嵌在控制条的时间与音量之间。
     internal sealed class SpeedRuler : Control
     {
         private double _committed = 1.0;
         private int _hover = -1;
-        private readonly Font _fontN, _fontB;
+        private const int NoMouse = int.MinValue;
+        private int _mouseX = NoMouse;
+        private readonly Font _bubbleFont;
+        private readonly Font _tickFont;
+        private readonly Font _labelFont;   // 音频行左侧「倍速」标签
+        private readonly Font _valueFont;   // 音频行右侧当前倍率（原型 13px）
 
         internal event Action<double> PreviewSpeed;
         internal event Action<double> CommitSpeed;
         internal event Action RestoreSpeed;
 
+        // V5 封面取色换肤：非空时覆盖配色方案色（波形/刻度/气泡跟随封面主色）。
+        internal Color? AccentColor;   // 强调：已提交/hover 方点与气泡
+        internal Color? MutedColor;    // 次要：1x 方点
+        internal Color? FaintColor;    // 淡色：横线与未激活方点
+
+        // 音频卡片 V4：独立一行 = 左「倍速」标签 + 8 档圆点鱼眼 + 档下数值 + 右侧当前值。
+        // 默认 false 保持视频的 9 档方点行为不变。
+        internal bool AudioRowMode = false;
+        private double[] Steps { get { return AudioRowMode ? AudioSpeedSteps : SpeedSteps; } }
+        private int LabelW { get { return AudioRowMode ? Dpi.S(32) : 0; } }
+        private int ValueW { get { return 0; } }
+
         internal double Committed { get { return _committed; } }
+
+        // 音频行缩放/标签透明度动画（原型 transition: transform .09s）
+        private double[] _magCur, _magTgt, _lblCur, _lblTgt;
+        private System.Windows.Forms.Timer _ease;
 
         internal SpeedRuler()
         {
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-            BackColor = Config.BG;
-            Height = 34;
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
+                     ControlStyles.UserPaint | ControlStyles.ResizeRedraw |
+                     ControlStyles.SupportsTransparentBackColor, true);
+            BackColor = MBg;
+            Height = 38;
             Cursor = Cursors.Hand;
-            _fontN = new Font("Microsoft YaHei", 8f);
-            _fontB = new Font("Microsoft YaHei", 8f, FontStyle.Bold);
+            _bubbleFont = new Font("Segoe UI", 8f, FontStyle.Bold);
+            _tickFont = new Font("Segoe UI", 7.75f);
+            _labelFont = new Font(Config.FontName, 8.25f);        // 原型 11px
+            _valueFont = new Font("Segoe UI", 9.75f, FontStyle.Bold);  // 原型 13px
         }
 
         private int IndexAt(int x)
         {
-            int n = SpeedSteps.Length;
-            int w = Width / n;
-            if (w <= 0) return -1;
-            int i = x / w;
+            int n = Steps.Length;
+            double x0 = AudioRowMode ? LabelW : 0;
+            double x1 = AudioRowMode ? Width - ValueW : Width;
+            double cw = (x1 - x0) / n;
+            if (cw <= 0) return -1;
+            int i = (int)Math.Round((x - x0 - cw / 2) / cw);
             if (i < 0 || i >= n) return -1;
             return i;
         }
 
         protected override void OnMouseMove(MouseEventArgs e)
         {
+            _mouseX = e.X;
             int i = IndexAt(e.X);
+            UpdateAudioTargets();
+            Invalidate();   // 鱼眼是连续形变，鼠标每动都要重绘（不是只在跨档时）
             if (i != _hover)
             {
                 _hover = i;
-                Invalidate();
-                if (i >= 0) { try { PreviewSpeed(SpeedSteps[i]); } catch { } }
+                if (i >= 0) { try { PreviewSpeed(Steps[i]); } catch { } }
+                else { try { RestoreSpeed(); } catch { } }
             }
         }
 
         protected override void OnMouseLeave(EventArgs e)
         {
+            _mouseX = NoMouse;
+            UpdateAudioTargets();
             if (_hover >= 0)
             {
                 _hover = -1;
@@ -82,11 +146,67 @@ internal static class MediaPreview
             }
         }
 
+        // 音频米粒：目标放大/标签透明度按原型高斯 g（σ=0.9 格），再用 16ms 定时器缓动
+        private void UpdateAudioTargets()
+        {
+            int n = Steps.Length;
+            EnsureAnim(n);
+            double x0 = LabelW, x1 = Width - ValueW, cw = (x1 - x0) / n;
+            for (int i = 0; i < n; i++)
+            {
+                bool cur = Math.Abs(Steps[i] - _committed) < 0.001;
+                double g = 0;
+                if (_mouseX != NoMouse && cw > 0)
+                {
+                    double q = (_mouseX - (x0 + (i + 0.5) * cw)) / cw;
+                    g = Math.Exp(-(q * q) / 0.81);   // 原型 exp(-((x-cx)/(cw*0.9))²)
+                }
+                // 克制的悬停放大：最大 1.6×，不再有强调色跳变
+                _magTgt[i] = cur ? 1.0 : 1.0 + 0.6 * g;
+                _lblTgt[i] = cur ? 1.0 : (g > 0.35 ? Math.Min(1.0, g * 1.2) : 0);
+            }
+            StartEase();
+        }
+
+        private void EnsureAnim(int n)
+        {
+            if (_magCur != null && _magCur.Length == n) return;
+            _magCur = new double[n]; _magTgt = new double[n];
+            _lblCur = new double[n]; _lblTgt = new double[n];
+            for (int i = 0; i < n; i++) { _magCur[i] = 1; _magTgt[i] = 1; }
+        }
+
+        private void StartEase()
+        {
+            if (_ease == null)
+            {
+                _ease = new System.Windows.Forms.Timer { Interval = 16 };
+                _ease.Tick += delegate { StepEase(); };
+            }
+            _ease.Start();
+        }
+
+        private void StepEase()
+        {
+            bool moving = false;
+            for (int i = 0; i < _magCur.Length; i++)
+            {
+                _magCur[i] += (_magTgt[i] - _magCur[i]) * 0.35;
+                _lblCur[i] += (_lblTgt[i] - _lblCur[i]) * 0.35;
+                if (Math.Abs(_magTgt[i] - _magCur[i]) > 0.004 ||
+                    Math.Abs(_lblTgt[i] - _lblCur[i]) > 0.01) moving = true;
+            }
+            Invalidate();
+            if (!moving) _ease.Stop();
+        }
+
         protected override void OnMouseDown(MouseEventArgs e)
         {
-            if (e.Button == MouseButtons.Left && _hover >= 0)
+            int i = IndexAt(e.X);
+            if (e.Button == MouseButtons.Left && i >= 0)
             {
-                _committed = SpeedSteps[_hover];
+                _committed = Steps[i];
+                UpdateAudioTargets();
                 Invalidate();
                 try { CommitSpeed(_committed); } catch { }
             }
@@ -95,35 +215,165 @@ internal static class MediaPreview
         internal void SetCommitted(double s)
         {
             _committed = s;
+            UpdateAudioTargets();
             Invalidate();
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
-            int n = SpeedSteps.Length;
-            int w = Width / n;
+            int n = Steps.Length;
+            Color ac = AccentColor ?? MMu;   // 倍速当前档/气泡用次要文字色（深色模式下清晰可见）
+            Color mu = MutedColor ?? MMu;
+            Color faint = FaintColor ?? MFaint;
+            if (AudioRowMode) { PaintAudioRow(g, n, ac, mu, faint); return; }
+
+            // 视频档位与音频同一套观感：米粒胶囊、克制的鱼眼(最大 1.6×)、16ms 缓动。
+            // 控制条空间小，悬停值仍用上方气泡显示（音频是档下文字）。
+            double cw = (double)Width / n;
+            int cy = Height - Dpi.S(10);
+            int baseW = Math.Max(5, Dpi.S(7)), baseH = Math.Max(3, Dpi.S(4));
+            EnsureAnim(n);
             for (int i = 0; i < n; i++)
             {
-                int cx = i * w + w / 2;
-                double s = SpeedSteps[i];
+                int cx = (int)((i + 0.5) * cw);
+                double s = Steps[i];
                 bool isCommitted = Math.Abs(s - _committed) < 0.001;
                 bool isHover = (i == _hover);
-
-                int tickH = (isCommitted || isHover) ? 12 : 7;
-                float tickW = isCommitted ? 3f : (isHover ? 2f : 1f);
-                Color tickColor = isCommitted ? Config.Accent : (isHover ? Config.FG : Config.FgDir);
-                using (var p = new Pen(tickColor, tickW))
-                    g.DrawLine(p, cx, Height - tickH - 2, cx, Height - 2);
-
-                string txt = SpeedText(s);
-                var font = (isCommitted || isHover) ? _fontB : _fontN;
-                Color textColor = isCommitted ? Config.Accent : (isHover ? Config.FG : Config.FgDir);
-                var sz = g.MeasureString(txt, font);
-                using (var b = new SolidBrush(textColor))
-                    g.DrawString(txt, font, b, cx - sz.Width / 2, 2);
+                double mag = isCommitted ? 1.0 : _magCur[i];
+                int gw = Math.Max(4, (int)Math.Round(baseW * mag));
+                int gh = Math.Max(3, (int)Math.Round(baseH * mag));
+                float gx = cx - gw / 2f, gy = cy - gh / 2f;
+                if (isCommitted)
+                {
+                    using (var br = new SolidBrush(Color.FromArgb(56, ac)))
+                    using (var path = RoundRect(gx - Dpi.S(3), gy - Dpi.S(3),
+                        gw + Dpi.S(6), gh + Dpi.S(6), (gh + Dpi.S(6)) / 2f))
+                        g.FillPath(br, path);
+                    using (var br = new SolidBrush(ac))
+                    using (var path = RoundRect(gx, gy, gw, gh, gh / 2f))
+                        g.FillPath(br, path);
+                }
+                else
+                {
+                    // 悬停不换色（与音频一致），只做轻微放大
+                    Color dotColor = s == 1.0 ? mu : faint;
+                    using (var br = new SolidBrush(dotColor))
+                    using (var path = RoundRect(gx, gy, gw, gh, gh / 2f))
+                        g.FillPath(br, path);
+                }
+                if (isHover && _mouseX != NoMouse)
+                {
+                    string bubble = SpeedText(s);
+                    var bs = g.MeasureString(bubble, _bubbleFont);
+                    int bw = (int)bs.Width + 8, bh = (int)bs.Height + 2;
+                    int bx = Math.Max(0, Math.Min(Width - bw, cx - bw / 2));
+                    int by = Math.Max(0, cy - gh / 2 - bh - 6);
+                    using (var br = new SolidBrush(ac)) g.FillRectangle(br, bx, by, bw, bh);
+                    g.DrawString(bubble, _bubbleFont, Brushes.White, bx + 4, by + 1);
+                }
             }
+        }
+
+        // 音频 V4 倍速行：顶部细分隔线 + 左「倍速」标签 + 8 档圆点鱼眼(1.4) + 档下数值 + 右当前倍率。
+        // 尺寸按 DPI 缩放；字号对齐原型（标签 11px / 档值 10.5px / 右侧 13px）。
+        private void PaintAudioRow(Graphics g, int n, Color ac, Color mu, Color faint)
+        {
+            int lw = LabelW, vw = ValueW;
+            double x0 = lw, x1 = Width - vw, cw = (x1 - x0) / n;
+            // 原型档位是长形小米粒（横向胶囊），基础 7×4，悬停最大 1.6×
+            int baseW = Math.Max(5, Dpi.S(7)), baseH = Math.Max(3, Dpi.S(4));
+            int cy = Dpi.S(10);
+            int textTop = cy + baseH / 2 + Dpi.S(3);
+            EnsureAnim(n);
+
+            // 顶部细分隔线（原型 .speedrow border-top）
+            using (var pen = new Pen(Color.FromArgb(80, faint), 1f))
+                g.DrawLine(pen, 0, 0.5f, Width, 0.5f);
+
+            // 左侧「倍速」
+            if (lw > 0)
+            {
+                using (var br = new SolidBrush(mu))
+                {
+                    var sf = new StringFormat { Alignment = StringAlignment.Near, LineAlignment = StringAlignment.Center };
+                    g.DrawString(I18n.T("speed_label"), _labelFont, br,
+                        new RectangleF(0, cy - Dpi.S(8), lw - Dpi.S(4), Dpi.S(16)), sf);
+                }
+            }
+
+            // 原型：档位之间没有串联直线，只有离散的小米粒。
+            for (int i = 0; i < n; i++)
+            {
+                int cx = (int)(x0 + (i + 0.5) * cw);
+                double s = Steps[i];
+                bool isCommitted = Math.Abs(s - _committed) < 0.001;
+                // 放大倍数来自缓动值；当前档固定不放大
+                double mag = isCommitted ? 1.0 : _magCur[i];
+                // 米粒：横向胶囊，未选中为 fg2 45% 透明；当前档 accent + 3px 紧贴光晕
+                int grainW = Math.Max(4, (int)Math.Round(baseW * mag));
+                int grainH = Math.Max(3, (int)Math.Round(baseH * mag));
+                float gx = cx - grainW / 2f, gy = cy - grainH / 2f;
+                if (isCommitted)
+                {
+                    using (var br = new SolidBrush(Color.FromArgb(56, ac)))
+                    using (var path = RoundRect(gx - Dpi.S(3), gy - Dpi.S(3),
+                        grainW + Dpi.S(6), grainH + Dpi.S(6), (grainH + Dpi.S(6)) / 2f))
+                        g.FillPath(br, path);
+                    using (var br = new SolidBrush(ac))
+                    using (var path = RoundRect(gx, gy, grainW, grainH, grainH / 2f))
+                        g.FillPath(br, path);
+                }
+                else
+                {
+                    // 悬停不换色（原型只做 scale），保持 45% 次要色
+                    using (var br = new SolidBrush(Color.FromArgb(115, mu)))
+                    using (var path = RoundRect(gx, gy, grainW, grainH, grainH / 2f))
+                        g.FillPath(br, path);
+                }
+
+                // 档下数值：按高斯连续淡入（原型 opacity = g>0.35 ? min(1,g*1.2) : 0）
+                double la = isCommitted ? 1.0 : _lblCur[i];
+                if (la > 0.02)
+                {
+                    using (var br = new SolidBrush(isCommitted
+                        ? ac : Color.FromArgb((int)Math.Round(255 * la), mu)))
+                    {
+                        var sf = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Near };
+                        g.DrawString(SpeedText(s), _tickFont, br,
+                            new RectangleF(cx - (float)cw / 2 - 4, textTop, (float)cw + 8, Dpi.S(13)), sf);
+                    }
+                }
+            }
+
+            // 右侧当前倍率：原型 toFixed(2).replace(/0$/,'') → 1.0× / 1.25× / 2.0×
+            using (var b = new SolidBrush(ac))
+            {
+                var sf = new StringFormat { Alignment = StringAlignment.Far, LineAlignment = StringAlignment.Center };
+                g.DrawString(SpeedDecimalText(_committed), _valueFont, b,
+                    new RectangleF(Width - vw, cy - Dpi.S(9), vw - Dpi.S(2), Dpi.S(18)), sf);
+            }
+        }
+
+        private static string SpeedDecimalText(double s)
+        {
+            string t = s.ToString("0.00");
+            if (t.EndsWith("0", StringComparison.Ordinal)) t = t.Substring(0, t.Length - 1);
+            return t + "×";
+        }
+
+        private static System.Drawing.Drawing2D.GraphicsPath RoundRect(float x, float y, float w, float h, float r)
+        {
+            var p = new System.Drawing.Drawing2D.GraphicsPath();
+            float d = 2 * r;
+            p.AddArc(x, y, d, d, 180, 90);
+            p.AddArc(x + w - d, y, d, d, 270, 90);
+            p.AddArc(x + w - d, y + h - d, d, d, 0, 90);
+            p.AddArc(x, y + h - d, d, d, 90, 90);
+            p.CloseFigure();
+            return p;
         }
     }
 
@@ -247,14 +497,13 @@ internal static class MediaPreview
             Width = 30,
             Dock = DockStyle.Right,
             FlatStyle = FlatStyle.Flat,
-            ForeColor = Config.FG,
-            BackColor = Config.BG,
+            ForeColor = MFg,
+            BackColor = MBg,
             Font = new Font("Microsoft YaHei", 8),
         };
         b.FlatAppearance.BorderSize = 0;
-        b.FlatAppearance.MouseOverBackColor = Config.BgHover;
-        b.FlatAppearance.MouseDownBackColor = Config.BgHover;
-        Tips.Set(b, I18n.T("tip_close_preview"));
+        b.FlatAppearance.MouseOverBackColor = MHv;
+        b.FlatAppearance.MouseDownBackColor = MHv;
         b.Click += delegate
         {
             try
@@ -459,15 +708,22 @@ internal static class MediaPreview
 
             if (!isVideo) return panel;   // 音频：画面交给 PreviewForm 的操作栏
 
-            var bar = new WinPanel { Dock = DockStyle.Bottom, Height = 30, BackColor = Config.BG };
-            var btn = new Button { Text = "❚❚", Width = 36, Dock = DockStyle.Left, FlatStyle = FlatStyle.Flat, ForeColor = Config.FG, BackColor = Config.BG, Font = new Font("Microsoft YaHei", 9) };
+            // 画面空白（黑边）用深色垫底，避免浅色主题下大片白底
+            // （MediaElement 不支持 Background，深色由 ElementHost 的背景透出）
+            panel.BackColor = Color.FromArgb(0x15, 0x13, 0x10);
+            try { host.BackColor = panel.BackColor; } catch { }
+
+            var bar = new WinPanel { Dock = DockStyle.Bottom, Height = 38, BackColor = MBg };
+            var btn = new Button { Text = "❚❚", Width = 28, FlatStyle = FlatStyle.Flat, ForeColor = MFg, BackColor = MBg, Font = new Font("Microsoft YaHei", 9) };
             // 去掉 Flat 按钮的反色边框与悬停反色，保持与主题一致
             btn.FlatAppearance.BorderSize = 0;
-            btn.FlatAppearance.MouseOverBackColor = Config.BgHover;
-            btn.FlatAppearance.MouseDownBackColor = Config.BgHover;
-            var lblTime = new Label { Width = 110, Dock = DockStyle.Right, Text = I18n.T("media_loading"), TextAlign = ContentAlignment.MiddleRight, ForeColor = Config.FgDir, BackColor = Config.BG, AutoEllipsis = true, Font = new Font("Microsoft YaHei", 8) };
+            btn.FlatAppearance.MouseOverBackColor = MHv;
+            btn.FlatAppearance.MouseDownBackColor = MHv;
+            var lblTime = new Label { Width = 96, Text = I18n.T("media_loading"), TextAlign = ContentAlignment.MiddleLeft, ForeColor = MMu, BackColor = MBg, AutoEllipsis = true, Font = new Font("Microsoft YaHei", 8) };
+            // 进度条单独一行（原型：控制条上方一条通栏进度）
+            var progRow = new WinPanel { Dock = DockStyle.Bottom, Height = 14, BackColor = MBg, Padding = new Padding(10, 2, 10, 2) };
             var prog = new SeekBar { Dock = DockStyle.Fill };
-            var spdHint = CreateSpeedHint(panel, 4);
+            progRow.Controls.Add(prog);
             // 左上角媒体规格角标：分辨率 · 时长。MediaElement 拿不到帧率、也判不了有无声轨，
             // 这两条只留给 ffmpeg 兜底路径（MediaDecoder.FfmpegVideoPanel）显示完整角标
             var specBadge = new Label
@@ -482,17 +738,24 @@ internal static class MediaPreview
             };
             panel.Controls.Add(specBadge);
             specBadge.BringToFront();   // 压在画面上层；Label 挡不挡鼠标无所谓（悬停交互在 WPF 宿主里）
-            var ruler = new SpeedRuler { Dock = DockStyle.Bottom };
-            AttachSpeedRuler(ruler, session, spdHint);
+            // 倍速鱼眼刻度尺：嵌在控制条「时间」与「音量」之间（原型 row 内）。
+            // 显隐严格跟随 VideoSpeedToggle：关闭时连刻度尺都不显示。
+            var ruler = new SpeedRuler { Width = 190, Height = 30, Visible = Config.VideoSpeedToggle };
+            AttachSpeedRuler(ruler, session, null);
             var cls = CloseButton(panel);
+            cls.Dock = DockStyle.None;
+            // 倍速按钮：显示当前倍率；VideoSpeedToggle 关闭时连同刻度尺一起隐藏
+            var speedBtn = new Button { Text = SpeedText(1.0), Width = 40, FlatStyle = FlatStyle.Flat, ForeColor = MFg, BackColor = MBg, Font = new Font("Microsoft YaHei", 8), Visible = Config.VideoSpeedToggle };
+            speedBtn.FlatAppearance.BorderSize = 0;
+            speedBtn.FlatAppearance.MouseOverBackColor = MHv;
+            speedBtn.FlatAppearance.MouseDownBackColor = MHv;
             // 静音键：默认静音开关（Config.PreviewMuted 时视频起始即为静音态）
             bool startMuted = false;
             try { startMuted = session.WpfMedia.IsMuted; } catch { }
-            var muteBtn = new Button { Text = startMuted ? "🔇" : "🔊", Width = 32, Dock = DockStyle.Left, FlatStyle = FlatStyle.Flat, ForeColor = Config.FG, BackColor = Config.BG, Font = new Font("Microsoft YaHei", 9) };
+            var muteBtn = new Button { Text = startMuted ? "🔇" : "🔊", Width = 26, FlatStyle = FlatStyle.Flat, ForeColor = MFg, BackColor = MBg, Font = new Font("Microsoft YaHei", 9) };
             muteBtn.FlatAppearance.BorderSize = 0;
-            muteBtn.FlatAppearance.MouseOverBackColor = Config.BgHover;
-            muteBtn.FlatAppearance.MouseDownBackColor = Config.BgHover;
-            Tips.Set(muteBtn, I18n.T("mute_btn_tip"));
+            muteBtn.FlatAppearance.MouseOverBackColor = MHv;
+            muteBtn.FlatAppearance.MouseDownBackColor = MHv;
             muteBtn.Click += delegate
             {
                 bool m = false;
@@ -500,7 +763,7 @@ internal static class MediaPreview
                 muteBtn.Text = m ? "🔇" : "🔊";
             };
             // 音量条：点击设值（与进度条同交互）；调过就记住（Config.PreviewVolume），下次预览直接用
-            var volBar = new SeekBar { Width = 64, Dock = DockStyle.Left };
+            var volBar = new SeekBar { Width = 56 };
             double vol0 = Math.Max(0.0, Math.Min(1.0, Config.PreviewVolume / 100.0));
             volBar.Ratio = vol0;
             session.Volume = vol0;
@@ -512,69 +775,68 @@ internal static class MediaPreview
                 Config.PreviewVolume = Math.Round(r * 100);
                 Config.Save();
             };
-            // bar：[播放][静音][音量][标记][进度][时间][关闭]——muteBtn 最先 Add（Dock 逆序结算，落在播放键右侧）
+            // 控制条：[播放][时间] … [静音][音量][标记][倍速][关闭]
             var markBtn = new Button
             {
                 Text = "＋",
                 Width = 30,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
-                ForeColor = Config.FG,
-                BackColor = Config.BG,
+                ForeColor = MFg,
+                BackColor = MBg,
                 Font = new Font("Microsoft YaHei", 9)
             };
             markBtn.FlatAppearance.BorderSize = 0;
-            markBtn.FlatAppearance.MouseOverBackColor = Config.BgHover;
-            markBtn.FlatAppearance.MouseDownBackColor = Config.BgHover;
-            Tips.Set(markBtn, I18n.T("cull_mark_tip"));
+            markBtn.FlatAppearance.MouseOverBackColor = MHv;
+            markBtn.FlatAppearance.MouseDownBackColor = MHv;
             markBtn.Click += delegate { CullTray.Toggle(path); };
+            bar.Controls.Add(btn);
+            bar.Controls.Add(lblTime);
+            bar.Controls.Add(ruler);          // 鱼眼尺嵌在时间之后
             bar.Controls.Add(muteBtn);
             bar.Controls.Add(volBar);
             bar.Controls.Add(markBtn);
-            bar.Controls.Add(prog);
-            bar.Controls.Add(btn);
-            bar.Controls.Add(lblTime);
+            bar.Controls.Add(speedBtn);
             bar.Controls.Add(cls);
-            // ruler 先加（z序高），bar 后加（z序低=最底层，Dock先处理=最底部）
-            panel.Controls.Add(ruler);
+            Action layoutBar = delegate
+            {
+                int right = bar.ClientSize.Width;
+                // 方点横线在 ruler 内 cy=26；按钮中线对齐它 → top=14
+                int lineTop = 14;
+                cls.SetBounds(right - 28, lineTop, 24, 24); right -= 32;
+                if (speedBtn.Visible) { speedBtn.SetBounds(right - 40, lineTop, 40, 24); right -= 44; }
+                volBar.SetBounds(right - 56, lineTop + 4, 56, 16); right -= 60;
+                muteBtn.SetBounds(right - 26, lineTop, 26, 24); right -= 30;
+                markBtn.SetBounds(right - 30, lineTop, 30, 24); right -= 34;
+                btn.SetBounds(4, lineTop, 26, 24);
+                // 时间固定宽，紧跟鱼眼尺（原型：时间 → ruler → 音量）
+                lblTime.SetBounds(32, lineTop, 78, 24);
+                // 尺左右间距对称：左侧距时间 8px，右侧距音量控件 8px，中间全部给尺（向右延伸）
+                int rulerX = 32 + 78 + 8;
+                // 宽度不能超过右侧按钮群留出的空间：窗口很窄时旧的 Math.Max(60,…) 会
+                // 让尺子压到倍速值按钮上（ruler 在 z-order 里更靠前，直接把文字盖住）。
+                int rulerW = Math.Max(0, right - rulerX - 8);
+                ruler.SetBounds(rulerX, 0, rulerW, bar.ClientSize.Height);
+                ruler.SendToBack();   // 任何情况下都让倍速值/音量等按钮压在尺子之上
+            };
+            bar.Resize += delegate { layoutBar(); };
+            // progRow/bar 后加（最底层 Dock 先处理）→ 视觉顺序：进度 / 控制条
+            panel.Controls.Add(progRow);
             panel.Controls.Add(bar);
-            if (!Config.VideoSpeedToggle) ruler.Hide();
+            layoutBar();
 
-            // 画面交互：短按=播放/暂停，长按=倍速（WPF MediaElement 有独立 HWND，须用 WPF 鼠标事件）
-            double savedSpd = 1.0;
-            bool longPressed = false;
-            var lpTimer = new System.Windows.Threading.DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
-            lpTimer.Tick += (s, e2) =>
-            {
-                lpTimer.Stop();
-                longPressed = true;
-                if (!Config.VideoSpeedToggle) return;
-                try { savedSpd = session.SpeedRatio; } catch { savedSpd = 1.0; }
-                try { session.SpeedRatio = 3.0; } catch { }
-                UpdateSpeedHint(spdHint, 3.0);
-            };
-            session.WpfMedia.MouseLeftButtonDown += delegate(object s, System.Windows.Input.MouseButtonEventArgs e)
-            {
-                e.Handled = true;
-                if (!Config.VideoSpeedToggle) return;
-                longPressed = false;
-                lpTimer.Start();
-            };
+            // 刻度尺常显：点击档位即固定倍速；VideoSpeedToggle 关闭时不显示（构造时已处理）。
+            speedBtn.Click += delegate { /* 常显后无需切换显隐，保留按钮命中以免误触画面 */ };
+            ruler.CommitSpeed += delegate(double sp) { speedBtn.Text = SpeedText(sp); };
+            ruler.PreviewSpeed += delegate(double sp) { speedBtn.Text = SpeedText(sp); };
+            ruler.RestoreSpeed += delegate { speedBtn.Text = SpeedText(ruler.Committed); };
+
+            // 画面交互：点击=播放/暂停。已移除"长按最高倍速"功能——倍速统一由底部刻度尺控制。
             session.WpfMedia.MouseLeftButtonUp += delegate(object s, System.Windows.Input.MouseButtonEventArgs e)
             {
                 e.Handled = true;
-                lpTimer.Stop();
-                if (longPressed && Config.VideoSpeedToggle)
-                {
-                    try { session.SpeedRatio = savedSpd; } catch { }
-                    UpdateSpeedHint(spdHint, savedSpd);
-                }
-                else
-                {
-                    // 短按：播放/暂停并同步控制条按钮
-                    session.Toggle();
-                    btn.Text = session.IsPlaying ? "❚❚" : "▶";
-                }
+                session.Toggle();
+                btn.Text = session.IsPlaying ? "❚❚" : "▶";
             };
 
             session.Opened += delegate
@@ -673,6 +935,7 @@ internal static class MediaPreview
                         try
                         {
                             bar.Hide();
+                            progRow.Hide();
                             ruler.Hide();
                             fv.Visible = true;
                             fv.BringToFront();
@@ -940,7 +1203,7 @@ internal static class MediaPreview
             {
                 SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
                     | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw, true);
-                BackColor = Config.BG;
+                BackColor = MBg;
                 Cursor = Cursors.Hand;
                 // 悬停进度条：跟随鼠标在条上方显示对应进度时间
                 MouseMove += (s, e) =>
@@ -1007,27 +1270,11 @@ internal static class MediaPreview
             {
                 if (_tipText == null) return;
                 int w = _tip.Width, h = _tip.Height;
-                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                var path = new System.Drawing.Drawing2D.GraphicsPath();
-                int r = 4;
-                if (w >= r * 2 && h >= r * 2)
-                {
-                    path.AddArc(0, 0, r * 2, r * 2, 180, 180);
-                    path.AddArc(w - r * 2, 0, r * 2, r * 2, 270, 180);
-                    path.AddArc(w - r * 2, h - r * 2, r * 2, r * 2, 0, 180);
-                    path.AddArc(0, h - r * 2, r * 2, r * 2, 90, 180);
-                    path.CloseFigure();
-                }
-                else
-                {
-                    path.AddRectangle(new Rectangle(0, 0, w, h));
-                }
-                using (var b = new SolidBrush(Config.BG)) g.FillPath(b, path);
-                using (var p = new Pen(Config.Border)) g.DrawPath(p, path);
+                using (var b = new SolidBrush(MBg)) g.FillRectangle(b, 0, 0, w, h);
+                using (var p = new Pen(MBd)) g.DrawRectangle(p, 0, 0, w - 1, h - 1);
                 using (var f = new Font(Config.FontName, 8f))
-                    TextRenderer.DrawText(g, _tipText, f, new Rectangle(0, 1, w, h), Config.FG,
+                    TextRenderer.DrawText(g, _tipText, f, new Rectangle(0, 1, w, h), MFg,
                         TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-                path.Dispose();
             }
 
             protected override void OnPaint(PaintEventArgs e)
@@ -1036,11 +1283,12 @@ internal static class MediaPreview
                 g.Clear(BackColor);
                 const int trackH = 6;
                 int y = (Height - trackH) / 2;
-                using (var b = new SolidBrush(Config.Border))
+                // 轨道用淡色，已播放/音量段用配色方案的边框色（进度与音量共用本控件）
+                using (var b = new SolidBrush(MFaint))
                     g.FillRectangle(b, 4, y, Width - 8, trackH);
                 int fw = (int)((Width - 8) * _ratio);
                 if (fw > 0)
-                    using (var b = new SolidBrush(Config.Accent))
+                    using (var b = new SolidBrush(MMu))
                         g.FillRectangle(b, 4, y, fw, trackH);
             }
 
@@ -1247,7 +1495,7 @@ internal static class MediaPreview
     internal sealed class AudioMeter : IDisposable
     {
         private const int FftSize = 1024;
-        private const int BandCount = 32;
+        internal const int BandCount = 44;   // V4 原型：44 根频谱竖条
 
         private readonly object _lock = new object();
         private readonly float[] _bands = new float[BandCount];
@@ -1590,6 +1838,90 @@ internal static class MediaPreview
 
     // 频谱条已由波形图（WaveView）取代，此控件移除
 
+    // 波形图/频谱共用的悬停时间提示：鼠标在可视化区域上移动时，上方弹出时间气泡
+    internal sealed class VizHoverTip
+    {
+        private Panel _tip;
+        private string _tipText;
+        public double DurationSec;
+
+        private sealed class TipPanel : Panel
+        {
+            public Action<Graphics> Draw;
+            public TipPanel()
+            {
+                SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint
+                    | ControlStyles.OptimizedDoubleBuffer, true);
+            }
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                if (Draw != null) Draw(e.Graphics); else base.OnPaint(e);
+            }
+        }
+
+        private static string FmtT(double sec)
+        {
+            int t = (int)Math.Round(sec);
+            int hh = t / 3600, mm = (t % 3600) / 60, ss = t % 60;
+            return hh > 0 ? string.Format("{0}:{1:00}:{2:00}", hh, mm, ss)
+                          : string.Format("{0}:{1:00}", mm, ss);
+        }
+
+        public void Show(Control host, double ratio)
+        {
+            var form = host.FindForm();
+            if (form == null || DurationSec <= 0 || ratio < 0) { Hide(); return; }
+            string txt = FmtT(DurationSec * ratio);
+            if (_tip == null || _tip.IsDisposed)
+            {
+                var tp = new TipPanel();
+                tp.Draw = DrawTip;
+                _tip = tp;
+                _tip.Visible = false;
+                form.Controls.Add(_tip);
+            }
+            _tip.BringToFront();
+            if (_tipText != txt)
+            {
+                _tipText = txt;
+                using (var f = new Font(Config.FontName, 8f))
+                {
+                    var ts = TextRenderer.MeasureText(txt, f);
+                    _tip.Size = new Size(ts.Width + 12, ts.Height + 5);
+                }
+            }
+            var sp = host.PointToScreen(new Point((int)Math.Round(host.Width * ratio), 0));
+            var fp = form.PointToClient(sp);
+            int tx = fp.X - _tip.Width / 2;
+            if (tx < 2) tx = 2;
+            if (tx + _tip.Width > form.ClientSize.Width - 2) tx = form.ClientSize.Width - _tip.Width - 2;
+            _tip.Location = new Point(tx, Math.Max(2, fp.Y - _tip.Height - 4));
+            _tip.Visible = true;
+            _tip.Invalidate();
+        }
+
+        public void Hide()
+        {
+            if (_tip != null && !_tip.IsDisposed && _tip.Visible) _tip.Visible = false;
+        }
+
+        public void Dispose()
+        {
+            if (_tip != null) { try { _tip.Dispose(); } catch { } _tip = null; }
+        }
+
+        private void DrawTip(Graphics g)
+        {
+            if (_tipText == null) return;
+            int w = _tip.Width, h = _tip.Height;
+            using (var b = new SolidBrush(MediaPreview.MBg)) g.FillRectangle(b, 0, 0, w, h);
+            using (var p = new Pen(MediaPreview.MBd)) g.DrawRectangle(p, 0, 0, w - 1, h - 1);
+            using (var f = new Font(Config.FontName, 8f))
+                TextRenderer.DrawText(g, _tipText, f, new Rectangle(0, 1, w, h), MediaPreview.MFg,
+                    TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
+        }
+    }
+
     // 波形图：外层峰值带（浅）+ 内层 RMS 带（深）中线镜像；已播=强调色、未播=弱化色、位置竖线。
     // 数据来自 WaveDecoder 全量摘要（失败时回退环回渐进包络，峰值=RMS）。
     // 交互：点击/横向拖动 = seek；竖向拖动 >4px = 移动窗口（MoveWindow 交给宿主）
@@ -1600,8 +1932,14 @@ internal static class MediaPreview
         private double _pos;
         private bool _down, _scrubbed, _winMoved;
         private Point _downPt;
+        private readonly VizHoverTip _hoverTip = new VizHoverTip();
         public event Action<double> Seek;
         public event Action MoveWindow;
+
+        // V5 取色换肤：非空时覆盖 Config 的强调色/弱化色
+        internal Color? AccentColor;
+        internal Color? DimColor;
+        public double DurationSec { set { _hoverTip.DurationSec = value; } }
 
         internal WaveView()
         {
@@ -1627,10 +1965,12 @@ internal static class MediaPreview
             int half = Math.Max(2, Height / 2 - 1);
             int n = Math.Min(_rms.Length, _peak.Length);
             int pw = (int)Math.Round(Width * _pos);
-            using (var pkPlayed = new SolidBrush(Color.FromArgb(110, Config.Accent)))
-            using (var rmPlayed = new SolidBrush(Color.FromArgb(225, Config.Accent)))
-            using (var pkRest = new SolidBrush(Color.FromArgb(50, Config.PlaceholderFg)))
-            using (var rmRest = new SolidBrush(Color.FromArgb(120, Config.PlaceholderFg)))
+            Color ac = AccentColor ?? Config.Accent;
+            Color dim = DimColor ?? Config.PlaceholderFg;
+            using (var pkPlayed = new SolidBrush(Color.FromArgb(110, ac)))
+            using (var rmPlayed = new SolidBrush(Color.FromArgb(225, ac)))
+            using (var pkRest = new SolidBrush(Color.FromArgb(50, dim)))
+            using (var rmRest = new SolidBrush(Color.FromArgb(120, dim)))
             {
                 for (int x = 0; x < Width; x++)
                 {
@@ -1652,7 +1992,7 @@ internal static class MediaPreview
                 }
             }
             if (pw > 0 && pw < Width)
-                using (var p = new Pen(Config.Accent))
+                using (var p = new Pen(ac))
                     g.DrawLine(p, pw, 1, pw, Height - 2);
         }
 
@@ -1679,6 +2019,8 @@ internal static class MediaPreview
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
+            if (Width > 0)
+                _hoverTip.Show(this, (double)e.X / Width);
             if (!_down || _winMoved) return;
             int dx = e.X - _downPt.X;
             int dy = e.Y - _downPt.Y;
@@ -1689,6 +2031,18 @@ internal static class MediaPreview
                 var m = MoveWindow;
                 if (m != null) m();
             }
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            base.OnMouseLeave(e);
+            _hoverTip.Hide();
+        }
+
+        protected override void OnHandleDestroyed(EventArgs e)
+        {
+            base.OnHandleDestroyed(e);
+            _hoverTip.Dispose();
         }
 
         protected override void OnMouseUp(MouseEventArgs e)
@@ -1703,15 +2057,22 @@ internal static class MediaPreview
     // 交互同 WaveView（点击=seek，任意方向拖动>3px=移动窗口）。
     internal sealed class SpectrumView : WinControl
     {
-        private const int Bands = 32;
-
+        private const int Bands = AudioMeter.BandCount;   // 44 根，与采集频段一致
         private static readonly float[] Empty = new float[0];
         private float[] _spec = Empty;
+        private readonly float[] _smooth = new float[Bands];   // 动画过渡缓冲
+        private bool _hasSmooth;
         private double _pos;
         private bool _down, _winMoved;
         private Point _downPt;
+        private readonly VizHoverTip _hoverTip = new VizHoverTip();
         public event Action<double> Seek;
         public event Action MoveWindow;
+
+        // V5 取色换肤
+        internal Color? AccentColor;
+        internal Color? DimColor;
+        public double DurationSec { set { _hoverTip.DurationSec = value; } }
 
         internal SpectrumView()
         {
@@ -1725,29 +2086,58 @@ internal static class MediaPreview
         {
             _spec = spectrum ?? Empty;
             _pos = posRatio < 0 ? 0 : (posRatio > 1 ? 1 : posRatio);
+            // V4 动画过渡：H += (tg - H) * 0.25（原型每帧更新，这里由 40ms UI 定时器驱动）
+            for (int b = 0; b < Bands; b++)
+            {
+                float v = b < _spec.Length ? _spec[b] : 0f;
+                if (v < 0f) v = 0f; else if (v > 1f) v = 1f;
+                if (!_hasSmooth) _smooth[b] = v;
+                else _smooth[b] += (v - _smooth[b]) * 0.25f;
+            }
+            _hasSmooth = true;
             Invalidate();
         }
 
         protected override void OnPaint(PaintEventArgs e)
         {
             var g = e.Graphics;
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
             g.Clear(BackColor);
             int pw = (int)Math.Round(Width * _pos);
-            int bw = Width / Bands;
-            if (bw < 1) bw = 1;
-            using (var played = new SolidBrush(Color.FromArgb(225, Config.Accent)))
-            using (var rest = new SolidBrush(Color.FromArgb(80, Config.PlaceholderFg)))
+            float slot = (float)Width / Bands;
+            float barW = Math.Max(1f, slot - Dpi.F(2));   // 原型 gap=2
+            Color ac = AccentColor ?? Config.Accent;
+            Color dim = DimColor ?? Config.PlaceholderFg;
+            for (int b = 0; b < Bands; b++)
             {
-                for (int b = 0; b < Bands; b++)
-                {
-                    float v = b < _spec.Length ? _spec[b] : 0f;
-                    if (v < 0f) v = 0f; else if (v > 1f) v = 1f;
-                    int bh = Math.Max(1, (int)Math.Round(v * (Height - 2)));
-                    int bx = b * bw;
-                    g.FillRectangle(bx < pw ? played : rest, bx + 1, Height - 1 - bh, bw - 2, bh);
-                }
+                float v = _hasSmooth ? _smooth[b] : 0f;
+                // 静态基础高度：静音/未播段也看得到整条频谱带（原型 sin 造形）
+                float baseV = 0.18f + 0.14f * (float)Math.Abs(Math.Sin(b * 1.7));
+                float shown = Math.Max(v, baseV);
+                float bh = Math.Max(Dpi.F(2), (float)Math.Round(shown * (Height - Dpi.F(2))));
+                float bx = b * slot + (slot - barW) / 2f;
+                float by = (Height - bh) / 2f;   // 原型：y=(h-bh)/2，竖条垂直居中而非贴底
+                bool played = bx < pw;
+                Color c = played ? Color.FromArgb(235, ac) : Color.FromArgb(150, dim);
+                using (var br = new SolidBrush(c))
+                    FillRoundBar(g, br, bx, by, barW, bh);
             }
+        }
 
+        // 圆角竖条（圆角半径 = 半宽，原型 border-radius）
+        private static void FillRoundBar(Graphics g, Brush br, float x, float y, float w, float h)
+        {
+            float r = Math.Min(w / 2f, h / 2f);
+            if (r <= 0.5f) { g.FillRectangle(br, x, y, w, h); return; }
+            using (var path = new System.Drawing.Drawing2D.GraphicsPath())
+            {
+                path.AddArc(x, y, 2 * r, 2 * r, 180, 90);
+                path.AddArc(x + w - 2 * r, y, 2 * r, 2 * r, 270, 90);
+                path.AddArc(x + w - 2 * r, y + h - 2 * r, 2 * r, 2 * r, 0, 90);
+                path.AddArc(x, y + h - 2 * r, 2 * r, 2 * r, 90, 90);
+                path.CloseFigure();
+                g.FillPath(br, path);
+            }
         }
 
         private void SeekAt(int x)
@@ -1769,6 +2159,8 @@ internal static class MediaPreview
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
+            if (Width > 0)
+                _hoverTip.Show(this, (double)e.X / Width);
             if (!_down || _winMoved) return;
             int dx = e.X - _downPt.X, dy = e.Y - _downPt.Y;
             if (Math.Abs(dx) > 3 || Math.Abs(dy) > 3)
@@ -1776,6 +2168,18 @@ internal static class MediaPreview
                 _winMoved = true;
                 if (MoveWindow != null) MoveWindow();
             }
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            base.OnMouseLeave(e);
+            _hoverTip.Hide();
+        }
+
+        protected override void OnHandleDestroyed(EventArgs e)
+        {
+            base.OnHandleDestroyed(e);
+            _hoverTip.Dispose();
         }
 
         protected override void OnMouseUp(MouseEventArgs e)
@@ -1791,6 +2195,10 @@ internal static class MediaPreview
     {
         private double _pos;
         public event Action<double> Seek;
+
+        // V5 取色换肤
+        internal Color? AccentColor;
+        internal Color? DimColor;
 
         internal AudioProgress()
         {
@@ -1812,8 +2220,10 @@ internal static class MediaPreview
             g.Clear(BackColor);
             int pw = (int)Math.Round(Width * _pos);
             int y = (Height - 3) / 2;
-            using (var bg = new SolidBrush(Color.FromArgb(60, Config.PlaceholderFg)))
-            using (var fg = new SolidBrush(Config.Accent))
+            Color ac = AccentColor ?? Config.Accent;
+            Color dim = DimColor ?? Config.PlaceholderFg;
+            using (var bg = new SolidBrush(Color.FromArgb(60, dim)))
+            using (var fg = new SolidBrush(ac))
             {
                 g.FillRectangle(bg, 0, y, Width, 3);
                 if (pw > 0) g.FillRectangle(fg, 0, y, pw, 3);

@@ -349,28 +349,28 @@ namespace HoverExplorer
             Controls.Add(_badge);
             _badge.BringToFront();
 
-            var bar = new Panel { Dock = DockStyle.Bottom, Height = 30, BackColor = Config.BG };
+            var bar = new Panel { Dock = DockStyle.Bottom, Height = 30, BackColor = MediaPreview.MBg };
             _btn = new Button
             {
                 Text = "❚❚",
                 Width = 36,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
-                ForeColor = Config.FG,
-                BackColor = Config.BG,
+                ForeColor = MediaPreview.MFg,
+                BackColor = MediaPreview.MBg,
                 Font = new Font("Microsoft YaHei", 9)
             };
             _btn.FlatAppearance.BorderSize = 0;
-            _btn.FlatAppearance.MouseOverBackColor = Config.BgHover;
-            _btn.FlatAppearance.MouseDownBackColor = Config.BgHover;
+            _btn.FlatAppearance.MouseOverBackColor = MediaPreview.MHv;
+            _btn.FlatAppearance.MouseDownBackColor = MediaPreview.MHv;
             _lbl = new Label
             {
                 Width = 110,
                 Dock = DockStyle.Right,
                 Text = I18n.T("media_loading"),
                 TextAlign = ContentAlignment.MiddleRight,
-                ForeColor = Config.FgDir,
-                BackColor = Config.BG,
+                ForeColor = MediaPreview.MMu,
+                BackColor = MediaPreview.MBg,
                 AutoEllipsis = true,
                 Font = new Font("Microsoft YaHei", 8)
             };
@@ -389,12 +389,11 @@ namespace HoverExplorer
             };
             Controls.Add(_spec);
             _spec.BringToFront();   // 压在画面上层；不参与 Dock，不影响布局
-            // 倍速刻度尺：改的是"消费帧率"，ffmpeg 进程不用重启
-            var spdHint = MediaPreview.CreateSpeedHint(this, 4);
-            var ruler = new MediaPreview.SpeedRuler { Dock = DockStyle.Bottom };
-            ruler.PreviewSpeed += delegate(double r) { _speed = r; MediaPreview.UpdateSpeedHint(spdHint, r); ApplySpeedToAudio(); };
-            ruler.CommitSpeed += delegate(double r) { _speed = r; MediaPreview.UpdateSpeedHint(spdHint, r); ApplySpeedToAudio(); };
-            ruler.RestoreSpeed += delegate { _speed = ruler.Committed; MediaPreview.UpdateSpeedHint(spdHint, ruler.Committed); ApplySpeedToAudio(); };
+            // 倍速刻度尺：常显方点刻度，改的是"消费帧率"，ffmpeg 进程不用重启
+            var ruler = new MediaPreview.SpeedRuler { Dock = DockStyle.Bottom, Visible = Config.VideoSpeedToggle };
+            ruler.PreviewSpeed += delegate(double r) { _speed = r; ApplySpeedToAudio(); };
+            ruler.CommitSpeed += delegate(double r) { _speed = r; ApplySpeedToAudio(); };
+            ruler.RestoreSpeed += delegate { _speed = ruler.Committed; ApplySpeedToAudio(); };
             var cls = MediaPreview.CloseButton(this);
             // 静音键：跟随默认静音配置初始化（与 MediaElement 路径一致），点喇叭键随时开关
             _audioOn = !Config.PreviewMuted;
@@ -404,13 +403,13 @@ namespace HoverExplorer
                 Width = 32,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
-                ForeColor = Config.FG,
-                BackColor = Config.BG,
+                ForeColor = MediaPreview.MFg,
+                BackColor = MediaPreview.MBg,
                 Font = new Font("Microsoft YaHei", 9)
             };
             _muteBtn.FlatAppearance.BorderSize = 0;
-            _muteBtn.FlatAppearance.MouseOverBackColor = Config.BgHover;
-            _muteBtn.FlatAppearance.MouseDownBackColor = Config.BgHover;
+            _muteBtn.FlatAppearance.MouseOverBackColor = MediaPreview.MHv;
+            _muteBtn.FlatAppearance.MouseDownBackColor = MediaPreview.MHv;
             _muteBtn.Click += delegate { ToggleAudio(); };
             // 标记按钮：高码流素材正是粗筛的主要对象，与 MediaElement 路径的 ＋ 等价
             var markBtn = new Button
@@ -419,14 +418,13 @@ namespace HoverExplorer
                 Width = 30,
                 Dock = DockStyle.Left,
                 FlatStyle = FlatStyle.Flat,
-                ForeColor = Config.FG,
-                BackColor = Config.BG,
+                ForeColor = MediaPreview.MFg,
+                BackColor = MediaPreview.MBg,
                 Font = new Font("Microsoft YaHei", 9)
             };
             markBtn.FlatAppearance.BorderSize = 0;
-            markBtn.FlatAppearance.MouseOverBackColor = Config.BgHover;
-            markBtn.FlatAppearance.MouseDownBackColor = Config.BgHover;
-            Tips.Set(markBtn, I18n.T("cull_mark_tip"));
+            markBtn.FlatAppearance.MouseOverBackColor = MediaPreview.MHv;
+            markBtn.FlatAppearance.MouseDownBackColor = MediaPreview.MHv;
             markBtn.Click += delegate { CullTray.Toggle(_path); };
             // bar：[播放][静音][标记][进度][时间][关闭]
             bar.Controls.Add(_muteBtn);
@@ -439,23 +437,8 @@ namespace HoverExplorer
             Controls.Add(bar);
             if (!Config.VideoSpeedToggle) ruler.Hide();
 
-            // 长按画面加速到 3×，释放恢复
-            double savedSpd = 1.0;
-            _pb.MouseDown += delegate
-            {
-                if (!Config.VideoSpeedToggle) return;
-                savedSpd = _speed;
-                _speed = 3.0;
-                MediaPreview.UpdateSpeedHint(spdHint, 3.0);
-                ApplySpeedToAudio();
-            };
-            _pb.MouseUp += delegate
-            {
-                if (!Config.VideoSpeedToggle) return;
-                _speed = savedSpd;
-                MediaPreview.UpdateSpeedHint(spdHint, savedSpd);
-                ApplySpeedToAudio();
-            };
+            // 画面点击=播放/暂停；已移除长按最高倍速，倍速统一由底部刻度尺控制。
+            _pb.Click += delegate { TogglePlay(); };
 
             _btn.Click += delegate { TogglePlay(); };
             _prog.Seek += delegate(double ratio) { SeekTo(ratio); };

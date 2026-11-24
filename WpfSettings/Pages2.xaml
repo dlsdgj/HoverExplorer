@@ -5,22 +5,36 @@
     <!-- ============ 桌面卡片 ============ -->
     <DataTemplate x:Key="CardPage">
         <StackPanel>
-            <HeaderedContentControl Header="桌面卡片" c:Cfg.I18n="group_card" Style="{DynamicResource Card}">
+            <HeaderedContentControl Header="剪贴板→桌面卡片" c:Cfg.I18n="group_card_clipboard" Style="{DynamicResource Card}">
                 <c:SettingRow c:Cfg.I18n="hotkey_row" c:Cfg.Desc="card_hotkey_desc">
                     <StackPanel Orientation="Horizontal">
                         <ToggleButton c:Cfg.Key="CardHotkeyEnabled" Style="{DynamicResource Switch}" IsChecked="True" Margin="0,0,10,0"/>
-                        <Button c:Cfg.I18n="hotkey_delete" c:Cfg.Action="hk:card:del" Margin="0,0,6,0"/>
-                        <Button c:Cfg.I18n="hotkey_reset" c:Cfg.Action="hk:card:reset" Margin="0,0,12,0"/>
-                        <StackPanel Orientation="Horizontal" c:Cfg.ShowIf="CardHotkeyOn">
-                            <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkCard:0" Text="Ctrl" HorizontalAlignment="Center"/></Border>
-                            <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkCard:1" Text="Alt" HorizontalAlignment="Center"/></Border>
-                            <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkCard:2" Text="V" HorizontalAlignment="Center"/></Border>
-                        </StackPanel>
+                        <!-- 键帽组：点击重新录制，× 清除 -->
+                        <Border Style="{DynamicResource KeyCapGroup}" c:Cfg.ShowIf="CardHotkeyOn" c:Cfg.Action="hk:card:reset">
+                            <StackPanel Orientation="Horizontal">
+                                <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkCard:0" Text="Ctrl" HorizontalAlignment="Center"/></Border>
+                                <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkCard:1" Text="Alt" HorizontalAlignment="Center"/></Border>
+                                <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkCard:2" Text="V" HorizontalAlignment="Center"/></Border>
+                                <Button Style="{DynamicResource KeyCapClear}" c:Cfg.Action="hk:card:del"/>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </c:SettingRow>
             </HeaderedContentControl>
 
-            <HeaderedContentControl Header="桌面卡片" c:Cfg.I18n="group_card" Style="{DynamicResource Card}">
+            <!-- 卡片文字：所有配色方案共用的字体/字号 -->
+            <HeaderedContentControl Header="卡片文字" c:Cfg.I18n="group_card_text" Style="{DynamicResource Card}">
+                <StackPanel>
+                    <c:SettingRow c:Cfg.I18n="cp_font">
+                        <ComboBox c:Cfg.Key="CardFontName" c:Cfg.Mode="Fonts" Width="200" SelectedIndex="0"/>
+                    </c:SettingRow>
+                    <c:SettingRow c:Cfg.I18n="cp_font_size">
+                        <c:Stepper c:Cfg.Key="CardFontSize" Value="9" Min="6" Max="24" Step="0.5" Format="0.#"/>
+                    </c:SettingRow>
+                </StackPanel>
+            </HeaderedContentControl>
+
+            <HeaderedContentControl Header="卡片外观" c:Cfg.I18n="group_card_appearance" Style="{DynamicResource Card}">
                 <StackPanel>
                     <TextBlock Margin="14,0,14,6"><Hyperlink c:Cfg.I18n="card_gen_link" c:Cfg.Link="gen:card"/></TextBlock>
                     <c:SettingRow c:Cfg.I18n="palette_scheme">
@@ -36,10 +50,6 @@
                     <c:ColorRow x:Name="BadgeFg" c:Cfg.Key="card:BadgeFg" c:Cfg.I18n="cp_lbl_badge_fg" Label="徽标文字" Text="rgba(28,25,23,255)"/>
                     <c:ColorRow x:Name="Stripe" c:Cfg.Key="card:Strip" c:Cfg.I18n="cp_lbl_strip" Label="左侧色条" Text="rgba(192,94,41,255)"/>
                     <c:SettingRow c:Cfg.I18n="cp_strip_w"><c:Stepper c:Cfg.Key="card:StripWidth" Value="3" Min="0" Max="12"/></c:SettingRow>
-                    <c:SettingRow c:Cfg.I18n="cp_font">
-                        <ComboBox c:Cfg.Key="card:FontName" c:Cfg.Mode="Fonts" Width="200" SelectedIndex="0"/>
-                    </c:SettingRow>
-                    <c:SettingRow c:Cfg.I18n="cp_font_size"><c:Stepper c:Cfg.Key="card:FontSize" Value="9" Min="6" Max="24"/></c:SettingRow>
                     <c:SettingRow c:Cfg.I18n="cp_radius"><c:Stepper c:Cfg.Key="card:Radius" Value="3" Min="0" Max="20"/></c:SettingRow>
                     <TextBlock Style="{DynamicResource Desc}" Margin="14,0,14,6" TextWrapping="Wrap" c:Cfg.I18n="card_keys_desc"/>
                     <WrapPanel Margin="14,0,14,8">
@@ -72,13 +82,15 @@
                 <c:SettingRow c:Cfg.I18n="entry_hotkey">
                     <StackPanel Orientation="Horizontal">
                         <ToggleButton c:Cfg.Key="EntryHotkeyEnabled" Style="{DynamicResource Switch}" IsChecked="True" Margin="0,0,10,0"/>
-                        <Button c:Cfg.I18n="hotkey_delete" c:Cfg.Action="hk:entry:del" Margin="0,0,6,0"/>
-                        <Button c:Cfg.I18n="hotkey_reset" c:Cfg.Action="hk:entry:reset" Margin="0,0,12,0"/>
-                        <StackPanel Orientation="Horizontal" c:Cfg.ShowIf="EntryHotkeyOn">
-                            <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkEntry:0" Text="Ctrl" HorizontalAlignment="Center"/></Border>
-                            <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkEntry:1" Text="Alt" HorizontalAlignment="Center"/></Border>
-                            <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkEntry:2" Text="E" HorizontalAlignment="Center"/></Border>
-                        </StackPanel>
+                        <!-- 键帽组：点击重新录制，× 清除 -->
+                        <Border Style="{DynamicResource KeyCapGroup}" c:Cfg.ShowIf="EntryHotkeyOn" c:Cfg.Action="hk:entry:reset">
+                            <StackPanel Orientation="Horizontal">
+                                <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkEntry:0" Text="Ctrl" HorizontalAlignment="Center"/></Border>
+                                <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkEntry:1" Text="Alt" HorizontalAlignment="Center"/></Border>
+                                <Border Style="{DynamicResource KeyCap}"><TextBlock c:Cfg.Key="HkEntry:2" Text="E" HorizontalAlignment="Center"/></Border>
+                                <Button Style="{DynamicResource KeyCapClear}" c:Cfg.Action="hk:entry:del"/>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </c:SettingRow>
                 <c:SettingRow c:Cfg.I18n="entry_area" c:Cfg.Key="EntryRectInfo">
@@ -91,6 +103,12 @@
                 <c:SettingRow c:Cfg.I18n="entry_delay_row" c:Cfg.Desc="entry_delay_desc" c:Cfg.ShowIf="EntryRectSet">
                     <c:Stepper c:Cfg.Key="EntryRectDelayMs" Value="50" Min="0" Max="2000" Step="10" Suffix=" ms"/>
                 </c:SettingRow>
+                <c:SettingRow c:Cfg.I18n="group_hover_delay_row" c:Cfg.Desc="group_hover_delay_desc">
+                    <c:Stepper c:Cfg.Key="GroupHoverDelayMs" Value="0" Min="0" Max="2000" Step="50" Suffix=" ms"/>
+                </c:SettingRow>
+                <c:SettingRow c:Cfg.I18n="group_title_expand_row" c:Cfg.Desc="group_title_expand_desc">
+                    <ToggleButton c:Cfg.Key="EntryGroupTitleExpand" Style="{DynamicResource Switch}" IsChecked="False"/>
+                </c:SettingRow>
                 <Border Style="{DynamicResource Hint}"><TextBlock c:Cfg.I18n="hint_fav_features" Foreground="{DynamicResource HintTextBrush}"/></Border>
             </StackPanel>
         </HeaderedContentControl>
@@ -101,25 +119,22 @@
         <HeaderedContentControl Header="高级与集成" c:Cfg.I18n="group_advanced" Style="{DynamicResource Card}">
             <StackPanel>
                 <c:SettingRow c:Cfg.I18n="tc_sort_row" c:Cfg.Desc="tc_sort_disabled">
-                    <ComboBox Width="170" SelectedIndex="0" IsEnabled="False"><ComboBoxItem Content="自动 (读 TC ini)"/></ComboBox>
+                    <ComboBox Width="170" SelectedIndex="0" IsEnabled="False"><ComboBoxItem c:Cfg.I18n="tc_sort_auto"/></ComboBox>
                 </c:SettingRow>
-                <c:SettingRow Title="Total Commander 悬停检测" Description="暂停开发中，保留开关供手动启用">
+                <c:SettingRow c:Cfg.I18n="tc_hover_row" c:Cfg.Desc="tc_hover_desc">
                     <ToggleButton c:Cfg.Key="TcEnabled" Style="{DynamicResource Switch}"/>
                 </c:SettingRow>
-                <c:SettingRow Title="Perch 笔记卡片悬停" Description="通过 UIAutomation 拾取 Perch 文本块中的路径">
+                <c:SettingRow c:Cfg.I18n="perch_hover_row" c:Cfg.Desc="perch_hover_desc">
                     <ToggleButton c:Cfg.Key="PerchEnabled" Style="{DynamicResource Switch}"/>
                 </c:SettingRow>
+                <Border Style="{DynamicResource Hint}"><TextBlock c:Cfg.I18n="scene_explorer_hint" Foreground="{DynamicResource HintTextBrush}"/></Border>
                 <Border Style="{DynamicResource Hint}"><TextBlock c:Cfg.I18n="hint_integration" Foreground="{DynamicResource HintTextBrush}"/></Border>
                 <TextBlock Margin="14,4,14,2"><Hyperlink c:Cfg.I18n="hidden_features_obsidian_link" c:Cfg.Link="https://github.com/dlsdgj/hover-link-preview"/></TextBlock>
                 <TextBlock Margin="14,2,14,6"><Hyperlink c:Cfg.I18n="hidden_features_perch_link" c:Cfg.Link="https://github.com/dlsdgj/perch"/></TextBlock>
-            </StackPanel>
-        </HeaderedContentControl>
-    </DataTemplate>
 
-    <!-- ============ 托盘管理 ============ -->
-    <DataTemplate x:Key="TrayPage">
-        <HeaderedContentControl Header="托盘管理" c:Cfg.I18n="group_tray" Style="{DynamicResource Card}">
-            <StackPanel>
+                <!-- 托盘管理（原独立页面并入本卡片） -->
+                <Border Height="1" Background="{DynamicResource LineBrush}" Margin="14,10,14,2"/>
+                <TextBlock Text="托盘管理" c:Cfg.I18n="group_tray" FontWeight="SemiBold" FontSize="13" Margin="14,8,14,4"/>
                 <c:SettingRow c:Cfg.I18n="tray_icon_path" c:Cfg.Desc="tray_icon_desc">
                     <StackPanel Orientation="Horizontal">
                         <TextBox c:Cfg.Key="TrayIconPath" Width="150" Margin="0,0,6,0"/>
@@ -144,7 +159,7 @@
                     <TextBlock Grid.Column="1" c:Cfg.I18n="tray_col_show" FontSize="11" HorizontalAlignment="Center"/>
                     <TextBlock Grid.Column="2" c:Cfg.I18n="tray_col_enable" FontSize="11" HorizontalAlignment="Center"/>
                 </Grid>
-                <ItemsControl x:Name="TrayList" Margin="14,0">
+                <ItemsControl x:Name="TrayList" Margin="14,0,14,6">
                     <ItemsControl.ItemTemplate>
                         <DataTemplate>
                             <Grid Height="34">

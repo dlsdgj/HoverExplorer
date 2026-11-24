@@ -27,7 +27,7 @@ namespace HoverExplorer
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
                      ControlStyles.UserPaint | ControlStyles.ResizeRedraw |
                      ControlStyles.SupportsTransparentBackColor, true);
-            Width = 10;
+            Width = Dpi.S(10);
             Dock = DockStyle.Right;
             BackColor = Color.Transparent;
         }
@@ -82,13 +82,13 @@ namespace HoverExplorer
         Rectangle ThumbRect()
         {
             int h = Height;
-            int thumbH = Math.Max(24, (int)((long)h * _large / _max));
+            int thumbH = Math.Max(Dpi.S(24), (int)((long)h * _large / _max));
             int range = h - thumbH;
             int span = Math.Max(1, _max - _large);
             int y = (int)((long)range * _value / span);
             bool wide = _hot || _drag;
-            int w = _style == BarStyle.Thin ? (wide ? 8 : 4) : 6;
-            return new Rectangle(Width - w - 1, y, w, thumbH);
+            int w = _style == BarStyle.Thin ? (wide ? Dpi.S(8) : Dpi.S(4)) : Dpi.S(6);
+            return new Rectangle(Width - w - Dpi.S(1), y, w, thumbH);
         }
 
         protected override void OnPaint(PaintEventArgs e)
@@ -99,9 +99,9 @@ namespace HoverExplorer
             // 让滚动条与压在下面的行区容器同色。轨道仍是半透明黑叠加，视觉效果不变
             using (var b = new SolidBrush(BackColor)) g.FillRectangle(b, 0, 0, Width, Height);
             if (_style == BarStyle.Block)
-                using (var b = new SolidBrush(TrackColor)) g.FillRectangle(b, Width - 8, 0, 8, Height);
+                using (var b = new SolidBrush(TrackColor)) g.FillRectangle(b, Width - Dpi.S(8), 0, Dpi.S(8), Height);
             else if (_style == BarStyle.Line)
-                using (var b = new SolidBrush(TrackColor)) g.FillRectangle(b, Width - 4, 0, 1, Height);
+                using (var b = new SolidBrush(TrackColor)) g.FillRectangle(b, Width - Dpi.S(4), 0, Dpi.S(1), Height);
             using (var b = new SolidBrush(_hot || _drag ? ThumbHotColor : ThumbColor))
                 g.FillRectangle(b, ThumbRect());
         }

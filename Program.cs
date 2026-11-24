@@ -13,7 +13,7 @@ namespace HoverExplorer
 {
     internal static class Program
     {
-        public const string Version = "1.1.8";
+        public const string Version = "1.1.9";
 
         private static string _desktopPath;
         private static string _publicDesktopPath;
@@ -24,6 +24,66 @@ namespace HoverExplorer
         internal static List<PopupForm> Panels { get { return _panels; } }
         private static readonly List<PinCardForm> _pinCards = new List<PinCardForm>();
         internal static bool ShellMenuOpen;
+        private static List<IHoverSource> _hoverSources;
+        internal static string LastHoverPath;   // 场景诊断：最近一次命中的目标
+        private static DateTime _lastDlgNullAt; // 对话框未命中日志节流
+
+        // 场景源（一次构建，顺序即优先级）：
+        // 桌面 → 文件对话框 → TC → 资源管理器 → Perch/Obsidian
+        // 新增场景只需实现 IHoverSource 并在此追加
+        private static void EnsureHoverSources()
+        {
+            if (_hoverSources != null) return;
+            _hoverSources = new List<IHoverSource>();
+            _hoverSources.Add(new HoverSource("desktop", null, delegate(int x, int y, out Rectangle r, out bool d)
+            {
+                r = Rectangle.Empty; d = false;
+                if (!NativeMethods.PointOnDesktop(x, y)) return null;
+                string p = DetectDesktopItem(x, y, out r, out d);
+                return p == null ? null : ResolveHiddenExt(p);
+            }));
+            _hoverSources.Add(new HoverSource("dialog", delegate { return Config.DialogEnabled; },
+                delegate(int x, int y, out Rectangle r, out bool d)
+                {
+                    return DialogSupport.DetectHoverItem(x, y, out r, out d);
+                }));
+            _hoverSources.Add(new HoverSource("tc", delegate { return Config.TcEnabled; },
+                delegate(int x, int y, out Rectangle r, out bool d)
+                {
+                    string p = TcSupport.DetectHoverItem(x, y, out r, out d);
+                    return p == null ? null : ResolveHiddenExt(p);
+                }));
+            _hoverSources.Add(new HoverSource("explorer", delegate { return Config.ExplorerEnabled; },
+                delegate(int x, int y, out Rectangle r, out bool d)
+                {
+                    string p = ExplorerSupport.DetectHoverItem(x, y, out r, out d);
+                    return p == null ? null : ResolveHiddenExt(p);
+                }));
+            _hoverSources.Add(new HoverSource("perch", delegate { return Config.PerchEnabled; },
+                delegate(int x, int y, out Rectangle r, out bool d)
+                {
+                    return PerchSupport.DetectHoverItem(x, y, out r, out d);
+                }));
+        }
+
+        private static string DetectHoverFromSources(int mx, int my, out Rectangle rect, out bool isDir)
+        {
+            EnsureHoverSources();
+            foreach (var s in _hoverSources)
+            {
+                if (!s.Enabled) continue;
+                string p = s.Detect(mx, my, out rect, out isDir);
+                if (p != null)
+                {
+                    HoverSources.LastSource = s.Id;
+                    LastHoverPath = p;
+                    return p;
+                }
+            }
+            rect = Rectangle.Empty; isDir = false;
+            LastHoverPath = null;
+            return null;
+        }
 
         // 刷新正在显示指定目录的所有面板（跨面板移动/复制后同步源和目标列表）
         public static void RefreshPanelsShowing(string dir1, string dir2)
@@ -69,6 +129,17 @@ namespace HoverExplorer
         // 前台窗口正处于输入态（资源管理器重命名/地址栏）时的抑制标记，仅用于日志节流
         private static DateTime _lastEditLog;
         private static DateTime _extNullSince = DateTime.MinValue;
+        // 预览窗关闭后复位触发闩锁：同一路径再次悬停可重新预览（Obsidian 等宿主残留目标尤其需要）。
+        // 复位后要求"指针真的移动过"才允许再次触发，防止残留目标让刚关闭的预览自动重弹。
+        private static bool _extNeedMove;
+        internal static void NotifyExtPreviewClosed()
+        {
+            if (_extHoverFile == null) return;
+            _extHoverFile = null;
+            _extCandidate = null;
+            _extNullSince = DateTime.MinValue;
+            _extNeedMove = true;
+        }
         private static DateTime _hoverStart;
         private static DateTime _closeStart = DateTime.MinValue;
         private static System.Windows.Forms.Timer _subCloseTimer;
@@ -507,7 +578,9 @@ namespace HoverExplorer
         // 自动重复死区（按住键的重复键不重复触发，避免开关状态打乒乓）
         private static int _lastSpaceIntercept, _lastMarkIntercept;
 
-        // 前台是否资源管理器窗口或桌面（空格预览只在 shell 语境拦空格；聊天/浏览器里空格是文本）
+        // 前台是否资源管理器窗口或桌面（空格预览只在 shell 语境拦空格；聊天/浏览器里空格是文本）。
+        // 桌面图标获得焦点时，前台窗口可能是 Progman/WorkerW，也可能直接是 SHELLDLL_DefView
+        // 或 SysListView32（取决于 Win10/11 壁纸分离模式），这些都要认，否则桌面空格被放行。
         private static bool ForegroundIsShell()
         {
             try
@@ -515,59 +588,88 @@ namespace HoverExplorer
                 IntPtr fg = NativeMethods.GetForegroundWindow();
                 if (fg == IntPtr.Zero) return false;
                 string cls = NativeMethods.GetClassOf(fg);
-                return cls == "CabinetWClass" || cls == "Progman" || cls == "WorkerW";
+                if (cls == "CabinetWClass" || cls == "Progman" || cls == "WorkerW"
+                    || cls == "SHELLDLL_DefView" || cls == "SysListView32") return true;
+                return false;
             }
             catch { return false; }
         }
 
-        // 空格预览：同一文件再按 = 关闭；否则立即打开（零延时——主动操作不需要防误触）。
-        // 光标不在条目上时回退到 QuickLook 语义：取 Explorer 当前选中的单个条目
-        private static void SpacePreview(int mx, int my)
+        // 空格预览（严格 QuickLook 语义）：永远取键盘当前选中/高亮的条目，鼠标位置完全不参与。
+        // 同一条目再按 = 关闭；窗口贴在选中项旁边（用条目矩形定位）。
+        private static void SpacePreview()
         {
-            Rectangle rect = Rectangle.Empty; bool isDir = false;
+            Rectangle rect = Rectangle.Empty;
+            bool isDir = false;
             string path = null;
-            if (NativeMethods.PointOnDesktop(mx, my))
+
+            IntPtr fg = NativeMethods.GetForegroundWindow();
+            string cls = fg != IntPtr.Zero ? NativeMethods.GetClassOf(fg) : "";
+            if (cls == "CabinetWClass")
             {
-                path = DetectDesktopItem(mx, my, out rect, out isDir);
-                DebugLog("[space] desktop-detect: " + (path ?? "null"));
+                // 资源管理器：UIA 键盘焦点/选中项；isDir 在 helper 内按 Directory.Exists 重算
+                path = ExplorerSupport.GetExplorerFocusedItem(fg, out rect, out isDir);
+                DebugLog("[space] explorer-focused: " + (path ?? "null") + " rect=" + rect);
             }
-            else if (Config.ExplorerEnabled)
+            else if (Config.ExplorerEnabled && (cls == "Progman" || cls == "WorkerW"
+                || cls == "SHELLDLL_DefView" || cls == "SysListView32"))
             {
-                path = ExplorerSupport.DetectHoverItem(mx, my, out rect, out isDir, true);
-                DebugLog("[space] cursor-detect: " + (path ?? "null"));
-                // 拼出的路径在磁盘上不存在 = 路径还原失败（搜索结果视图/命名空间条目）——
-                // 转入选中回退：shell 的 SelectedItems 在这些视图里照样给得出真实路径
-                if (!string.IsNullOrEmpty(path) && !isDir && !File.Exists(path))
-                {
-                    DebugLog("[space] cursor-path missing on disk: " + path);
-                    path = null;
-                }
-                if (string.IsNullOrEmpty(path))
-                {
-                    IntPtr fg = NativeMethods.GetForegroundWindow();
-                    if (fg != IntPtr.Zero && NativeMethods.GetClassOf(fg) == "CabinetWClass")
-                    {
-                        path = ExplorerSupport.GetExplorerSelectedPath(fg);
-                        DebugLog("[space] selection-fallback: " + (path ?? "null"));
-                    }
-                }
+                // 桌面：ListView 焦点/选中项（LVM_GETNEXTITEM），与鼠标无关
+                path = DetectDesktopSelectedItem(out rect, out isDir);
+                DebugLog("[space] desktop-selected: " + (path ?? "null") + " rect=" + rect);
             }
             if (string.IsNullOrEmpty(path)) return;
+
+            // 文件夹快捷方式（.lnk）：与悬停链路一致，目标是可访问目录时重定向到该目录，
+            // 走文件夹列表而不是快捷方式属性预览。
+            if (!isDir && Config.LnkExts.Contains(Path.GetExtension(path)))
+            {
+                try
+                {
+                    string lnkDir;
+                    if (!_lnkDirCache.TryGetValue(path, out lnkDir))
+                    {
+                        lnkDir = null;
+                        string target = PreviewProvider.GetLnkTarget(path);
+                        if (!string.IsNullOrEmpty(target) && Directory.Exists(target)) lnkDir = target;
+                        if (_lnkDirCache.Count > 200) _lnkDirCache.Clear();
+                        _lnkDirCache[path] = lnkDir;
+                    }
+                    if (lnkDir != null) { path = lnkDir; DebugLog("[space] lnk->dir " + path); }
+                }
+                catch { }
+            }
+            isDir = Directory.Exists(path);   // 统一重算，杜绝文件夹误入文件分支
+
             if (isDir)
             {
-                // 光标下是文件夹：空格直接弹出它的面板（主动操作零延时）；已开着同路径面板则不动
+                // 同一文件夹的空格面板已开：再按一次 = 关闭（QuickLook 开关语义）
+                var spaceOpen = _panels.FirstOrDefault(p => IsSpacePanel(p) && p.CurrentPath == path);
+                if (spaceOpen != null)
+                {
+                    DebugLog("[space] toggle-close panel " + path);
+                    spaceOpen.ClosePanel();
+                    _panels.Remove(spaceOpen);
+                    HideHighlight();
+                    return;
+                }
                 if (_panels.Any(p => !p.IsDisposed && p.CurrentPath == path))
                 {
                     DebugLog("[space] panel already open " + path);
                     return;
                 }
                 DebugLog("[space] open panel " + path);
+                // 开新文件夹：关掉所有非固定面板（含旧的空格面板），只留 pinned
                 foreach (var p in _panels.Where(pp => !pp.Pinned)) p.ClosePanel();
                 _panels.RemoveAll(p => !p.Pinned);
                 var p2 = new PopupForm(0, OpenSub, DropResolver, ScheduleCloseAfter);
-                if (p2.ShowPanel(path, mx + Config.PopupOffset, my + Config.PopupOffset))
+                // 用选中项矩形贴靠；矩形无效时退回屏幕中心，绝不用鼠标坐标
+                int px, py;
+                PositionFromRect(rect, p2.Width, p2.Height, out px, out py);
+                if (p2.ShowPanel(path, px, py))
                 {
-                    ShowHighlight(rect);
+                    p2.Tag = "space";   // QuickLook 空格面板：豁免鼠标离开的自动关闭
+                    ShowHighlight(rect, IsIconTile(rect));
                     _panels.Add(p2);
                     p2.Show();
                     NativeMethods.SetWindowPos(p2.Handle, NativeMethods.HWND_TOPMOST, 0, 0, 0, 0,
@@ -578,11 +680,41 @@ namespace HoverExplorer
             if (!Config.PreviewFiles || !PreviewProvider.CanPreview(path)) { DebugLog("[space] not-previewable: " + path); return; }
             if (PopupForm.ExtPreviewActive() && string.Equals(PopupForm.ExtPreviewFilePath(), path, StringComparison.OrdinalIgnoreCase))
             {
-                if (!PopupForm.ExtPreviewPinned()) PopupForm.CancelFilePreview();   // 同一文件：空格 = 关闭（钉住的不响应，避免解除引用后重复开窗）
+                if (!PopupForm.ExtPreviewPinned())
+                {
+                    PopupForm.CancelFilePreview();
+                    // 与悬停预览并存：空格关掉预览后同步复位悬停闩锁，否则 _extHoverFile
+                    // 仍指向该文件，之后移开/移回鼠标时 hoverFile==_extHoverFile 无法重新触发
+                    NotifyExtPreviewClosed();
+                }
                 return;
             }
-            PopupForm.PreviewNow(path, new Point(mx, my));
+            PopupForm.PreviewNow(path, rect);
             DebugLog("[preview] space " + path);
+        }
+
+        // 按条目矩形计算贴靠坐标：优先贴右侧，右侧空间不足翻到左侧，垂直居中于条目；
+        // 矩形无效时退回主屏工作区中心。全程不读鼠标坐标。
+        private static void PositionFromRect(Rectangle rect, int w, int h, out int x, out int y)
+        {
+            Point anchorPt = rect.IsEmpty ? Point.Empty : new Point(rect.Left + rect.Width / 2, rect.Top + rect.Height / 2);
+            var scr = System.Windows.Forms.Screen.FromPoint(anchorPt).WorkingArea;
+            bool valid = !rect.IsEmpty && rect.Width > 0 && rect.Height > 0
+                && rect.Right > scr.Left && rect.Left < scr.Right && rect.Bottom > scr.Top && rect.Top < scr.Bottom;
+            if (!valid)
+            {
+                x = scr.Left + (scr.Width - w) / 2;
+                y = scr.Top + (scr.Height - h) / 2;
+                return;
+            }
+            int gap = Config.PopupOffset;
+            x = rect.Right + gap;
+            if (x + w > scr.Right) x = rect.Left - w - gap;
+            if (x < scr.Left || x + w > scr.Right) x = Math.Max(scr.Left + 4, scr.Right - w - 4);
+            // 垂直按条目顶部对齐，避免高面板被居中计算顶到屏幕上方
+            y = rect.Top;
+            if (y + h > scr.Bottom) y = scr.Bottom - h - 4;
+            if (y < scr.Top) y = scr.Top + 4;
         }
 
         // ===== 键盘导航会话（固定窗口不再长期占用方向键）=====
@@ -1060,15 +1192,31 @@ namespace HoverExplorer
             catch (Exception ex) { DebugLog("[z] CoveredByOther ex: " + ex.Message); return false; }
         }
 
+        // 标准文件对话框（#32770）打开时“文件名”输入框默认持有焦点，
+        // 不能因此屏蔽整个对话框的悬停检测，否则首次打开必须点一下文件才会出预览。
+        private static bool IsForegroundCommonDialog(IntPtr fg)
+        {
+            IntPtr cur = fg;
+            for (int i = 0; i < 8 && cur != IntPtr.Zero; i++)
+            {
+                if (string.Equals(NativeMethods.GetClassOf(cur), "#32770", StringComparison.Ordinal))
+                    return true;
+                cur = NativeMethods.GetParent(cur);
+            }
+            return false;
+        }
+
         // 前台窗口正在输入（资源管理器重命名编辑框 / 地址栏）：此时不该弹任何悬停面板或预览。
         // 用 GetGUIThreadInfo 取前台线程的焦点控件判类名，比 UIA 便宜得多（每 Tick 可调）。
         // 本进程窗口（自己的搜索框/预览文本框）不算，否则一输入就把自己关了。
+        // 文件对话框例外：文件名框默认聚焦，但不应阻止对话框内的文件悬停预览。
         public static bool IsEditingInForeground()
         {
             try
             {
                 IntPtr fg = NativeMethods.GetForegroundWindow();
                 if (fg == IntPtr.Zero) return false;
+                if (IsForegroundCommonDialog(fg)) return false;
                 uint pid;
                 uint tid = NativeMethods.GetWindowThreadProcessId(fg, out pid);
                 if (tid == 0 || pid == _currentPid) return false;
@@ -1181,7 +1329,8 @@ namespace HoverExplorer
         public static void UpdatePinPos(string kind, string path, int x, int y)
         {
             var item = Config.PinnedItems.Find(p => p.Kind == kind && p.Path == path);
-            if (item != null) { item.X = x; item.Y = y; Config.Save(); }
+            // 配置里存逻辑像素：换缩放比后卡片仍落在相同物理位置
+            if (item != null) { item.X = Dpi.UnS(x); item.Y = Dpi.UnS(y); Config.Save(); }
         }
 
         public static void ShowBalloon(string title, string msg)
@@ -1479,11 +1628,12 @@ namespace HoverExplorer
             bool mouseMoved = (mx != _lastTickX || my != _lastTickY);
             _lastTickX = mx; _lastTickY = my;
 
-            // 空格预览：钩子置位 → 这里（UI 线程）做真正的文件检测与预览开关
+            // 空格预览：钩子置位 → 这里（UI 线程）做真正的文件检测与预览开关。
+            // QuickLook 语义按键盘选中项取文件，鼠标坐标完全不参与，故不传 mx/my。
             if (_spacePending)
             {
                 _spacePending = false;
-                if (!menuOpen) SpacePreview(mx, my);
+                if (!menuOpen) SpacePreview();
             }
             // M 标记：预览正显示的文件收进/移出筛选架
             if (_markPending)
@@ -1678,20 +1828,18 @@ namespace HoverExplorer
 
             if (!menuOpen && !inEntryRect && !bothSup)
             {
-                if (NativeMethods.PointOnDesktop(mx, my))
+                hoverPath = DetectHoverFromSources(mx, my, out hoverRect, out hoverIsDir);
+                hoverIsDesktop = hoverPath != null
+                    && (HoverSources.LastSource == "desktop" || NativeMethods.PointOnDesktop(mx, my));
+                // 对话框诊断：指针在 #32770 上却没有任何命中 → 每秒写一条窗口类链
+                if (hoverPath == null && (DateTime.UtcNow - _lastDlgNullAt).TotalMilliseconds >= 1000)
                 {
-                    hoverPath = ResolveHiddenExt(DetectDesktopItem(mx, my, out hoverRect, out hoverIsDir));
-                    hoverIsDesktop = hoverPath != null;
-                }
-                else if (Config.ExplorerEnabled || Config.TcEnabled || Config.PerchEnabled)
-                {
-                    // TC 优先：鼠标在 TC 主窗口上时 Explorer 检测必然落空，先走 TC 免得白跑
-                    if (Config.TcEnabled)
-                        hoverPath = ResolveHiddenExt(TcSupport.DetectHoverItem(mx, my, out hoverRect, out hoverIsDir));
-                    if (hoverPath == null && Config.ExplorerEnabled)
-                        hoverPath = ResolveHiddenExt(ExplorerSupport.DetectHoverItem(mx, my, out hoverRect, out hoverIsDir));
-                    if (hoverPath == null && Config.PerchEnabled)
-                        hoverPath = PerchSupport.DetectHoverItem(mx, my, out hoverRect, out hoverIsDir);
+                    string dlgChain = DialogSupport.DialogChainAt(mx, my);
+                    if (dlgChain != null)
+                    {
+                        _lastDlgNullAt = DateTime.UtcNow;
+                        DebugLog("[dialog] over dialog but no hit chain=" + dlgChain);
+                    }
                 }
             }
 
@@ -1743,25 +1891,23 @@ namespace HoverExplorer
             // 门控只拦各自功能：文件夹被拦不弹面板，预览被拦不弹预览（未拦的一方正常走）
             if (folderSup) hoverFolder = null;
             if (previewSup) hoverFile = null;
-            // 空格预览模式：悬停不再弹文件预览（QuickLook 式，统一走空格开/关）——
-            // 两种触发方式互斥，不和边缘触发/延时打架。文件夹面板照常悬停
-            if (hoverFile != null && Config.SpacePreviewEnabled) hoverFile = null;
-            // 文件预览边缘触发区：条目中段不弹预览窗（留给改名/右键/拖拽），只有停在
-            // 左/右缘触发区才预览。长按预览模式按住左键=主动操作，不受限。
-            // 桌面同样受管，但触发条放宽到图标宽度的 40%——v1.1.5 曾因"够不着"整个豁免桌面，
-            // 结果桌面 0.15s 全格误触；窄图标要的是放宽比例而不是取消分区
-            if (hoverFile != null && Config.PreviewEdgeMode != 0)
+            // 空格预览与悬停预览并存：空格是键盘导航的主动开关，悬停是鼠标触发，
+            // 两者服务不同输入方式，互不屏蔽（SpacePreviewEnabled 仅决定是否拦空格键）。
+            // 桌面图标同样按触发区域判定：空格预览会画出中/大图标的触发带，
+            // 鼠标悬停也必须从同一块区域触发，不能整块图标都算热区。
+            bool iconTile = IsIconTile(hoverRect);
+            // 触发区判定：列表看左右带、图标看四边带；两者共用文件夹/文件设置
+            if (hoverFile != null)
             {
                 bool lpActive = Config.LongPressFor(true) && Config.IsLeftDown();
-                bool inEdge = false;
-                if (!hoverRect.IsEmpty && !lpActive)
-                {
-                    // 触发条 = 条目宽度的百分比：横竖屏缩略图、桌面图标自动适配，无固定 px 的错配
-                    int w = Math.Max(8, (int)(hoverRect.Width * Config.PreviewEdgeRatio / 100.0));
-                    inEdge = ((Config.PreviewEdgeMode & 1) != 0 && mx < hoverRect.Left + w)
-                          || ((Config.PreviewEdgeMode & 2) != 0 && mx >= hoverRect.Right - w);
-                }
-                if (!inEdge) hoverFile = null;
+                if (!lpActive && !InTriggerZone(hoverRect, mx, my, iconTile))
+                    hoverFile = null;
+            }
+            if (hoverFolder != null)
+            {
+                bool lpActive = Config.LongPressFor(false) && Config.IsLeftDown();
+                if (!lpActive && !InTriggerZone(hoverRect, mx, my, iconTile))
+                    hoverFolder = null;
             }
             if (hoverPath != null && Config.HideTooltip) HideTooltips();
             if (hoverPath != _lastHoverPath)
@@ -1782,11 +1928,14 @@ namespace HoverExplorer
                     bool lpActive = Config.LongPressFor(true) && Config.IsLeftDown();
                     bool stable = _extCandidate == hoverFile
                         && (DateTime.UtcNow - _extCandidateStart).TotalMilliseconds >= Config.HoverDelayMs;
-                    if (mouseMoved || lpActive || stable)
+                    // 预览关闭复位后只认"指针移动"（或长按）为再次悬停；稳定计时不再放行，
+                    // 否则残留目标会在关窗后靠 stable 自动重弹。
+                    if (mouseMoved || lpActive || (stable && !_extNeedMove))
                     {
                         _extHoverFile = hoverFile;
                         _extCandidate = null;
-                        PopupForm.ScheduleFilePreview(hoverFile, new Point(mx, my));
+                        _extNeedMove = false;
+                        PopupForm.ScheduleFilePreview(hoverFile, new Point(mx, my), hoverRect);
                     }
                     else
                     {
@@ -1861,10 +2010,11 @@ namespace HoverExplorer
                     foreach (var p in nonPinned) p.ClosePanel();
                     _panels.RemoveAll(p => !p.Pinned);
                     var p2 = new PopupForm(0, OpenSub, DropResolver, ScheduleCloseAfter);
+                    p2.DialogHwnd = HoverSources.LastSource == "dialog" ? DialogSupport.ActiveDialog : IntPtr.Zero;
                     p2.TitleSuffix = lnkFolderTarget ? "lnk" : null;   // 快捷方式打开：标题名称后标出 lnk
                     if (p2.ShowPanel(hoverFolder, mx + Config.PopupOffset, my + Config.PopupOffset))
                     {
-                        ShowHighlight(hoverRect);
+                        ShowHighlight(hoverRect, IsIconTile(hoverRect));
                         _panels.Add(p2);
                         p2.Show();
 
@@ -1893,7 +2043,7 @@ namespace HoverExplorer
         // 检测桌面悬停的条目（目录或文件）；isDir 标识类型，主循环据此分流弹面板或文件预览
         // 资源管理器隐藏已知类型扩展名（.lnk/.url 等），UIA/ListView 拿到的是显示名，
         // 拼出的路径 File.Exists=false → 预览被拒。尝试补全：目录下唯一匹配 基名.* 才采用（避免歧义）
-        private static string ResolveHiddenExt(string full)
+        internal static string ResolveHiddenExt(string full)
         {
             if (full == null) return null;
             if (File.Exists(full) || Directory.Exists(full)) return full;
@@ -1934,8 +2084,70 @@ namespace HoverExplorer
             string full = Path.Combine(_desktopPath, name);
 
             isDir = Directory.Exists(full);
-            rect = reader.GetItemRect(idx);
+            // 跨进程 LVM_GETITEMRECT 在桌面 SysListView32 上返回垃圾矩形（负坐标/负宽），
+            // 触发区判定和高亮都依赖真实条目矩形，所以优先用 UIA 从光标取 ListItem 矩形。
+            rect = ExplorerUia.GetListItemRectAt(mx, my);
+            if (rect.IsEmpty || rect.Width < 8 || rect.Height < 8)
+            {
+                try
+                {
+                    Point p = reader.GetItemScreenPos(idx);
+                    if (p.X >= 0 || p.Y >= 0) rect = new Rectangle(p.X, p.Y, Dpi.S(76), Dpi.S(76));
+                }
+                catch { }
+            }
+            return full;
+        }
 
+        // QuickLook 语义：取桌面当前键盘选中的图标（与鼠标位置无关）。
+        // 名称用 LVM_GETNEXTITEM + LVM_GETITEMTEXT 读（可靠）；矩形改用 UIA 读——
+        // 跨进程 LVM_GETITEMRECT 在桌面 SysListView32 上实测返回垃圾值（负坐标/0 尺寸）。
+        private static string DetectDesktopSelectedItem(out Rectangle rect, out bool isDir)
+        {
+            rect = Rectangle.Empty;
+            isDir = false;
+            var reader = EnsureReader();
+            if (reader == null || _listview == IntPtr.Zero) return null;
+            int idx = reader.GetSelectedIndex();
+            if (idx < 0) return null;
+            string name = reader.GetItemText(idx);
+            if (string.IsNullOrEmpty(name)) return null;
+
+            // 矩形走 UIA：从桌面 ListView 拿当前焦点/选中项的 BoundingRectangle（屏幕坐标）
+            try
+            {
+                Rectangle uiaRect;
+                string uiaName = ExplorerUia.GetFocusedItem(_listview, out uiaRect);
+                if (!uiaRect.IsEmpty) rect = uiaRect;
+            }
+            catch { }
+            // UIA 拿不到时：LVM_GETITEMPOSITION 取图标左上角（跨进程 POINT 可靠），配桌面图标典型尺寸
+            if (rect.IsEmpty)
+            {
+                try
+                {
+                    Point p = reader.GetItemScreenPos(idx);
+                    if (p.X >= 0 || p.Y >= 0)
+                        rect = new Rectangle(p.X, p.Y, Dpi.S(76), Dpi.S(76));
+                }
+                catch { }
+            }
+            // 最后兜底：项图标矩形（桌面环境下可能是垃圾值，仅在前面都失败时用）
+            if (rect.IsEmpty || rect.Width <= 0 || rect.Height <= 0)
+            {
+                try
+                {
+                    Rectangle r = reader.GetItemRect(idx);
+                    if (r.Width > 0 && r.Height > 0) rect = r;
+                }
+                catch { }
+            }
+
+            string full = Path.Combine(_desktopPath, name);
+            if (!File.Exists(full) && !Directory.Exists(full))
+                full = ResolveHiddenExt(full);
+            if (!File.Exists(full) && !Directory.Exists(full)) return null;
+            isDir = Directory.Exists(full);
             return full;
         }
 
@@ -1953,6 +2165,8 @@ namespace HoverExplorer
             if (_panels.Any(p => !p.IsDisposed && p.IsDragging)) return;
             // 拖拽会话（含从 Explorer/桌面拖出）同样不关闭：文件夹之间移动的间隙不能收走弹簧面板
             if (_dragSessionActive) return;
+            // 空格 QuickLook 面板保持显示，不受鼠标离开的 close-delay 影响
+            if (_panels.Any(p => IsSpacePanel(p))) { _closeStart = DateTime.MinValue; return; }
             if (_closeStart == DateTime.MinValue) _closeStart = DateTime.UtcNow;
             else if ((DateTime.UtcNow - _closeStart).TotalSeconds >= Config.CloseDelay)
             {
@@ -2034,6 +2248,7 @@ namespace HoverExplorer
             // 右边缘放不下时改展开到父面板左侧，避免 ClampPos 钳回右侧与父面板重叠闪烁
             try { var _wa = Screen.GetWorkingArea(new Point(x, y)); if (x + sender.Width > _wa.Right) x = sender.Left - sender.Width - Config.SubGap; } catch { }
             var form = new PopupForm(level + 1, OpenSub, DropResolver, ScheduleCloseAfter);
+            form.DialogHwnd = sender.DialogHwnd;   // 子面板沿用对话框上下文
             if (form.ShowPanel(path, x, y))
             {
                 _panels.Add(form);
@@ -2066,13 +2281,21 @@ namespace HoverExplorer
             if (parent != null) parent.ClearActiveDir();
         }
 
+        private static bool IsSpacePanel(PopupForm p)
+        {
+            return p != null && !p.IsDisposed && object.Equals(p.Tag, "space");
+        }
+
         private static void CloseAll()
         {
-            var toClose = _panels.Where(p => !p.Pinned).ToList();
-            var toKeep = _panels.Where(p => p.Pinned && !p.IsDisposed).ToList();   // 已销毁的面板不留作僵尸
-            DebugLog("[cascade] CloseAll 关闭面板 close=" + toClose.Count + " keep(pinned)=" + toKeep.Count
+            // 空格 QuickLook 面板（Tag=="space"）与 pinned 一样豁免自动关闭
+            var toClose = _panels.Where(p => !p.Pinned && !IsSpacePanel(p)).ToList();
+            var toKeep = _panels.Where(p => p.Pinned || IsSpacePanel(p)).Where(p => !p.IsDisposed).ToList();   // 已销毁的面板不留作僵尸
+            DebugLog("[cascade] CloseAll 关闭面板 close=" + toClose.Count + " keep(pinned/space)=" + toKeep.Count
                      + (toKeep.Count > 0 ? " [" + string.Join(";", toKeep.Select(p => "L" + p.Level)) + "]" : ""));
-            HideHighlight();
+            // 只在确实关掉文件夹面板时清高亮；纯文件预览（无面板）时 hoverFolder=null 也会走到
+            // MaybeClose→CloseAll，此时不能清掉文件预览刚点亮的源条目热区指示。
+            if (toClose.Count > 0) HideHighlight();
             if (_subCloseTimer != null) { _subCloseTimer.Stop(); _subCloseTimer.Dispose(); _subCloseTimer = null; }
             foreach (var p in toClose) p.ClosePanel();
             _panels.Clear();
@@ -2296,10 +2519,29 @@ namespace HoverExplorer
             foreach (var p in nonPinned) p.ClosePanel();
             _panels.RemoveAll(p => !p.Pinned && !p.IsDragging);
             var p2 = new PopupForm(0, OpenSub, DropResolver, ScheduleCloseAfter);
-            // 行的屏幕右缘已在列表内缩 ListPadLr(6px) 之内，这里再让 6px 才真正留出视觉间隙：
-            // 否则子列表左缘与历史/收藏列表右缘贴在一起（x 轴看起来重叠）
             if (p2.ShowPanel(path, rowRightTop.X + 12, rowRightTop.Y - 4))
             {
+                // 优先显示在收藏·历史列表右侧，并与列表保持一个明显的间隙（不贴边/不重叠）；
+                // 只有右侧空间确实不够时才翻到列表左侧，两侧都放不下再退到列表下方。
+                if (_entryListForm != null && !_entryListForm.IsDisposed && _entryListForm.Visible)
+                {
+                    var er = _entryListForm.Bounds;
+                    var wa = Screen.FromRectangle(er).WorkingArea;
+                    int gap = Dpi.S(12);
+                    int rightX = er.Right + gap;
+                    if (rightX + p2.Width <= wa.Right)
+                    {
+                        // 右侧有空间：贴着列表右缘 + 间隙，避免与列表重叠
+                        p2.Location = new Point(rightX, p2.Top);
+                    }
+                    else
+                    {
+                        int leftX = er.Left - p2.Width - gap;
+                        if (leftX >= wa.Left) p2.Location = new Point(leftX, p2.Top);
+                        else if (p2.Bottom + p2.Height <= wa.Bottom)
+                            p2.Location = new Point(Math.Max(wa.Left + 4, Math.Min(p2.Left, wa.Right - p2.Width - 4)), er.Bottom + 8);
+                    }
+                }
                 _panels.Add(p2);
                 p2.Show();
                 DebugLog("[entry] sub-list opened " + path);
@@ -2410,14 +2652,105 @@ namespace HoverExplorer
 
         private static HighlightOverlay _highlight;
 
-        private static void ShowHighlight(Rectangle r)
+        // 中/大图标 tile 的"图标区(顶部)"高度：原型 icons.html 的 t 模式（图标占 tile 主体，
+        // 约 0.62；下方是文件名标签）。触发判定与高亮指示共用，保证热区一致。
+        internal static int IconZoneHeight(Rectangle r)
+        {
+            return (int)Math.Min(r.Height, Math.Max(Dpi.S(14), Math.Min(r.Width, r.Height) * 0.62f));
+        }
+
+        // 图标视图左右缘热区宽度：配置优先（px/% 由 IconTriggerUnit 决定）；0=自动（图标区短边的 1/4）
+        internal static int IconBandWidth(Rectangle r)
+        {
+            int auto = (int)Math.Max(Dpi.S(10), Math.Min(r.Width, r.Height) * 0.25f);
+            int w = Config.IconTriggerWidth > 0
+                ? Config.EdgeBandPx(r.Width, Config.IconTriggerWidth, Config.IconTriggerUnit, 2)
+                : auto;
+            return Math.Max(Dpi.S(8), Math.Min(w, Math.Max(Dpi.S(8), r.Width / 2)));
+        }
+
+        // 图标视图"上（图标区）"热区：默认是与图标区等高的正方形并水平居中，
+        // 不再横跨整个格子（大图标下格子含文件名标签，横跨会显示到图标之外）
+        internal static Rectangle IconZoneRect(Rectangle r)
+        {
+            int topH = IconZoneHeight(r);
+            int zw = Config.IconTriggerWidth > 0
+                ? Math.Min(r.Width, Config.EdgeBandPx(r.Width, Config.IconTriggerWidth, Config.IconTriggerUnit, 2))
+                : Math.Min(r.Width, topH);
+            zw = Math.Max(Dpi.S(8), zw);
+            return new Rectangle(r.Left + (r.Width - zw) / 2, r.Top, zw, topH);
+        }
+
+        // 图标视图左/右缘热区：宽度按 IconBandWidth，纵向只占图标区（不含下方文件名标签）
+        internal static Rectangle IconSideRect(Rectangle r, bool right)
+        {
+            int topH = IconZoneHeight(r);
+            int ib = IconBandWidth(r);
+            if (ib > r.Width) ib = r.Width;
+            return new Rectangle(right ? r.Right - ib : r.Left, r.Top, ib, topH);
+        }
+
+        // 中/大图标 tile（含文件名标签、明显更高）判定；详细信息行只有 20-30px 高，
+        // 即便名称很短也不能按图标 tile 处理，否则会误用图标视图的触发设置。
+        internal static bool IsIconTile(Rectangle r)
+        {
+            return !r.IsEmpty && r.Height >= Dpi.S(40) && r.Width < r.Height * 3;
+        }
+
+        // 触发区=两条边界线之间的区域。数值语义是"边界位置"（从条目左/上侧量起），
+        // 不是"非触发区宽度"：列表 右=60px 表示触发区终点在距左边 60px 处（宽 60px），
+        // 名称再短也至少整条目可触发；图标同理，左/右量横轴、上/下量纵轴。
+        // 0 = 该侧取条目边缘（左/上=来自边缘 0，右/下=贴条目右/下边）。
+        // 命中与高亮共用本函数，保证“画到哪里就从哪里触发”。
+        internal static Rectangle InnerRect(Rectangle r, bool iconTile)
+        {
+            int l, t, rr, b;
+            if (iconTile)
+            {
+                l = Config.TrigIconLeft; t = Config.TrigIconTop;
+                rr = Config.TrigIconRight; b = Config.TrigIconBottom;
+            }
+            else
+            {
+                l = Config.TrigListLeft; rr = Config.TrigListRight; t = 0; b = 0;
+            }
+            int unit = iconTile ? Config.TrigUnitIcon : Config.TrigUnitList;
+            int leftB = r.Left + Config.TriggerPx(r.Width, l, unit);
+            int rightB = rr > 0 ? r.Left + Config.TriggerPx(r.Width, rr, unit) : r.Right;
+            int topB = r.Top + Config.TriggerPx(r.Height, t, unit);
+            int bottomB = b > 0 ? r.Top + Config.TriggerPx(r.Height, b, unit) : r.Bottom;
+            if (rightB > r.Right) rightB = r.Right;
+            if (bottomB > r.Bottom) bottomB = r.Bottom;
+            // 手工改配置导致边界交叉时退回整条目，避免整块区域都无法触发
+            if (rightB <= leftB || bottomB <= topB) return r;
+            return new Rectangle(leftB, topB, rightB - leftB, bottomB - topB);
+        }
+
+        internal static bool TriggersOff(bool iconTile)
+        {
+            return iconTile
+                ? Config.TrigIconLeft <= 0 && Config.TrigIconTop <= 0 && Config.TrigIconRight <= 0 && Config.TrigIconBottom <= 0
+                : Config.TrigListLeft <= 0 && Config.TrigListRight <= 0;
+        }
+
+        // 指针是否落在内缩触发区内；全部为 0 时整条目触发
+        private static bool InTriggerZone(Rectangle r, int px, int py, bool iconTile)
+        {
+            if (r.IsEmpty) return true;
+            if (TriggersOff(iconTile)) return true;
+            Rectangle z = InnerRect(r, iconTile);
+            return !z.IsEmpty && px >= z.Left && px < z.Right && py >= z.Top && py < z.Bottom;
+        }
+
+        // 高亮与命中同源：只画启用的触发带
+        internal static void ShowHighlight(Rectangle r, bool iconTile)
         {
             if (r.IsEmpty) return;
             HideHighlight();
-            try { _highlight = new HighlightOverlay(r); _highlight.Show(); } catch { }
+            try { _highlight = new HighlightOverlay(r, iconTile); _highlight.Show(); } catch { }
         }
 
-        private static void HideHighlight()
+        internal static void HideHighlight()
         {
             if (_highlight != null) { try { _highlight.Close(); _highlight.Dispose(); } catch { } _highlight = null; }
         }

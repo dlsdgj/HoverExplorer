@@ -9,10 +9,15 @@ namespace HoverExplorer
         public const int LVM_FIRST = 0x1000;
         public const int LVM_GETITEMCOUNT = LVM_FIRST + 0;
         public const int LVM_GETITEMRECT = LVM_FIRST + 10;
+        public const int LVM_GETNEXTITEM = LVM_FIRST + 12;
         public const int LVM_GETITEMPOSITION = LVM_FIRST + 16;
         public const int LVM_SUBITEMHITTEST = LVM_FIRST + 57;
         public const int LVM_GETITEMTEXTW = LVM_FIRST + 115;
         public const uint LVIF_TEXT = 0x0001;
+        // LVM_GETNEXTITEM 的旗标：按焦点/选中状态取项（空格 QuickLook 语义用）
+        public const int LVNI_FOCUSED = 0x0001;
+        public const int LVNI_SELECTED = 0x0002;
+        public const int LVNI_ALL = 0x0000;
         public const uint LVHT_ONITEMICON = 0x0002;
         public const uint LVHT_ONITEMLABEL = 0x0004;
 
@@ -206,11 +211,41 @@ namespace HoverExplorer
         [DllImport("user32.dll")]
         public static extern int SendMessage(IntPtr hWnd, int Msg, int wParam, int lParam);
 
+        // PROCESS_MEMORY_COUNTERS_EX2：Win8.1+ 直接给出 PrivateWorkingSetSize，
+        // 与任务管理器"内存"列（active private working set）同一口径
+        [StructLayout(LayoutKind.Sequential)]
+        public struct PROCESS_MEMORY_COUNTERS_EX2
+        {
+            public uint cb;
+            public uint PageFaultCount;
+            public UIntPtr PeakWorkingSetSize;
+            public UIntPtr WorkingSetSize;
+            public UIntPtr QuotaPeakPagedPoolUsage;
+            public UIntPtr QuotaPagedPoolUsage;
+            public UIntPtr QuotaPeakNonPagedPoolUsage;
+            public UIntPtr QuotaNonPagedPoolUsage;
+            public UIntPtr PagefileUsage;
+            public UIntPtr PeakPagefileUsage;
+            public UIntPtr PrivateUsage;
+            public UIntPtr PrivateWorkingSetSize;
+            public UIntPtr SharedCommitUsage;
+        }
+
+        [DllImport("psapi.dll", SetLastError = true)]
+        public static extern bool GetProcessMemoryInfo(IntPtr hProcess, ref PROCESS_MEMORY_COUNTERS_EX2 counters, uint cb);
+
         [DllImport("user32.dll")]
         public static extern bool ShowScrollBar(IntPtr hWnd, int wBar, bool bShow);
 
         [DllImport("user32.dll", EntryPoint = "SendMessageTimeoutW", SetLastError = true)]
         public static extern IntPtr SendMessageTimeoutW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);
+
+        [DllImport("user32.dll")]
+        public static extern IntPtr GetDlgItem(IntPtr hDlg, int nIDDlgItem);
+
+        // BM_CLICK：点按钮不涉及跨进程指针，可安全用于其它进程的对话框（IDOK = 1）
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        public static extern IntPtr SendMessageW(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
         [DllImport("kernel32.dll", SetLastError = true)]
         public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
@@ -462,5 +497,119 @@ namespace HoverExplorer
         public static extern IntPtr GetDC(IntPtr hWnd);
         [DllImport("user32.dll")]
         public static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
+    }
+
+    // ===== DPI 缩放（方案 A：PerMonitorV2 + 布局按比例缩放）=====
+    // 设计基准 96 DPI（=100%）。所有布局用的固定像素都写成逻辑像素并过 Dpi.S()，
+    // 字体用 pt（系统按 DPI 自动放大），两者比例一致才不会出现"字变大、行高不变"的裁切。
+    internal static class Dpi
+    {
+        public const uint WM_DPICHANGED = 0x02E0;
+
+        [DllImport("user32.dll")]
+        private static extern uint GetDpiForSystem();
+        [DllImport("user32.dll")]
+        private static extern uint GetDpiForWindow(IntPtr hwnd);
+        [DllImport("user32.dll")]
+        private static extern IntPtr GetDC(IntPtr hwnd);
+        [DllImport("user32.dll")]
+        private static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
+        [DllImport("gdi32.dll")]
+        private static extern int GetDeviceCaps(IntPtr hdc, int index);
+
+        private const int LOGPIXELSX = 88;
+        private static float _scale;
+
+        // WM_DPICHANGED 的 wParam 低 16 位是新 DPI（每显示器不同）
+        public static void Set(uint dpi)
+        {
+            if (dpi >= 48 && dpi <= 960) _scale = dpi / 96f;
+        }
+
+        public static void SetFromWindow(IntPtr hwnd)
+        {
+            try
+            {
+                uint d = GetDpiForWindow(hwnd);
+                if (d > 0) { Set(d); return; }
+            }
+            catch (EntryPointNotFoundException) { }
+            Reset();
+        }
+
+        // 显示器切换/缩放变更后清缓存，下次访问重新探测
+        public static void Reset() { _scale = 0f; }
+
+        public static float Scale
+        {
+            get
+            {
+                if (_scale > 0f) return _scale;
+                _scale = QueryScale();
+                return _scale;
+            }
+        }
+
+        private static float QueryScale()
+        {
+            // 便于在 100% 屏上验证高 DPI 布局：设置环境变量 HOVEREXPLORER_SCALE=2 即可
+            try
+            {
+                string e = Environment.GetEnvironmentVariable("HOVEREXPLORER_SCALE");
+                float v;
+                if (!string.IsNullOrEmpty(e)
+                    && float.TryParse(e, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out v)
+                    && v >= 0.5f && v <= 4f)
+                    return v;
+            }
+            catch { }
+            try
+            {
+                uint d = GetDpiForSystem();
+                if (d > 0) return d / 96f;
+            }
+            catch (EntryPointNotFoundException) { }
+            catch (Exception) { }
+            try
+            {
+                IntPtr dc = GetDC(IntPtr.Zero);
+                if (dc != IntPtr.Zero)
+                {
+                    int d = GetDeviceCaps(dc, LOGPIXELSX);
+                    ReleaseDC(IntPtr.Zero, dc);
+                    if (d > 0) return d / 96f;
+                }
+            }
+            catch { }
+            return 1f;
+        }
+
+        // 逻辑像素 → 物理像素
+        public static int S(int v)
+        {
+            return (int)Math.Round(v * Scale, MidpointRounding.AwayFromZero);
+        }
+
+        public static int S(double v)
+        {
+            return (int)Math.Round(v * Scale, MidpointRounding.AwayFromZero);
+        }
+
+        public static float F(float v) { return v * Scale; }
+
+        public static Size Sz(int w, int h) { return new Size(S(w), S(h)); }
+
+        // 系统物理像素 → 逻辑像素（配置里保存的尺寸统一按逻辑像素存）
+        public static int UnS(int v)
+        {
+            float s = Scale;
+            return s > 0f ? (int)Math.Round(v / s) : v;
+        }
+
+        public static bool IsDpiChanged(ref System.Windows.Forms.Message m)
+        {
+            return m.Msg == (int)WM_DPICHANGED;
+        }
     }
 }

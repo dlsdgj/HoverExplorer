@@ -136,6 +136,12 @@ namespace HoverExplorer
         // 返回 true 表示消息已处理。border 传 null 用全局描边色（卡片传配色边框色）
         public static bool WndNcBorder(IntPtr h, ref Message m, Func<Color> border)
         {
+            return WndNcBorder(h, ref m, border, null);
+        }
+
+        // topBorder 用于顶部/两侧上段的描边色：标题栏扩到边框时传标题色，底边仍用 border
+        public static bool WndNcBorder(IntPtr h, ref Message m, Func<Color> border, Func<Color> topBorder)
+        {
             if (Config.WindowCorners != 1 || h == IntPtr.Zero) return false;
             if (m.Msg == 0x83 && m.WParam != IntPtr.Zero)   // WM_NCCALCSIZE(wParam=TRUE)：客户区内缩
             {
@@ -149,7 +155,7 @@ namespace HoverExplorer
             }
             if (m.Msg == 0x85)   // WM_NCPAINT：非客户环整圈填描边色（角部由 DWM 圆角裁掉）
             {
-                DrawNcBorder(h, border);
+                DrawNcBorder(h, border, topBorder);
                 m.Result = IntPtr.Zero;
                 return true;
             }
@@ -168,12 +174,17 @@ namespace HoverExplorer
             return GetClientRect(h, out r) ? new Size(r.R - r.L, r.B - r.T) : Size.Empty;
         }
 
-        private static void DrawNcBorder(IntPtr h, Func<Color> border)
+        private static void DrawNcBorder(IntPtr h, Func<Color> border, Func<Color> topBorder)
         {
             var col = Config.Border;
             if (border != null)
             {
                 try { var c = border(); if (c.A > 0) col = c; } catch { }
+            }
+            var topCol = col;
+            if (topBorder != null)
+            {
+                try { var c = topBorder(); if (c.A > 0) topCol = c; } catch { }
             }
             IntPtr dc = GetWindowDC(h);
             if (dc == IntPtr.Zero) return;
@@ -183,12 +194,15 @@ namespace HoverExplorer
                 GetWindowRect(h, out r);
                 int w = r.R - r.L, hh = r.B - r.T, p = FramePad;
                 using (var g = Graphics.FromHdc(dc))
-                using (var b = new SolidBrush(col))
                 {
-                    g.FillRectangle(b, 0, 0, w, p);
-                    g.FillRectangle(b, 0, hh - p, w, p);
-                    g.FillRectangle(b, 0, p, p, hh - p * 2);
-                    g.FillRectangle(b, w - p, p, p, hh - p * 2);
+                    using (var b = new SolidBrush(topCol))
+                        g.FillRectangle(b, 0, 0, w, p);
+                    using (var b = new SolidBrush(col))
+                    {
+                        g.FillRectangle(b, 0, hh - p, w, p);
+                        g.FillRectangle(b, 0, p, p, Math.Max(0, hh - p * 2));
+                        g.FillRectangle(b, w - p, p, p, Math.Max(0, hh - p * 2));
+                    }
                 }
             }
             finally { ReleaseDC(h, dc); }

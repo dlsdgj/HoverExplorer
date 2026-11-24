@@ -133,12 +133,53 @@ namespace HoverExplorer
             return (int)(long)NativeMethods.SendMsg(_hwnd, (uint)NativeMethods.LVM_GETITEMCOUNT, IntPtr.Zero, IntPtr.Zero);
         }
 
+        // 按状态取项：flags 用 LVNI_FOCUSED / LVNI_SELECTED；start=-1 表示从第一项开始。
+        // 返回 -1 表示没有符合条件的项。空格 QuickLook 预览键盘选中项时用。
+        public int GetNextItem(int start, int flags)
+        {
+            return (int)(long)NativeMethods.SendMsg(_hwnd, (uint)NativeMethods.LVM_GETNEXTITEM,
+                (IntPtr)start, (IntPtr)flags);
+        }
+
+        // 取当前键盘焦点项，失败回退到选中项（桌面图标单选时两者通常一致）
+        public int GetSelectedIndex()
+        {
+            int idx = GetNextItem(-1, NativeMethods.LVNI_FOCUSED | NativeMethods.LVNI_SELECTED);
+            if (idx < 0) idx = GetNextItem(-1, NativeMethods.LVNI_FOCUSED);
+            if (idx < 0) idx = GetNextItem(-1, NativeMethods.LVNI_SELECTED);
+            return idx;
+        }
+
         public Rectangle GetItemRect(int itemIndex)
         {
             return GetItemRect(itemIndex, 1);   // 默认 LVIR_ICON：图标图形矩形（高亮描边用）
         }
 
         // portion=LVM_GETITEMRECT 的取值：0=LVIR_BOUNDS(整个条目含图标+名称) 1=LVIR_ICON(仅图标图形)
+        // 取图标左上角（client 坐标）并转屏幕坐标。跨进程 POINT 比 RECT+LVIR 可靠：
+        // 桌面 SysListView32 的 LVM_GETITEMRECT 实测返回垃圾值，而 GETITEMPOSITION 正常。
+        public Point GetItemScreenPos(int itemIndex)
+        {
+            int size = Marshal.SizeOf(typeof(NativeMethods.POINT));
+            IntPtr remote = Alloc((uint)size);
+            if (remote == IntPtr.Zero) return Point.Empty;
+            try
+            {
+                var pt = new NativeMethods.POINT { X = 0, Y = 0 };
+                Write(remote, StructureToBytes(pt), (uint)size);
+                NativeMethods.SendMsg(_hwnd, (uint)NativeMethods.LVM_GETITEMPOSITION, (IntPtr)itemIndex, remote);
+                var outBuf = new byte[size];
+                Read(remote, outBuf, (uint)size);
+                var pos = BytesToStructure<NativeMethods.POINT>(outBuf);
+                NativeMethods.ClientToScreen(_hwnd, ref pos);
+                return new Point(pos.X, pos.Y);
+            }
+            finally
+            {
+                NativeMethods.VirtualFreeEx(_proc, remote, 0, NativeMethods.MEM_RELEASE);
+            }
+        }
+
         public Rectangle GetItemRect(int itemIndex, int portion)
         {
             int size = Marshal.SizeOf(typeof(NativeMethods.RECT));

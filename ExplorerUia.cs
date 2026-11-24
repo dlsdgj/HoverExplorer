@@ -456,6 +456,8 @@ namespace HoverExplorer
                             var it = items[i];
                             try
                             {
+                                // 多标签页里后台标签的条目仍在 UIA 树中，但不可见；绝不能参与命中
+                                if (it.Current.IsOffscreen) continue;
                                 var r = it.Current.BoundingRectangle;
                                 double top = r.Y;
                                 if (r.Height < 32) top = r.Y - 48;
@@ -595,7 +597,14 @@ namespace HoverExplorer
                 return null;
             }
 
-            rect = new Rectangle((int)nameLeft, (int)nameTop, (int)(nameRight - nameLeft), (int)nameHeight);
+            // 返回给"触发区/高亮"的矩形：
+            //  - 图标视图：用条目的真实矩形（含图标与文件名标签），不能用正方形外扩；
+            //  - 详细列表/宽行：只用“图标+文件名”这一段的宽度（名称长度），不把整行都算作触发背景。
+            bool iconLike = full.Width <= full.Height * 3;
+            bool nameOk = nameRight - nameLeft >= 24 && nameRight - nameLeft <= full.Width + 1;
+            rect = (iconLike || !nameOk)
+                ? new Rectangle((int)full.X, (int)full.Y, (int)full.Width, (int)full.Height)
+                : new Rectangle((int)nameLeft, (int)nameTop, (int)(nameRight - nameLeft), (int)nameHeight);
             LogDetect("rect", string.Format("details={0} full=({1:F0},{2:F0})-({3:F0},{4:F0}) final=({5},{6})-({7},{8})",
                 detailsView, full.X, full.Y, full.Right, full.Bottom, rect.Left, rect.Top, rect.Right, rect.Bottom));
 
@@ -634,6 +643,126 @@ namespace HoverExplorer
             }
             catch { }
             return null;
+        }
+
+        // 桌面悬停项的真实矩形。跨进程 LVM_GETITEMRECT 在桌面 ListView 上返回垃圾值，
+        // 这里用 UIA 从光标位置向上找 ListItem，取其 BoundingRectangle（屏幕坐标）。
+        public static Rectangle GetListItemRectAt(int mx, int my)
+        {
+            try
+            {
+                AutomationElement el = AutomationElement.FromPoint(new System.Windows.Point(mx, my));
+                var walker = TreeWalker.RawViewWalker;
+                var c = el;
+                int depth = 0;
+                while (c != null && depth < 20)
+                {
+                    try
+                    {
+                        var ct = c.Current.ControlType;
+                        if (ct == ControlType.ListItem || ct == ControlType.DataItem)
+                        {
+                            Rect r = c.Current.BoundingRectangle;
+                            if (r.Width > 0 && r.Height > 0)
+                                return new Rectangle((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height);
+                        }
+                    }
+                    catch { }
+                    c = walker.GetParent(c);
+                    depth++;
+                }
+            }
+            catch { }
+            return Rectangle.Empty;
+        }
+
+        // 当前活动标签页的目录。多标签页共用一个 HWND，不能把 ShellWindows 里同 HWND
+        // 的所有标签路径都当候选；这里只读可见的地址栏/面包屑，即当前标签。
+        public static string GetActiveFolderPath(IntPtr hwnd)
+        {
+            string p = GetBreadcrumbPath(hwnd);
+            if (!string.IsNullOrEmpty(p) && Directory.Exists(p)) return p;
+            try
+            {
+                var root = AutomationElement.FromHandle(hwnd);
+                if (root == null) return null;
+                var edits = root.FindAll(TreeScope.Descendants,
+                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit));
+                for (int i = 0; i < edits.Count; i++)
+                {
+                    var el = edits[i];
+                    try { if (el.Current.IsOffscreen) continue; } catch { }
+                    object pat;
+                    if (!el.TryGetCurrentPattern(ValuePattern.Pattern, out pat)) continue;
+                    string v = null;
+                    try { v = ((ValuePattern)pat).Current.Value; } catch { }
+                    if (string.IsNullOrEmpty(v)) continue;
+                    v = v.Trim();
+                    if (Directory.Exists(v)) return v;
+                    int colon = v.LastIndexOf(":", StringComparison.Ordinal);
+                    if (colon >= 1 && colon + 1 < v.Length)
+                    {
+                        string tail = v.Substring(colon + 1).Trim();
+                        if (Directory.Exists(tail)) return tail;
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
+        // 取资源管理器当前键盘高亮的条目（QuickLook 语义：与鼠标位置无关）。
+        // 优先 HasKeyboardFocus 的 ListItem/DataItem，其次 SelectionItemPattern.IsSelected 的项。
+        // 返回显示名（供拼完整路径）与屏幕矩形（供预览窗贴靠）；取不到返回 null。
+        public static string GetFocusedItem(IntPtr explorerHwnd, out System.Drawing.Rectangle rect)
+        {
+            rect = System.Drawing.Rectangle.Empty;
+            try
+            {
+                var root = AutomationElement.FromHandle(explorerHwnd);
+                if (root == null) return null;
+                var cond = new OrCondition(
+                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ListItem),
+                    new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.DataItem));
+                var items = root.FindAll(TreeScope.Descendants, cond);
+                if (items.Count == 0)
+                {
+                    var container = FindItemsViewWalk(root);
+                    if (container != null) items = container.FindAll(TreeScope.Descendants, cond);
+                }
+                AutomationElement focused = null;
+                AutomationElement selected = null;
+                for (int i = 0; i < items.Count; i++)
+                {
+                    var it = items[i];
+                    try
+                    {
+                        if (it.Current.IsOffscreen) continue;   // 后台标签页的选中项不算
+                        bool hk = it.Current.HasKeyboardFocus;
+                        if (hk) { focused = it; break; }
+                        if (selected == null)
+                        {
+                            object pat;
+                            if (it.TryGetCurrentPattern(SelectionItemPattern.Pattern, out pat) && pat != null)
+                            {
+                                var sip = pat as SelectionItemPattern;
+                                if (sip != null && sip.Current.IsSelected) selected = it;
+                            }
+                        }
+                    }
+                    catch { }
+                }
+                var target = focused ?? selected;
+                if (target == null) return null;
+                string name = SafeName(target);
+                Rect r;
+                try { r = target.Current.BoundingRectangle; }
+                catch { return null; }
+                if (r.Width > 0 && r.Height > 0)
+                    rect = new System.Drawing.Rectangle((int)r.X, (int)r.Y, (int)r.Width, (int)r.Height);
+                return name;
+            }
+            catch { return null; }
         }
     }
 }

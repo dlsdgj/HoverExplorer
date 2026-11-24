@@ -85,6 +85,7 @@ namespace HoverExplorer.Wpf
             public string Mode;
             public DependencyPropertyDescriptor Descriptor;
             public EventHandler Handler;
+            public Action Unhook;   // 路由事件解绑：切页重建控件时必须移除，否则旧下拉框会把 0 写回 Config
         }
 
         private sealed class Display
@@ -105,6 +106,8 @@ namespace HoverExplorer.Wpf
         private static bool _loading;
         private static bool _skipPageHost;
         private static FrameworkElement _root;
+        // 「悬停预览」页的分段状态：false=文件夹段, true=文件段（UI 状态，不写 config.json）
+        private static bool _hoverSegFile;
         // 历史·收藏页的触发区色块：跟随 Config.EntryRectColor 显示桌面色块的实际颜色
         private static Border _areaSwatch;
 
@@ -132,18 +135,27 @@ namespace HoverExplorer.Wpf
 
         // ===== 页面装载 / 刷新 =====
 
-        internal static void Attach(FrameworkElement root)
+        // 切页/关闭前必须先解绑：ContentTemplate 一换就会卸载旧可视化树，
+        // 若等换完再解绑，旧控件在卸载途中触发的 SelectionChanged 会把旧值写回 Config。
+        internal static void Detach()
         {
             foreach (Entry old in _entries)
             {
+                try { if (old.Unhook != null) old.Unhook(); } catch { }
                 if (old.Descriptor == null || old.Handler == null) continue;
                 try { old.Descriptor.RemoveValueChanged(old.D, old.Handler); } catch { }
             }
             _entries.Clear();
             _displays.Clear();
             _showIfs.Clear();
-            _root = root;
+            _root = null;
             _areaSwatch = null;
+        }
+
+        internal static void Attach(FrameworkElement root)
+        {
+            Detach();
+            _root = root;
             if (root == null) return;
             root.ApplyTemplate();
             root.UpdateLayout();
@@ -212,14 +224,37 @@ namespace HoverExplorer.Wpf
                 case "VideoOn": return Config.PreviewVideo;
                 case "InfoBarOn": return Config.PreviewInfoBar;
                 case "EdgeOn": return Config.PreviewEdgeMode != 0;
+                case "FolderEdgeOn": return Config.FolderEdgeMode != 0;
+                case "RowSwapOn": return Config.RowSwapSides;
                 case "WaveformOn": return Config.WaveformEnabled;
                 case "AudioPreviewOn": return Config.PreviewAudio;
                 // 频谱是波形图关闭时的替代显示（见 PopupForm.RefreshAudioViz），故仅在波形图关时可配
                 case "SpectrumVisible": return Config.PreviewAudio && !Config.WaveformEnabled;
+                // 音频可视化三段：无 / 波形 / 频谱（互斥）
+                case "VizNone": return !Config.WaveformEnabled && !Config.SpectrumEnabled;
+                case "VizWave": return Config.WaveformEnabled;
+                case "VizSpec": return !Config.WaveformEnabled && Config.SpectrumEnabled;
+                case "VizNotNone": return Config.WaveformEnabled || Config.SpectrumEnabled;
+                case "VizNotWave": return !Config.WaveformEnabled;
+                case "VizNotSpec": return !(!Config.WaveformEnabled && Config.SpectrumEnabled);
+                case "SegFolder": return !_hoverSegFile;
+                case "SegFile": return _hoverSegFile;
                 case "HotkeyOn": return Config.HotkeyEnabled;
                 case "CardHotkeyOn": return Config.CardHotkeyEnabled;
                 case "EntryHotkeyOn": return Config.EntryHotkeyEnabled;
-                default: return true;
+                default:
+                    // 动态单位条件：Px:<字段名> / Pct:<字段名>，字段为 Config 里的 *EdgeUnit 之类 int
+                    if (cond.StartsWith("Px:") || cond.StartsWith("Pct:"))
+                    {
+                        string fn = cond.Substring(3);
+                        FieldInfo uf = typeof(Config).GetField(fn, BindingFlags.Public | BindingFlags.Static);
+                        if (uf != null)
+                        {
+                            int uv = uf.GetValue(null) is int ? (int)uf.GetValue(null) : 0;
+                            return cond.StartsWith("Px:") ? uv == 1 : uv == 0;
+                        }
+                    }
+                    return true;
             }
         }
 
@@ -418,6 +453,12 @@ namespace HoverExplorer.Wpf
             if (cr != null) { cr.Text = ToStr(v); return; }
         }
 
+        // 只有"当前页面仍存活"的绑定才允许写回；切页后残留事件即使漏解绑也不会改配置
+        private static bool IsActive(Entry e)
+        {
+            return _entries.Contains(e);
+        }
+
         private static void Hook(Entry entry)
         {
             DependencyObject d = entry.D;
@@ -428,36 +469,45 @@ namespace HoverExplorer.Wpf
             ToggleButton t = d as ToggleButton;
             if (t != null)
             {
-                t.Click += delegate { if (!_loading) Commit(key, t.IsChecked == true); };
+                RoutedEventHandler h = delegate(object s, RoutedEventArgs e)
+                { if (IsActive(entry) && !_loading) Commit(key, t.IsChecked == true); };
+                t.Click += h;
+                entry.Unhook = delegate { t.Click -= h; };
                 return;
             }
             ComboBox cb = d as ComboBox;
             if (cb != null)
             {
-                cb.SelectionChanged += delegate
+                SelectionChangedEventHandler h = delegate(object s, SelectionChangedEventArgs e)
                 {
-                    if (_loading) return;
+                    // 卸载/重建期间的选中项变化不是用户操作，绝不能写回 Config
+                    if (!IsActive(entry) || _loading || !cb.IsLoaded || cb.SelectedIndex < 0) return;
                     object v = mode == "Fonts" ? (object)(cb.SelectedItem as string) : (object)cb.SelectedIndex;
                     Commit(key, v);
                 };
+                cb.SelectionChanged += h;
                 // 收起状态下滚轮应滚动页面，而不是切换选中项（避免误改配色方案等）
-                cb.PreviewMouseWheel += delegate(object s, MouseWheelEventArgs e)
+                MouseWheelEventHandler wh = delegate(object s, MouseWheelEventArgs e)
                 {
                     if (cb.IsDropDownOpen) return;
                     e.Handled = true;
                     ScrollViewer sv = FindVisualAncestor<ScrollViewer>(cb);
                     if (sv != null) sv.ScrollToVerticalOffset(sv.VerticalOffset + (e.Delta > 0 ? -32 : 32));
                 };
+                cb.PreviewMouseWheel += wh;
+                entry.Unhook = delegate { cb.SelectionChanged -= h; cb.PreviewMouseWheel -= wh; };
                 return;
             }
             TextBox tb = d as TextBox;
             if (tb != null)
             {
-                tb.LostFocus += delegate { if (!_loading) Commit(key, tb.Text); };
-                tb.KeyDown += delegate(object s, KeyEventArgs ke)
-                {
-                    if (!_loading && ke.Key == Key.Enter) Commit(key, tb.Text);
-                };
+                RoutedEventHandler lf = delegate(object s, RoutedEventArgs e)
+                { if (IsActive(entry) && !_loading) Commit(key, tb.Text); };
+                KeyEventHandler kd = delegate(object s, KeyEventArgs ke)
+                { if (IsActive(entry) && !_loading && ke.Key == Key.Enter) Commit(key, tb.Text); };
+                tb.LostFocus += lf;
+                tb.KeyDown += kd;
+                entry.Unhook = delegate { tb.LostFocus -= lf; tb.KeyDown -= kd; };
                 return;
             }
             Stepper st = d as Stepper;
@@ -473,6 +523,8 @@ namespace HoverExplorer.Wpf
             ColorRow cr = d as ColorRow;
             if (cr != null)
             {
+                // 注入屏幕取色：取到的 rgba 写回本行 Text，走既有 Text→Commit 链保存
+                cr.PickColor = delegate(string hex) { cr.Text = hex; };
                 DependencyPropertyDescriptor dp = DependencyPropertyDescriptor.FromProperty(ColorRow.TextProperty, typeof(ColorRow));
                 EventHandler h = delegate { if (!_loading) Commit(key, cr.Text); };
                 dp.AddValueChanged(cr, h);
@@ -511,15 +563,33 @@ namespace HoverExplorer.Wpf
                 string[] keys = { "sort_name", "sort_size", "sort_date" };
                 foreach (string k in keys) { cb.Items.Add(I18n.T(k) + " ↑"); cb.Items.Add(I18n.T(k) + " ↓"); }
             }
+            else if (mode == "Units")
+            {
+                // 索引即单位：0=百分比(按条目宽), 1=像素(px)；绑定真实 Config 单位字段
+                cb.Items.Clear();
+                cb.Items.Add(I18n.T("unit_percent"));
+                cb.Items.Add(I18n.T("unit_px"));
+            }
         }
 
         // ===== 虚拟键读 =====
 
+        // 供 Stepper 的单位后缀使用（0=% 1=px）
+        internal static int UnitOf(string key)
+        {
+            try { return ToInt(Read(key)); } catch { return 1; }
+        }
+
         private static object Read(string key)
         {
+            // 多键（"A,B"）= 共用设置：显示第一项，写入时同步到全部
+            int shared = key.IndexOf(',');
+            if (shared > 0) key = key.Substring(0, shared);
             switch (key)
             {
                 case "VersionText": return "v" + Program.Version;
+                case "HoverSegFolder": return !_hoverSegFile;
+                case "HoverSegFile": return _hoverSegFile;
                 case "Language": return Config.Language;
                 case "Theme": return Config.Theme;
                 case "ExplorerMode": return ModeFromConfig(Config.ExplorerEnabled, Config.FolderGateEnabled, Config.FolderGateMods);
@@ -579,8 +649,24 @@ namespace HoverExplorer.Wpf
 
         internal static void Write(string key, object v)
         {
+            // 多键（"A,B"）= 共用设置：一次写入同步多个 Config 字段
+            int shared = key.IndexOf(',');
+            if (shared > 0)
+            {
+                foreach (string k in key.Split(','))
+                    if (!string.IsNullOrEmpty(k.Trim())) Write(k.Trim(), v);
+                return;
+            }
             switch (key)
             {
+                case "HoverSegFolder":
+                    _hoverSegFile = false;
+                    RefreshShowIfs();
+                    return;
+                case "HoverSegFile":
+                    _hoverSegFile = true;
+                    RefreshShowIfs();
+                    return;
                 case "Language":
                     {
                         string code = ToStr(v);
@@ -659,6 +745,7 @@ namespace HoverExplorer.Wpf
             {
                 case "SortIndex":
                 case "RowSwapSides":
+                case "RowHideBandLine":
                 case "StatusFilter": return true;
             }
             return false;
@@ -1027,6 +1114,18 @@ namespace HoverExplorer.Wpf
         private static void RunActionCore(string action)
         {
             if (string.IsNullOrEmpty(action)) return;
+            if (action == "seg:folder") { _hoverSegFile = false; RefreshShowIfs(); return; }
+            if (action == "seg:file") { _hoverSegFile = true; RefreshShowIfs(); return; }
+            // 音频可视化三段：互斥写入波形/频谱开关
+            if (action.StartsWith("viz:"))
+            {
+                string m = action.Substring(4);
+                if (m == "none") { Write("WaveformEnabled", false); Write("SpectrumEnabled", false); }
+                else if (m == "wave") { Write("WaveformEnabled", true); Write("SpectrumEnabled", false); }
+                else if (m == "spec") { Write("WaveformEnabled", false); Write("SpectrumEnabled", true); }
+                RefreshShowIfs();
+                return;
+            }
             if (action.StartsWith("http"))
             {
                 try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(action) { UseShellExecute = true }); }
@@ -1254,7 +1353,7 @@ namespace HoverExplorer.Wpf
         // ---- 列表配色方案 ----
 
         // 清理后仍有效的键（drop / ac / acfg / sb / hdbg 已不再有对应视觉元素）
-        private static readonly string[] ListPaletteKeys = { "bg", "zb", "fg", "mu", "hv", "sel", "selfg", "bar", "bd", "btnhv", "canvas" };
+        private static readonly string[] ListPaletteKeys = { "bg", "zb", "fg", "mu", "hv", "sel", "selfg", "bar", "bd", "btnhv" };
         private static readonly string[] CardPaletteKeys = { "bg", "fg", "badge_bg", "badge_fg", "strip", "strip_w", "font", "font_size", "radius" };
 
         // 批量导入格式：一套方案一段，空行分段；段首可用 # 名称 / [名称] / name=名称 命名。
@@ -1391,7 +1490,6 @@ namespace HoverExplorer.Wpf
                 case "bar": return Config.ListBar;
                 case "bd": return Config.ListBd;
                 case "btnhv": return Config.ListBtnHv;
-                case "canvas": return Config.ListCanvas;
                 default: return Config.ListBg;
             }
         }

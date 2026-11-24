@@ -147,12 +147,76 @@ namespace HoverExplorer
         // 开关关闭或边缘触发开启时视频不加延时（防误触已由触发区负责）
         public static bool VideoPreviewDelayEnabled = true;
         public static double VideoPreviewDelay = 0.8;
-        // 空格预览（QuickLook 式）：资源管理器/桌面里按空格预览/关闭光标下的文件
-        public static bool SpacePreviewEnabled = true;
+        // 空格预览（QuickLook 式）：资源管理器/桌面里按空格预览/关闭光标下的文件。
+        // 默认关闭——保留本地"悬停即预览"行为；用户可在设置里主动切换为空格模式。
+        public static bool SpacePreviewEnabled = false;
         // 文件预览边缘触发：0=关(整个条目触发) 1=左缘 2=右缘 3=两侧。
         // 开着时条目中段不弹预览窗（留给改名/右键/拖拽），只有停在边缘触发区才预览
         public static int PreviewEdgeMode = 0;
-        public static int PreviewEdgeRatio = 30;   // 边缘触发条宽度 = 条目宽度的百分比：横竖屏/桌面图标自动适配
+        // 边缘触发条宽度 + 单位：0=百分比(按条目宽度), 1=像素(逻辑px)。
+        // 默认保持旧语义（文件=%、文件夹=px），老 config.json 无新字段时兼容。
+        public static int PreviewEdgeUnit = 0;   // 0=% 1=px
+        public static int PreviewEdgeRatio = 30; // 数值（单位由 PreviewEdgeUnit 决定）
+        // 文件夹悬停边缘触发：与文件预览各自独立，0=关(整个条目触发) 1=左缘 2=右缘 3=两侧
+        public static int FolderEdgeMode = 0;
+        public static int FolderEdgeUnit = 1;    // 0=% 1=px（文件夹默认 px，兼容旧语义）
+        public static int FolderEdgeWidth = 48;  // 数值（单位由 FolderEdgeUnit 决定）
+        // 中/大图标视图的独立触发位置（细长行仍用上面的 EdgeMode）：
+        // 0=左缘 1=右缘 2=上(图标区) 3=全条目。文件/文件夹各自独立。默认 2=上（图标区）
+        public static int PreviewIconTrigger = 2;
+        public static int FolderIconTrigger = 2;
+        // 中/大图标视图触发区宽度（0=自动）：单位 0=%(按条目宽) 1=px，默认 px 兼容旧语义。
+        // 自动时"上（图标区）"取与图标区等高的正方形并水平居中（不再横跨整个格子），
+        // 左/右缘取图标区短边的 1/4；设置后按此宽度居中/贴边，避免热区显示到图标外
+        public static int IconTriggerUnit = 1;   // 0=% 1=px
+        public static int IconTriggerWidth = 0;
+
+        // 可视化触发区域（百分比 0-100，从各边向内缩进；中间区域=触发区；文件夹与文件共用）
+        // 列表视图：左右缩进；图标视图：上下左右缩进；全零=整条目触发
+        public static int TrigListLeft = 0;
+        public static int TrigListRight = 0;
+        public static int TrigIconLeft = 0;
+        public static int TrigIconTop = 0;
+        public static int TrigIconRight = 0;
+        public static int TrigIconBottom = 0;
+        public static int TrigModel = 0;   // 2=内缩区域模型（旧版为边缘带模型）
+        public static int TrigUnit = 0;    // 旧版共用单位（仅用于迁移）
+        public static int TrigUnitList = 0; // 列表视图单位：0=百分比 1=像素
+        public static int TrigUnitIcon = 0; // 图标视图单位：0=百分比 1=像素
+
+        // 触发区边界位置换算：size=条目宽或高；val=边界距条目左/上侧的数值；
+        // unit=0 按百分比(0-100)，unit=1 按逻辑像素并随 DPI 缩放
+        public static int TriggerPx(int size, int val, int unit)
+        {
+            if (size <= 0 || val <= 0) return 0;
+            int px = unit == 1 ? Dpi.S(val) : (int)Math.Round(size * Math.Min(100, val) / 100.0);
+            return Math.Max(1, Math.Min(px, size));
+        }
+
+        // 百分比缩进换算：size=条目宽或高，pct=0-100。命中与高亮共用本函数。
+        public static int BandPx(int size, int pct)
+        {
+            if (size <= 0 || pct <= 0) return 0;
+            int v = (int)Math.Round(size * Math.Min(100, pct) / 100.0);
+            return Math.Max(1, Math.Min(v, size));
+        }
+
+        // 旧配置迁移已废弃：触发区改为“中间内缩区域”模型，旧边缘带语义不再换算
+
+        // 触发区宽度统一换算：px 与百分比都在这里落地，命中判定与高亮必须共用本函数，
+        // 避免"命中用一套、高亮用另一套"的二次 DPI 缩放与 clamp 不一致。
+        // rectWidth: 条目矩形宽度；value: 设置的数值；unit: 0=%(基准=条目宽) 1=px(逻辑像素)
+        // maxDiv: 触发带上限为条目宽的 1/maxDiv（行视图用 3；桌面图标用 2）
+        public static int EdgeBandPx(int rectWidth, int value, int unit, int maxDiv)
+        {
+            if (rectWidth <= 0) return 2;
+            int band = unit == 1
+                ? Dpi.S(value)                                   // px：逻辑像素统一在此缩放一次
+                : (int)Math.Round(rectWidth * value / 100.0);    // %：基准=条目宽度
+            if (maxDiv < 1) maxDiv = 1;
+            int cap = Math.Max(2, rectWidth / maxDiv);
+            return Math.Max(2, Math.Min(band, cap));
+        }
 
         // 按类型的预览触发延时：视频走 VideoPreviewDelay（需开关开启），其余用全局 HoverDelay
         // （音频的 100ms 提速在 SchedulePreview 里叠加 min 处理）。
@@ -175,6 +239,10 @@ namespace HoverExplorer
         public static int CloseDelayMs { get { return Math.Max(50, (int)Math.Round(CloseDelay * 1000)); } }
         // 触发区域（收藏·历史入口）悬停延时（毫秒），独立于文件夹悬停延时
         public static int EntryRectDelayMs = 300;
+        // 历史·收藏分组标签悬停延时（毫秒）：0=立即切换（原行为），>0=停留达标才切换
+        public static int GroupHoverDelayMs = 0;
+        // 历史·收藏分组标题展开模式：关闭=省略号截断，开启=完整标题自动换行
+        public static bool EntryGroupTitleExpand = false;
         // 暂停触控区驻留延时（毫秒）：驻留多久切换悬停启用/暂停，与收藏·历史触发区域延时相互独立
         public static int PauseRectDelayMs = 300;
         // 暂停触控区：鼠标驻留屏幕角落切换悬停启用/暂停（0=关 1=左上 2=右上 3=左下 4=右下）
@@ -221,6 +289,8 @@ namespace HoverExplorer
         public static bool TcEnabled = false;
         // perch (ClipPad) 文本块 [text](路径) 悬停检测。WebView2 UIAutomation TextPattern 取鼠标下文本
         public static bool PerchEnabled = true;
+        // 标准文件对话框（打开/另存为）里的悬停识别：UIA 取列表项 + CDM_GETFOLDERPATH 取当前目录
+        public static bool DialogEnabled = true;
         // TC 排序模式声明：-1=自动(从 TC ini 推断，运行中临时改排序会错位)；0=名称↑ 1=名称↓
         // 2=日期↑ 3=日期↓ 4=大小↑ 5=大小↓ 6=扩展名↑ 7=扩展名↓。ini 推测不准时由用户显式指定
         public static int TcSortMode = -1;
@@ -295,12 +365,17 @@ namespace HoverExplorer
         public static bool KeepOnLeave = false;
         // 行布局互换：名称靠右，大小/子项数与行内按钮靠左（左侧移动不触发悬停调度）
         public static bool RowSwapSides = false;
+        // 名称靠右时隐藏行右侧的预览触发带分隔线（仅隐藏线，触发区仍有效）
+        public static bool RowHideBandLine = false;
         // 列表底部格式筛选：关闭后 PopupForm 底部状态栏不显示格式标签（保留拖动/点击展开搜索入口）
         public static bool StatusFilter = true;
         // 在列表标题的"N 项"计数右侧显示 HE 自身的 CPU/内存占用（默认关闭）
         public static bool ShowResourceUsage = false;
         // 互换布局的分栏分隔线位置（行内 X 像素）；0=自动（按钮组+大小列宽度），拖动后持久化
         public static int RowSplitX = 0;
+        // 行右侧的"预览触发带"宽度（px）。分隔线可拖动调整；悬停只在该带内触发预览，
+        // 按钮区/内容区不会误触发。0 视为整行触发（兼容旧行为）
+        public static int RowTriggerW = 28;
         // 悬停门控：按住所选修饰键才触发，重命名/多选等操作不被弹窗干扰。
         // 文件夹列表与文件预览两套，各自独立开关与键位；门控只拦第一级触发，面板内部免键
         public static bool FolderGateEnabled = false;
@@ -325,6 +400,9 @@ namespace HoverExplorer
         public static string Theme = "light";
         // 桌面卡片配色索引（独立于 Theme：面板主题不影响卡片；卡片上滚轮可循环切换）
         public static int CardPaletteIndex = 0;
+        // 桌面卡片文字：所有配色方案共用的字体/字号（不再按方案各存一份）
+        public static string CardFontName = "微软雅黑";
+        public static float CardFontSize = 9f;
         public static int LastSettingsPage = 0;
         public static int SettingsW = 0;          // 设置窗持久化宽度（0=默认）
         public static int SettingsH = 0;          // 设置窗持久化高度（0=默认）
@@ -335,18 +413,72 @@ namespace HoverExplorer
         // 列表面板默认字体：微软雅黑 Mono（等宽，文件名/大小对齐更整齐）；
         // ListFont() 会在该字体未安装时自动回退全局 FontName
         public static readonly string ListFontName = "Microsoft YaHei Mono";
-        // ===== 列表面板分区字体：表头/标题/行文本/格式标签/数量·大小信息 =====
-        // 默认回退全局 FontName/FontSize；字号默认=各区域现状（见 PopupForm）
+        // ===== 列表面板分区字体：对齐卡片原型的文字层级 =====
+        // 表头/标题/副标题/正文/代码/徽标/元信息/来源，每层各自可设字体与字号
+        // 默认回退全局 FontName/FontSize；字号默认沿用各区域现状（见 PopupForm）
         public static string ListHeaderFontName = ListFontName;
         public static float ListHeaderFontSize = FontSize;                       // 表头排序栏：现状 FontSize
         public static string ListTitleFontName = ListFontName;
-        public static float ListTitleFontSize = FontSize;                        // 标题行文件夹名：现状 FontSize
+        public static float ListTitleFontSize = FontSize;                        // 标题（文件夹名）：现状 FontSize，绘制时加粗
+        public static string ListSubtitleFontName = ListFontName;
+        public static float ListSubtitleFontSize = Math.Max(7f, FontSize - 1);   // 副标题（路径/说明小字）：现状 FontSize-1
         public static string ListItemFontName = ListFontName;
-        public static float ListItemFontSize = FontSize;                         // 列表行文本：现状 FontSize
+        public static float ListItemFontSize = FontSize;                         // 正文（列表行名称）：现状 FontSize
+        public static string ListCodeFontName = ListFontName;
+        public static float ListCodeFontSize = Math.Max(7f, FontSize - 1);       // 代码（等宽文本）：现状 FontSize-1
         public static string ListChipFontName = ListFontName;
-        public static float ListChipFontSize = Math.Max(7f, FontSize - 1);       // 状态栏格式标签：现状 FontSize-1
+        public static float ListChipFontSize = Math.Max(7f, FontSize - 1);       // 徽标（状态栏格式标签）：现状 FontSize-1
         public static string ListMetaFontName = ListFontName;
-        public static float ListMetaFontSize = Math.Max(6.5f, FontSize - 2);     // 大小/计数小字：现状 FontSize-2
+        public static float ListMetaFontSize = Math.Max(6.5f, FontSize - 2);     // 元信息（大小/计数）：现状 FontSize-2
+        public static string ListSourceFontName = ListFontName;
+        public static float ListSourceFontSize = Math.Max(6.5f, FontSize - 2);   // 来源角标（FILE/CLIP）：现状 FontSize-2
+
+        // ===== 统一界面字体 + 点选覆盖模型 =====
+        // 所有列表面板文字默认跟随这套字体/字号（字号按比例缩放）；
+        // 在预览中点选某部位单独设置后，该部位 key 记入 ListFontOverrides，改用其 ListXxxFontName/Size。
+        public static string UiFontName = ListFontName;
+        public static float UiFontSize = FontSize;
+        // 逗号分隔的已覆盖部位 key：header/title/subtitle/item/code/chip/meta/source
+        public static string ListFontOverrides = "";
+        private static readonly HashSet<string> _fontOverrides =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        internal static void RebuildFontOverrides()
+        {
+            _fontOverrides.Clear();
+            if (string.IsNullOrEmpty(ListFontOverrides)) return;
+            foreach (var part in ListFontOverrides.Split(','))
+            {
+                string k = part.Trim();
+                if (k.Length > 0) _fontOverrides.Add(k);
+            }
+        }
+        internal static bool IsFontOverridden(string part)
+        {
+            return _fontOverrides.Contains(part);
+        }
+        internal static void SetFontOverridden(string part, bool on)
+        {
+            if (on) _fontOverrides.Add(part); else _fontOverrides.Remove(part);
+            var keys = new List<string>(_fontOverrides);
+            keys.Sort(StringComparer.OrdinalIgnoreCase);
+            ListFontOverrides = string.Join(",", keys.ToArray());
+        }
+        // 未覆盖部位：字体名取 UiFontName；字号按各部位相对基准的比例缩放
+        internal static float UiScaledSize(string part)
+        {
+            float b = UiFontSize > 0 && !float.IsNaN(UiFontSize) ? UiFontSize : FontSize;
+            switch (part)
+            {
+                case "subtitle": case "code": case "chip": return Math.Max(6.5f, b - 1f);
+                case "meta": case "source": return Math.Max(6.5f, b - 2f);
+                default: return b;
+            }
+        }
+        private static Font ListPartFont(string part, string name, float size, FontStyle style)
+        {
+            if (IsFontOverridden(part)) return ListFont(name, size, style);
+            return ListFont(UiFontName, UiScaledSize(part), style);
+        }
 
         // 生成分区字体：保存的字体名未安装（或创建失败）时回退全局 FontName。
         // 注意：必须每次返回新实例，不能缓存共享——设置窗预览等调用方会用 using 释放，
@@ -365,12 +497,15 @@ namespace HoverExplorer
             try { return new Font(fam, sz, style); }
             catch { return new Font(FontName, sz, style); }
         }
-        public static Font ListHeaderFont() { return ListFont(ListHeaderFontName, ListHeaderFontSize, FontStyle.Regular); }
-        public static Font ListTitleFont() { return ListFont(ListTitleFontName, ListTitleFontSize, FontStyle.Bold); }
-        public static Font ListTitleFontReg() { return ListFont(ListTitleFontName, ListTitleFontSize, FontStyle.Regular); }
-        public static Font ListItemFont() { return ListFont(ListItemFontName, ListItemFontSize, FontStyle.Regular); }
-        public static Font ListChipFont() { return ListFont(ListChipFontName, ListChipFontSize, FontStyle.Regular); }
-        public static Font ListMetaFont() { return ListFont(ListMetaFontName, ListMetaFontSize, FontStyle.Regular); }
+        public static Font ListHeaderFont() { return ListPartFont("header", ListHeaderFontName, ListHeaderFontSize, FontStyle.Regular); }
+        public static Font ListTitleFont() { return ListPartFont("title", ListTitleFontName, ListTitleFontSize, FontStyle.Bold); }
+        public static Font ListTitleFontReg() { return ListPartFont("title", ListTitleFontName, ListTitleFontSize, FontStyle.Regular); }
+        public static Font ListSubtitleFont() { return ListPartFont("subtitle", ListSubtitleFontName, ListSubtitleFontSize, FontStyle.Regular); }
+        public static Font ListItemFont() { return ListPartFont("item", ListItemFontName, ListItemFontSize, FontStyle.Regular); }
+        public static Font ListCodeFont() { return ListPartFont("code", ListCodeFontName, ListCodeFontSize, FontStyle.Regular); }
+        public static Font ListChipFont() { return ListPartFont("chip", ListChipFontName, ListChipFontSize, FontStyle.Regular); }
+        public static Font ListMetaFont() { return ListPartFont("meta", ListMetaFontName, ListMetaFontSize, FontStyle.Regular); }
+        public static Font ListSourceFont() { return ListPartFont("source", ListSourceFontName, ListSourceFontSize, FontStyle.Regular); }
         public static Color BG, FG, BgHover, BgDir, FgDir, DropHighlight, BgSel, Border, PlaceholderFg, Accent, BtnHover;
 
         static Config()
@@ -433,7 +568,7 @@ namespace HoverExplorer
         }
 
         // 列表配色 15 变量（仅浅色启用自定义；深色=主题色）。用户可粘贴 key=#hex 覆盖
-        public static Color ListBg, ListZb, ListFg, ListMu, ListHv, ListSel, ListSelFg, ListBar, ListDrop, ListAc, ListAcFg, ListBd, ListSb, ListHdbg, ListBtnHv, ListCanvas;
+        public static Color ListBg, ListZb, ListFg, ListMu, ListHv, ListSel, ListSelFg, ListBar, ListDrop, ListAc, ListAcFg, ListBd, ListSb, ListHdbg, ListBtnHv;
         // 用户粘贴的原始文本（key=#hex 每行一个，# 可省略；空=暖灰斑马默认）
         public static string ListPalette = "";
         // 已保存的配色方案列表，格式：每行 name=escapedText（text 中 \n→\\n、=→\\e）；空=无方案
@@ -466,7 +601,7 @@ namespace HoverExplorer
                 ListHv = BgHover; ListSel = BgSel; ListSelFg = Color.White;
                 ListBar = BtnHover; ListDrop = DropHighlight;
                 ListAc = Accent; ListAcFg = Color.White; ListBd = Border;
-                ListSb = Border; ListHdbg = BgHover; ListBtnHv = BtnHover; ListCanvas = BG;
+                ListSb = Border; ListHdbg = BgHover; ListBtnHv = BtnHover;
                 return;
             }
             // 浅色默认：暖灰斑马
@@ -485,7 +620,6 @@ namespace HoverExplorer
             ListSb = ColorTranslator.FromHtml("#c4b399");
             ListHdbg = ColorTranslator.FromHtml("#f0e8dc");
             ListBtnHv = ColorTranslator.FromHtml("#e0d0b8");
-            ListCanvas = ListBg;   // 列表画布底色默认=行背景；用户可单独设以分离行底与画布底
             // 新装用户（无自定义配色）：默认采用当前壁纸主色，而非固定浅色
             if (string.IsNullOrEmpty(ListPalette))
             {
@@ -493,7 +627,7 @@ namespace HoverExplorer
                 if (!string.IsNullOrEmpty(wp)) { ListPalette = wp; }
                 else return;
             }
-            bool sawCanvas = false, sawHdbg = false;
+            bool sawHdbg = false;
             foreach (var line in ListPalette.Split('\n'))
             {
                 var t = line.Trim().TrimEnd('\\');   // 容错：AI 输出可能每行尾带反斜线/代码块标记
@@ -525,12 +659,9 @@ namespace HoverExplorer
                     case "sb": ListSb = c; break;
                     case "hdbg": ListHdbg = c; sawHdbg = true; break;
                     case "btnhv": ListBtnHv = c; break;
-                    case "canvas": ListCanvas = c; sawCanvas = true; break;
                 }
             }
-            // 方案未单独定义画布/表头底时跟随方案背景：否则深色方案下这两处仍是
-            // 浅色默认值（滚动条让位区/行区露底、顶栏标题与搜索框残留浅色）
-            if (!sawCanvas) ListCanvas = ListBg;
+            // 方案未单独定义表头底时跟随方案背景：否则深色方案下顶栏标题与搜索框残留浅色
             if (!sawHdbg) ListHdbg = ListBg;
         }
 
@@ -579,7 +710,7 @@ namespace HoverExplorer
                 return "bg=" + HexOf(bg) + "\nzb=" + HexOf(zb) + "\nfg=" + HexOf(fg) + "\nmu=" + HexOf(mu) +
                     "\nhv=" + HexOf(hv) + "\nsel=" + HexOf(sel) + "\nselfg=FFFFFF\nbar=" + HexOf(hv) +
                     "\ndrop=" + HexOf(sel) + "\nac=" + HexOf(sel) + "\nacfg=FFFFFF\nbd=" + HexOf(bd) +
-                    "\nsb=" + HexOf(bd) + "\nhdbg=" + HexOf(zb) + "\nbtnhv=" + HexOf(hv) + "\ncanvas=" + HexOf(bg) + "\n";
+                    "\nsb=" + HexOf(bd) + "\nhdbg=" + HexOf(zb) + "\nbtnhv=" + HexOf(hv) + "\n";
             }
             catch { return null; }
         }
@@ -602,7 +733,7 @@ namespace HoverExplorer
             {
                 {"bg",ListBg},{"zb",ListZb},{"fg",ListFg},{"mu",ListMu},{"hv",ListHv},
                 {"sel",ListSel},{"selfg",ListSelFg},{"bar",ListBar},{"drop",ListDrop},{"ac",ListAc},
-                {"acfg",ListAcFg},{"bd",ListBd},{"sb",ListSb},{"hdbg",ListHdbg},{"btnhv",ListBtnHv},{"canvas",ListCanvas},
+                {"acfg",ListAcFg},{"bd",ListBd},{"sb",ListSb},{"hdbg",ListHdbg},{"btnhv",ListBtnHv},
             };
             if (string.IsNullOrEmpty(text)) return map;
             foreach (var line in text.Split('\n'))
@@ -680,6 +811,8 @@ namespace HoverExplorer
 
                         case "WindowCorners": WindowCorners = Convert.ToInt32(v); break;
                         case "EntryRectDelayMs": EntryRectDelayMs = Convert.ToInt32(v); break;
+                        case "GroupHoverDelayMs": GroupHoverDelayMs = Math.Max(0, Convert.ToInt32(v)); break;
+                        case "EntryGroupTitleExpand": EntryGroupTitleExpand = Convert.ToBoolean(v); break;
                         case "PauseRectDelayMs": PauseRectDelayMs = Convert.ToInt32(v); break;
                         case "PreviewMaxRatio": PreviewMaxRatio = Convert.ToDouble(v); break;
                         case "PanelWidth": PanelWidth = Convert.ToInt32(v); break;
@@ -689,6 +822,7 @@ namespace HoverExplorer
                         case "ExplorerEnabled": ExplorerEnabled = Convert.ToBoolean(v); break;
                         case "TcEnabled": TcEnabled = Convert.ToBoolean(v); break;
                         case "PerchEnabled": PerchEnabled = Convert.ToBoolean(v); break;
+                        case "DialogEnabled": DialogEnabled = Convert.ToBoolean(v); break;
                         case "TcSortMode": TcSortMode = Convert.ToInt32(v); break;
                         case "PreviewFiles": PreviewFiles = Convert.ToBoolean(v); break;
                         case "PreviewImage": PreviewImage = Convert.ToBoolean(v); break;
@@ -698,7 +832,25 @@ namespace HoverExplorer
                         case "SpacePreviewEnabled": SpacePreviewEnabled = Convert.ToBoolean(v); break;
                         case "PreviewVolume": PreviewVolume = Convert.ToDouble(v); break;
                         case "PreviewEdgeMode": PreviewEdgeMode = Convert.ToInt32(v); break;
+                        case "PreviewEdgeUnit": PreviewEdgeUnit = Math.Max(0, Math.Min(1, Convert.ToInt32(v))); break;
                         case "PreviewEdgeRatio": PreviewEdgeRatio = Convert.ToInt32(v); break;
+                        case "FolderEdgeMode": FolderEdgeMode = Convert.ToInt32(v); break;
+                        case "FolderEdgeUnit": FolderEdgeUnit = Math.Max(0, Math.Min(1, Convert.ToInt32(v))); break;
+                        case "FolderEdgeWidth": FolderEdgeWidth = Convert.ToInt32(v); break;
+                        case "PreviewIconTrigger": PreviewIconTrigger = Convert.ToInt32(v); break;
+                        case "IconTriggerUnit": IconTriggerUnit = Math.Max(0, Math.Min(1, Convert.ToInt32(v))); break;
+                        case "IconTriggerWidth": IconTriggerWidth = Convert.ToInt32(v); break;
+                        case "TrigListLeft": TrigListLeft = Math.Max(0, Math.Min(400, Convert.ToInt32(v))); break;
+                        case "TrigListRight": TrigListRight = Math.Max(0, Math.Min(400, Convert.ToInt32(v))); break;
+                        case "TrigIconLeft": TrigIconLeft = Math.Max(0, Math.Min(400, Convert.ToInt32(v))); break;
+                        case "TrigIconTop": TrigIconTop = Math.Max(0, Math.Min(400, Convert.ToInt32(v))); break;
+                        case "TrigIconRight": TrigIconRight = Math.Max(0, Math.Min(400, Convert.ToInt32(v))); break;
+                        case "TrigIconBottom": TrigIconBottom = Math.Max(0, Math.Min(400, Convert.ToInt32(v))); break;
+                        case "TrigModel": TrigModel = Convert.ToInt32(v); break;
+                        case "TrigUnit": TrigUnit = Math.Max(0, Math.Min(1, Convert.ToInt32(v))); break;
+                        case "TrigUnitList": TrigUnitList = Math.Max(0, Math.Min(1, Convert.ToInt32(v))); break;
+                        case "TrigUnitIcon": TrigUnitIcon = Math.Max(0, Math.Min(1, Convert.ToInt32(v))); break;
+                        case "FolderIconTrigger": FolderIconTrigger = Convert.ToInt32(v); break;
                         case "PreviewAudio": PreviewAudio = Convert.ToBoolean(v); break;
                         case "PreviewDocument": PreviewDocument = Convert.ToBoolean(v); break;
                         case "PreviewText": PreviewText = Convert.ToBoolean(v); break;
@@ -739,6 +891,8 @@ namespace HoverExplorer
                         case "Language": Language = Convert.ToString(v); break;
                         case "Theme": Theme = Convert.ToString(v); break;
                         case "CardPaletteIndex": CardPaletteIndex = Convert.ToInt32(v); break;
+                        case "CardFontName": CardFontName = Convert.ToString(v); break;
+                        case "CardFontSize": CardFontSize = (float)Convert.ToDouble(v); break;
                         case "LastSettingsPage": LastSettingsPage = Convert.ToInt32(v); break;
                         case "SettingsW": SettingsW = Convert.ToInt32(v); break;
                         case "SettingsH": SettingsH = Convert.ToInt32(v); break;
@@ -779,18 +933,8 @@ namespace HoverExplorer
                             FavoriteGroups = new List<FavoriteGroup>();
                             foreach (var g in (System.Collections.ArrayList)v)
                             {
-                                var gd = g as Dictionary<string, object>;
-                                if (gd == null) continue;
-                                var grp = new FavoriteGroup();
-                                if (gd.ContainsKey("Name")) grp.Name = Convert.ToString(gd["Name"]);
-                                if (gd.ContainsKey("Color")) grp.Color = Convert.ToString(gd["Color"]);
-                                if (gd.ContainsKey("Items"))
-                                {
-                                    var al = gd["Items"] as System.Collections.ArrayList;
-                                    if (al != null)
-                                        foreach (var it in al) grp.Items.Add(Convert.ToString(it));
-                                }
-                                FavoriteGroups.Add(grp);
+                                var grp = ParseFavoriteGroup(g);
+                                if (grp != null) FavoriteGroups.Add(grp);
                             }
                             break;
                         case "RecentFolders":
@@ -799,9 +943,11 @@ namespace HoverExplorer
                             break;
                         case "KeepOnLeave": KeepOnLeave = Convert.ToBoolean(v); break;
                         case "RowSwapSides": RowSwapSides = Convert.ToBoolean(v); break;
+                        case "RowHideBandLine": RowHideBandLine = Convert.ToBoolean(v); break;
                         case "StatusFilter": StatusFilter = Convert.ToBoolean(v); break;
                         case "ShowResourceUsage": ShowResourceUsage = Convert.ToBoolean(v); break;
                         case "RowSplitX": RowSplitX = Convert.ToInt32(v); break;
+                        case "RowTriggerW": RowTriggerW = Convert.ToInt32(v); break;
                         case "FolderGateEnabled": FolderGateEnabled = Convert.ToBoolean(v); break;
                         case "FolderGateMods": FolderGateMods = Convert.ToInt32(v); break;
                         case "PreviewGateEnabled": PreviewGateEnabled = Convert.ToBoolean(v); break;
@@ -825,14 +971,35 @@ namespace HoverExplorer
                         case "ListHeaderFontSize": ListHeaderFontSize = Convert.ToSingle(v); break;
                         case "ListTitleFontName": ListTitleFontName = Convert.ToString(v); break;
                         case "ListTitleFontSize": ListTitleFontSize = Convert.ToSingle(v); break;
+                        case "ListSubtitleFontName": ListSubtitleFontName = Convert.ToString(v); break;
+                        case "ListSubtitleFontSize": ListSubtitleFontSize = Convert.ToSingle(v); break;
                         case "ListItemFontName": ListItemFontName = Convert.ToString(v); break;
                         case "ListItemFontSize": ListItemFontSize = Convert.ToSingle(v); break;
+                        case "ListCodeFontName": ListCodeFontName = Convert.ToString(v); break;
+                        case "ListCodeFontSize": ListCodeFontSize = Convert.ToSingle(v); break;
                         case "ListChipFontName": ListChipFontName = Convert.ToString(v); break;
                         case "ListChipFontSize": ListChipFontSize = Convert.ToSingle(v); break;
                         case "ListMetaFontName": ListMetaFontName = Convert.ToString(v); break;
                         case "ListMetaFontSize": ListMetaFontSize = Convert.ToSingle(v); break;
+                        case "ListSourceFontName": ListSourceFontName = Convert.ToString(v); break;
+                        case "ListSourceFontSize": ListSourceFontSize = Convert.ToSingle(v); break;
+                        case "UiFontName": UiFontName = Convert.ToString(v); break;
+                        case "UiFontSize": UiFontSize = Convert.ToSingle(v); break;
+                        case "ListFontOverrides": ListFontOverrides = Convert.ToString(v); break;
                     }
                 }
+                // 触发区域模型升级：旧版“边缘带”语义与现在的“中间内缩框”不兼容，统一归零为整条目
+                if (TrigModel < 2)
+                {
+                    TrigListLeft = TrigListRight = 0;
+                    TrigIconLeft = TrigIconTop = TrigIconRight = TrigIconBottom = 0;
+                    TrigModel = 2;
+                }
+                // 单位拆分迁移：旧版共用一个 TrigUnit，新配置没有分视图字段时两边都继承
+                if (!data.ContainsKey("TrigUnitList") && !data.ContainsKey("TrigUnitIcon"))
+                    TrigUnitList = TrigUnitIcon = TrigUnit;
+                // 文件对话框场景不再提供开关，旧配置里的 false 也一律纠正为开启
+                DialogEnabled = true;
                 // 旧格式迁移：FavoriteFolders(扁平) → FavoriteGroups(多分组) 首组
                 if (FavoriteGroups.Count == 0)
                 {
@@ -844,6 +1011,7 @@ namespace HoverExplorer
                 if (FavoriteGroups.Count == 0)
                     FavoriteGroups.Add(new FavoriteGroup(I18n.T("fav_default_name"), "#4a7ab5"));
                 if (FavoriteCurGroup < -1 || FavoriteCurGroup >= FavoriteGroups.Count) FavoriteCurGroup = 0;
+                RebuildFontOverrides();
                 I18n.Lang = Language;
                 RefreshSortLabels();
                 ApplyTheme();
@@ -869,6 +1037,7 @@ namespace HoverExplorer
                 data["ExplorerEnabled"] = ExplorerEnabled;
                 data["TcEnabled"] = TcEnabled;
                 data["PerchEnabled"] = PerchEnabled;
+                data["DialogEnabled"] = DialogEnabled;
                 data["TcSortMode"] = TcSortMode;
                 data["PreviewFiles"] = PreviewFiles;
                 data["PreviewImage"] = PreviewImage;
@@ -878,7 +1047,25 @@ namespace HoverExplorer
                 data["SpacePreviewEnabled"] = SpacePreviewEnabled;
                 data["PreviewVolume"] = PreviewVolume;
                 data["PreviewEdgeMode"] = PreviewEdgeMode;
+                data["PreviewEdgeUnit"] = PreviewEdgeUnit;
                 data["PreviewEdgeRatio"] = PreviewEdgeRatio;
+                data["FolderEdgeMode"] = FolderEdgeMode;
+                data["FolderEdgeUnit"] = FolderEdgeUnit;
+                data["FolderEdgeWidth"] = FolderEdgeWidth;
+                data["PreviewIconTrigger"] = PreviewIconTrigger;
+                data["IconTriggerUnit"] = IconTriggerUnit;
+                data["IconTriggerWidth"] = IconTriggerWidth;
+                data["TrigListLeft"] = TrigListLeft;
+                data["TrigListRight"] = TrigListRight;
+                data["TrigIconLeft"] = TrigIconLeft;
+                data["TrigIconTop"] = TrigIconTop;
+                data["TrigIconRight"] = TrigIconRight;
+                data["TrigIconBottom"] = TrigIconBottom;
+                data["TrigModel"] = TrigModel;
+                data["TrigUnit"] = TrigUnit;
+                data["TrigUnitList"] = TrigUnitList;
+                data["TrigUnitIcon"] = TrigUnitIcon;
+                data["FolderIconTrigger"] = FolderIconTrigger;
                 data["PreviewAudio"] = PreviewAudio;
                 data["PreviewDocument"] = PreviewDocument;
                 data["PreviewText"] = PreviewText;
@@ -928,16 +1115,17 @@ namespace HoverExplorer
                 data["FavoriteCurGroup"] = FavoriteCurGroup;
                 {
                     var gl = new List<Dictionary<string, object>>();
-                    foreach (var g in FavoriteGroups)
-                        gl.Add(new Dictionary<string, object> { { "Name", g.Name }, { "Color", g.Color }, { "Items", g.Items } });
+                    foreach (var g in FavoriteGroups) gl.Add(SerializeFavoriteGroup(g));
                     data["FavoriteGroups"] = gl;
                 }
                 data["RecentFolders"] = RecentFolders;
                 data["KeepOnLeave"] = KeepOnLeave;
                 data["RowSwapSides"] = RowSwapSides;
+                data["RowHideBandLine"] = RowHideBandLine;
                 data["StatusFilter"] = StatusFilter;
                 data["ShowResourceUsage"] = ShowResourceUsage;
                 data["RowSplitX"] = RowSplitX;
+                data["RowTriggerW"] = RowTriggerW;
                 data["FolderGateEnabled"] = FolderGateEnabled;
                 data["FolderGateMods"] = FolderGateMods;
                 data["PreviewGateEnabled"] = PreviewGateEnabled;
@@ -955,15 +1143,26 @@ namespace HoverExplorer
                 data["ListHeaderFontSize"] = ListHeaderFontSize;
                 data["ListTitleFontName"] = ListTitleFontName;
                 data["ListTitleFontSize"] = ListTitleFontSize;
+                data["ListSubtitleFontName"] = ListSubtitleFontName;
+                data["ListSubtitleFontSize"] = ListSubtitleFontSize;
                 data["ListItemFontName"] = ListItemFontName;
                 data["ListItemFontSize"] = ListItemFontSize;
+                data["ListCodeFontName"] = ListCodeFontName;
+                data["ListCodeFontSize"] = ListCodeFontSize;
                 data["ListChipFontName"] = ListChipFontName;
                 data["ListChipFontSize"] = ListChipFontSize;
                 data["ListMetaFontName"] = ListMetaFontName;
                 data["ListMetaFontSize"] = ListMetaFontSize;
+                data["ListSourceFontName"] = ListSourceFontName;
+                data["ListSourceFontSize"] = ListSourceFontSize;
+                data["UiFontName"] = UiFontName;
+                data["UiFontSize"] = UiFontSize;
+                data["ListFontOverrides"] = ListFontOverrides;
                 data["Language"] = Language;
                 data["Theme"] = Theme;
                 data["CardPaletteIndex"] = CardPaletteIndex;
+                data["CardFontName"] = CardFontName;
+                data["CardFontSize"] = CardFontSize;
                 data["LastSettingsPage"] = LastSettingsPage;
                 data["SettingsW"] = SettingsW;
                 data["SettingsH"] = SettingsH;
@@ -988,6 +1187,8 @@ namespace HoverExplorer
 
                 data["WindowCorners"] = WindowCorners;
                 data["EntryRectDelayMs"] = EntryRectDelayMs;
+                data["GroupHoverDelayMs"] = GroupHoverDelayMs;
+                data["EntryGroupTitleExpand"] = EntryGroupTitleExpand;
                 data["PauseRectDelayMs"] = PauseRectDelayMs;
                 data["PreviewMaxRatio"] = PreviewMaxRatio;
                 data["PanelWidth"] = PanelWidth;
@@ -1012,6 +1213,47 @@ namespace HoverExplorer
             }
             return string.Format("{0:0.0} GB", d);
         }
+
+        // 递归读取分组（含子分组与折叠状态），兼容旧格式里只有 Name/Color/Items 的分组
+        private static FavoriteGroup ParseFavoriteGroup(object obj)
+        {
+            var gd = obj as Dictionary<string, object>;
+            if (gd == null) return null;
+            var grp = new FavoriteGroup();
+            if (gd.ContainsKey("Name")) grp.Name = Convert.ToString(gd["Name"]);
+            if (gd.ContainsKey("Color")) grp.Color = Convert.ToString(gd["Color"]);
+            if (gd.ContainsKey("Open")) grp.Open = Convert.ToBoolean(gd["Open"]);
+            if (gd.ContainsKey("Items"))
+            {
+                var al = gd["Items"] as System.Collections.ArrayList;
+                if (al != null) foreach (var it in al) grp.Items.Add(Convert.ToString(it));
+            }
+            if (gd.ContainsKey("Children"))
+            {
+                var al = gd["Children"] as System.Collections.ArrayList;
+                if (al != null)
+                    foreach (var ch in al)
+                    {
+                        var child = ParseFavoriteGroup(ch);
+                        if (child != null) grp.Children.Add(child);
+                    }
+            }
+            return grp;
+        }
+
+        private static Dictionary<string, object> SerializeFavoriteGroup(FavoriteGroup g)
+        {
+            var children = new List<Dictionary<string, object>>();
+            foreach (var ch in g.Children) children.Add(SerializeFavoriteGroup(ch));
+            return new Dictionary<string, object>
+            {
+                { "Name", g.Name },
+                { "Color", g.Color },
+                { "Open", g.Open },
+                { "Items", g.Items },
+                { "Children", children }
+            };
+        }
     }
 
     internal class PinnedItem
@@ -1024,12 +1266,14 @@ namespace HoverExplorer
         public int Palette = -1;       // 该卡片自己的配色索引；-1 = 跟随默认（Config.CardPaletteIndex）
     }
 
-    // 收藏分组：名称 + 色点 + 条目列表（原型 A 分组标签）
+    // 收藏分组：名称 + 色点 + 条目列表 + 子分组（原型 v2 二级嵌套）
     internal class FavoriteGroup
     {
         public string Name = "";
         public string Color = "#4a7ab5";
-        public List<string> Items = new List<string>();
+        public bool Open = true;                       // 是否展开（折叠状态持久化）
+        public List<string> Items = new List<string>(); // 完整路径
+        public List<FavoriteGroup> Children = new List<FavoriteGroup>();
         public FavoriteGroup() { }
         public FavoriteGroup(string n, string c) { Name = n; Color = c; }
     }

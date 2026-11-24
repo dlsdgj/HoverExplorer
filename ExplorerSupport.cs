@@ -1,7 +1,9 @@
 using System;
 using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace HoverExplorer
 {
@@ -10,6 +12,87 @@ namespace HoverExplorer
         private static IntPtr _cachedHwnd;
         private static System.Collections.Generic.List<string> _cachedTabs;
         private static DateTime _cacheTime;
+
+        // 当前活动标签页目录（短 TTL）。多标签页共用 HWND，缓存键必须带上它，
+        // 否则切标签后 250ms 内仍复用上一个标签的悬停结果。
+        private static IntPtr _activeHwnd;
+        private static string _activeDir;
+        private static DateTime _activeAt = DateTime.MinValue;
+
+        internal static string GetActiveExplorerDir(IntPtr hwnd)
+        {
+            if (_activeHwnd == hwnd && _activeDir != null && (DateTime.UtcNow - _activeAt).TotalMilliseconds < 300)
+                return _activeDir;
+            // 标题+Shell 项匹配优先：Win11 地址栏 UIA 在多标签下可能只给出盘符（D:\），不可靠。
+            string dir = GetActiveExplorerDirFromShell(hwnd);
+            if (string.IsNullOrEmpty(dir)) dir = ExplorerUia.GetActiveFolderPath(hwnd);
+            _activeHwnd = hwnd;
+            _activeDir = string.IsNullOrEmpty(dir) || !Directory.Exists(dir) ? null : dir;
+            _activeAt = DateTime.UtcNow;
+            return _activeDir;
+        }
+
+        [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+        private static extern int GetWindowText(IntPtr hWnd, StringBuilder text, int maxCount);
+
+        // 窗口标题形如「临时同步 和 1 个其他选项卡 - 文件资源管理器」，
+        // 前缀就是当前活动标签名——多标签页下这是唯一稳定的活动标签标识。
+        private static string ActiveTabNameFromTitle(IntPtr hwnd)
+        {
+            try
+            {
+                var sb = new StringBuilder(512);
+                GetWindowText(hwnd, sb, sb.Capacity);
+                string t = sb.ToString();
+                if (string.IsNullOrEmpty(t)) return null;
+                int dash = t.LastIndexOf(" - ", StringComparison.Ordinal);
+                if (dash > 0) t = t.Substring(0, dash);
+                t = Regex.Replace(t, @"\s*(和|and)\s*\d+\s*(个其他选项卡|other tabs?)\s*$", "", RegexOptions.IgnoreCase).Trim();
+                return t.Length == 0 ? null : t;
+            }
+            catch { return null; }
+        }
+
+        // ShellWindows 里同一 HWND 会出现多个标签项，用标题里的活动标签名挑出当前目录。
+        private static string GetActiveExplorerDirFromShell(IntPtr hwnd)
+        {
+            string activeName = ActiveTabNameFromTitle(hwnd);
+            if (string.IsNullOrEmpty(activeName)) return null;
+            try
+            {
+                Type shellType = Type.GetTypeFromProgID("Shell.Application");
+                if (shellType == null) return null;
+                object shell = Activator.CreateInstance(shellType);
+                object windows = shellType.InvokeMember("Windows", BindingFlags.InvokeMethod, null, shell, null);
+                if (windows == null) return null;
+                int count = (int)windows.GetType().InvokeMember("Count", BindingFlags.GetProperty, null, windows, null);
+                long target = hwnd.ToInt64();
+                for (int i = 0; i < count; i++)
+                {
+                    object w = windows.GetType().InvokeMember("Item", BindingFlags.InvokeMethod, null, windows, new object[] { i });
+                    if (w == null) continue;
+                    try
+                    {
+                        if ((long)w.GetType().InvokeMember("HWND", BindingFlags.GetProperty, null, w, null) != target) continue;
+                        object doc = w.GetType().InvokeMember("Document", BindingFlags.GetProperty, null, w, null);
+                        if (doc == null) continue;
+                        object folder = doc.GetType().InvokeMember("Folder", BindingFlags.GetProperty, null, doc, null);
+                        if (folder == null) continue;
+                        object self = folder.GetType().InvokeMember("Self", BindingFlags.GetProperty, null, folder, null);
+                        if (self == null) continue;
+                        string path = self.GetType().InvokeMember("Path", BindingFlags.GetProperty, null, self, null) as string;
+                        string name = self.GetType().InvokeMember("Name", BindingFlags.GetProperty, null, self, null) as string;
+                        if (string.IsNullOrEmpty(path) || !Directory.Exists(path)) continue;
+                        if (string.Equals(name, activeName, StringComparison.OrdinalIgnoreCase)
+                            || string.Equals(Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar)), activeName, StringComparison.OrdinalIgnoreCase))
+                            return path;
+                    }
+                    catch { }
+                }
+            }
+            catch { }
+            return null;
+        }
 
         // 当前打开的资源管理器窗口/标签的文件夹路径集合（历史 MRU 用）。
         // 走 ShellWindows COM 枚举 LocationURL（file:/// 转本地路径），实测含多标签；
@@ -46,6 +129,7 @@ namespace HoverExplorer
         // （放宽 8x4px）→ 直接复用上次结果，微秒级；离开即重检
         private static IntPtr _hitHwnd;
         private static string _hitPath;
+        private static string _hitDir;
         private static System.Drawing.Rectangle _hitRect, _outRect;
         private static bool _hitIsDir;
         private static DateTime _hitAt = DateTime.MinValue;
@@ -56,6 +140,7 @@ namespace HoverExplorer
         private static IntPtr _stillHwnd;
         private static int _stillX = int.MinValue, _stillY;
         private static string _stillPath;
+        private static string _stillDir;
         private static System.Drawing.Rectangle _stillRect;
         private static bool _stillIsDir;
         private static DateTime _stillAt = DateTime.MinValue;
@@ -81,6 +166,7 @@ namespace HoverExplorer
                 cur = NativeMethods.GetParent(cur);
             }
             if (explorerHwnd == IntPtr.Zero) return null;
+            string activeDir = GetActiveExplorerDir(explorerHwnd);
 
             // miss 节流：Win11 新版 Explorer 的 UIA 全量检测一次 130-500ms（44 条目的
             // FindAll+逐条矩形），鼠标移动时每 tick 都 miss 都全量跑 → UI 线程饱和
@@ -90,13 +176,15 @@ namespace HoverExplorer
                 return null;
 
             if (!force && _stillHwnd == explorerHwnd && mx == _stillX && my == _stillY
+                && string.Equals(_stillDir, activeDir, StringComparison.OrdinalIgnoreCase)
                 && (DateTime.UtcNow - _stillAt).TotalMilliseconds < 250)
             {
                 rect = _stillRect; isDir = _stillIsDir;
                 return _stillPath;
             }
 
-            if (_hitHwnd == explorerHwnd && (DateTime.UtcNow - _hitAt).TotalMilliseconds < 600)
+            if (_hitHwnd == explorerHwnd && string.Equals(_hitDir, activeDir, StringComparison.OrdinalIgnoreCase)
+                && (DateTime.UtcNow - _hitAt).TotalMilliseconds < 600)
             {
                 var hitZone = System.Drawing.Rectangle.Inflate(_hitRect, 8, 4);
                 if (hitZone.Contains(mx, my))
@@ -131,13 +219,13 @@ namespace HoverExplorer
                         if (real != null) fullPath = real;
                     }
                     isDir = Directory.Exists(fullPath);
-                    _hitHwnd = explorerHwnd; _hitPath = fullPath; _hitIsDir = isDir;
+                    _hitHwnd = explorerHwnd; _hitPath = fullPath; _hitIsDir = isDir; _hitDir = activeDir;
                     _hitRect = rect; _outRect = rect; _hitAt = DateTime.UtcNow;
                     result = fullPath;
                 }
                 else { rect = System.Drawing.Rectangle.Empty; isDir = false; }
             }
-            _stillHwnd = explorerHwnd; _stillX = mx; _stillY = my;
+            _stillHwnd = explorerHwnd; _stillX = mx; _stillY = my; _stillDir = activeDir;
             _stillPath = result; _stillRect = result != null ? rect : System.Drawing.Rectangle.Empty;
             _stillIsDir = result != null && isDir;
             _stillAt = DateTime.UtcNow;
@@ -212,10 +300,47 @@ namespace HoverExplorer
 
 // QuickLook 语义的后半段：取 Explorer 前台窗口当前选中的单个条目（光标不在条目上时用）。
         // 与 ResolveNamespaceItem 同款后期绑定 ShellWindows：按 HWND 匹配 → Document.SelectedItems → Path
+        // QuickLook 语义：取资源管理器当前键盘高亮项（与鼠标位置无关）。
+        // 返回磁盘真实路径；rect 为条目屏幕矩形，isDir 由 Directory.Exists 重算。
+        public static string GetExplorerFocusedItem(IntPtr explorerHwnd, out System.Drawing.Rectangle rect, out bool isDir)
+        {
+            rect = System.Drawing.Rectangle.Empty;
+            isDir = false;
+            try
+            {
+                string name = ExplorerUia.GetFocusedItem(explorerHwnd, out rect);
+                if (string.IsNullOrEmpty(name)) return null;
+
+                string path = null;
+                // 优先 Shell 选中项路径（本地化名下也能给真实路径，且是多视图兜底）
+                string viaSel = GetExplorerSelectedPath(explorerHwnd);
+                if (!string.IsNullOrEmpty(viaSel)) path = viaSel;
+
+                // 选中项路径拿不到（或搜索视图）时用 UIA 显示名 + 当前目录拼，失败再还原本地化名
+                if (string.IsNullOrEmpty(path))
+                {
+                    string dirPath = GetExplorerPath(explorerHwnd, name);
+                    if (dirPath == null) return null;
+                    string full = Path.Combine(dirPath, name);
+                    if (!File.Exists(full) && !Directory.Exists(full))
+                    {
+                        string real = ResolveLocalizedName(dirPath, name);
+                        if (real != null) full = real;
+                    }
+                    if (!File.Exists(full) && !Directory.Exists(full)) return null;
+                    path = full;
+                }
+                isDir = Directory.Exists(path);
+                return path;
+            }
+            catch { return null; }
+        }
+
         internal static string GetExplorerSelectedPath(IntPtr explorerHwnd)
         {
             try
             {
+                string activeDir = GetActiveExplorerDir(explorerHwnd);
                 var t = Type.GetTypeFromCLSID(new Guid("9BA05972-F6A8-11CF-A442-00A0C90A8F39"));
                 var obj = Activator.CreateInstance(t);
                 foreach (var w in (System.Collections.IEnumerable)obj)
@@ -228,8 +353,10 @@ namespace HoverExplorer
                         object doc = w.GetType().InvokeMember("Document",
                             System.Reflection.BindingFlags.GetProperty, null, w, null);
                         if (doc == null) continue;
+                        // SelectedItems 在 IShellFolderViewDual 上是方法（DISP_E_MEMBERNOTFOUND
+                        // 用 GetProperty 会抛异常→选中回退永远为 null）。必须 InvokeMethod。
                         object sel = doc.GetType().InvokeMember("SelectedItems",
-                            System.Reflection.BindingFlags.GetProperty, null, doc, null);
+                            System.Reflection.BindingFlags.InvokeMethod, null, doc, null);
                         if (sel == null) continue;
                         int count = (int)sel.GetType().InvokeMember("Count",
                             System.Reflection.BindingFlags.GetProperty, null, sel, null);
@@ -238,8 +365,15 @@ namespace HoverExplorer
                             System.Reflection.BindingFlags.InvokeMethod, null, sel, new object[] { 0 });
                         string path = item.GetType().InvokeMember("Path",
                             System.Reflection.BindingFlags.GetProperty, null, item, null) as string;
-                        if (!string.IsNullOrEmpty(path) && (File.Exists(path) || Directory.Exists(path)))
-                            return path;
+                        if (string.IsNullOrEmpty(path) || (!File.Exists(path) && !Directory.Exists(path))) continue;
+                        // 同一 HWND 的后台标签也会报 SelectedItems：只收当前标签目录下的项
+                        if (activeDir != null)
+                        {
+                            string parent = Path.GetDirectoryName(path.TrimEnd(Path.DirectorySeparatorChar));
+                            if (!string.IsNullOrEmpty(parent) && !string.Equals(parent, activeDir, StringComparison.OrdinalIgnoreCase))
+                                continue;
+                        }
+                        return path;
                     }
                     catch { }
                 }
@@ -374,6 +508,10 @@ namespace HoverExplorer
 
         private static string GetExplorerPath(IntPtr hwnd, string itemName)
         {
+            // 多标签页只认当前可见标签的地址栏路径；不能遍历所有同 HWND 标签再挑
+            // "第一个能拼出文件"的目录，那会命中后台标签的同名文件。
+            string active = GetActiveExplorerDir(hwnd);
+            if (active != null) return active;
             var tabs = GetExplorerTabPaths(hwnd);
             if (tabs == null || tabs.Count == 0) return null;
             if (!string.IsNullOrEmpty(itemName))

@@ -31,7 +31,7 @@ namespace HoverExplorer
 
         private Point _dragStart, _formStart;
         private bool _moved, _hover, _dropHighlight;
-        private const int ShadowPad = 2;   // 自绘阴影宽度（右下偏移，跟着圆角走）
+        private int ShadowPad { get { return Dpi.S(2); } }   // 自绘阴影宽度（右下偏移，跟着圆角走）
 
         // 标签带配色：来自 CardPalettes（与面板主题 Config.Theme 无关，滚轮切换）
         private CardPalette _pal;
@@ -65,7 +65,7 @@ namespace HoverExplorer
 
             FormBorderStyle = FormBorderStyle.None;
             StartPosition = FormStartPosition.Manual;
-            Location = new Point(item.X, item.Y);
+            Location = new Point(Dpi.S(item.X), Dpi.S(item.Y));
             TopMost = true;
             ShowInTaskbar = false;
             AutoScaleMode = AutoScaleMode.None;   // 高度按像素固定，禁止 DPI/字体缩放
@@ -258,9 +258,12 @@ namespace HoverExplorer
             if (_nameFont != null) _nameFont.Dispose();
             if (_subFont != null) _subFont.Dispose();
             if (_badgeFont != null) _badgeFont.Dispose();
-            _nameFont = new Font(_pal.FontName, _pal.FontSize);
-            _subFont = new Font(_pal.FontName, _pal.FontSize - 1f);
-            _badgeFont = new Font(_pal.FontName, _pal.FontSize - 1f, FontStyle.Bold);
+            // 字体/字号是全局共同选项（Config），不随配色方案变化
+            string fontName = string.IsNullOrEmpty(Config.CardFontName) ? _pal.FontName : Config.CardFontName;
+            float fontSize = Config.CardFontSize > 0 ? Config.CardFontSize : _pal.FontSize;
+            _nameFont = new Font(fontName, fontSize);
+            _subFont = new Font(fontName, fontSize - 1f);
+            _badgeFont = new Font(fontName, fontSize - 1f, FontStyle.Bold);
             _fnLayout();
             _fnRender();
         }
@@ -272,25 +275,25 @@ namespace HoverExplorer
             int nameW, subW, extW;
             using (var g = CreateGraphics())
             {
-                nameW = Math.Min(TextRenderer.MeasureText(_name, _nameFont).Width + 2, 260);
-                subW = TextRenderer.MeasureText(_sub, _subFont).Width + 2;
-                extW = TextRenderer.MeasureText(_ext, _badgeFont, new Size(200, 20), TextFormatFlags.NoPadding).Width + 8;
+                nameW = Math.Min(TextRenderer.MeasureText(_name, _nameFont).Width + Dpi.S(2), Dpi.S(260));
+                subW = TextRenderer.MeasureText(_sub, _subFont).Width + Dpi.S(2);
+                extW = TextRenderer.MeasureText(_ext, _badgeFont, new Size(Dpi.S(200), Dpi.S(20)), TextFormatFlags.NoPadding).Width + Dpi.S(8);
             }
-            int x = _isToday ? 21 : 14;
-            int nameH = (int)Math.Ceiling(_nameFont.GetHeight()) + 2;
-            int badgeH = nameH + 2;
-            int subH = Math.Max(13, nameH - 2);
+            int x = _isToday ? Dpi.S(21) : Dpi.S(14);
+            int nameH = (int)Math.Ceiling(_nameFont.GetHeight()) + Dpi.S(2);
+            int badgeH = nameH + Dpi.S(2);
+            int subH = Math.Max(Dpi.S(13), nameH - Dpi.S(2));
             // 内容区域高度：上下各留 4px padding，至少 24px
-            int cardH = Math.Max(24, badgeH + 8);
+            int cardH = Math.Max(Dpi.S(24), badgeH + Dpi.S(8));
             _targetH = cardH + ShadowPad;
             Height = _targetH;
             int nameY = (cardH - nameH) / 2;
             int badgeY = (cardH - badgeH) / 2;
             int subY = (cardH - subH) / 2;
             _nameRect = new Rectangle(x, nameY, nameW, nameH);
-            _badgeRect = new Rectangle(x + nameW + 5, badgeY, extW, badgeH);
-            _subRect = new Rectangle(_badgeRect.Right + 5, subY, Math.Max(subW, 30), subH);
-            Width = _badgeRect.Right + 8 + ShadowPad;
+            _badgeRect = new Rectangle(x + nameW + Dpi.S(5), badgeY, extW, badgeH);
+            _subRect = new Rectangle(_badgeRect.Right + Dpi.S(5), subY, Math.Max(subW, Dpi.S(30)), subH);
+            Width = _badgeRect.Right + Dpi.S(8) + ShadowPad;
         }
 
         private static Color _fnLighten(Color c, float k)
@@ -320,9 +323,9 @@ namespace HoverExplorer
             // sub 放徽章右侧到卡片右缘的剩余空间，放不下就不显示
             if (on)
             {
-                int left = _badgeRect.Right + 5;
-                int right = Width - ShadowPad - 6;
-                if (right - left >= 24)
+                int left = _badgeRect.Right + Dpi.S(5);
+                int right = Width - ShadowPad - Dpi.S(6);
+                if (right - left >= Dpi.S(24))
                 {
                     _subRect = new Rectangle(left, _subRect.Y, right - left, _subRect.Height);
                     _subVisible = true;
@@ -392,21 +395,16 @@ namespace HoverExplorer
             // 「固定为卡片」按文本类型重建卡片（否则会把文本内容当文件路径处理）
             _textPreview.PinKind = "text";
             _textPreview.PinTitle = _item.Title;
+            // 保存按钮 / 关窗兜底都走同一个写回回调：直接改 PinnedItem 并落盘。
+            // 之前只靠 FormClosing 里的 _textDirty 分支，点击「保存」并不存在（按钮未显示），
+            // 且 Pinned 预览被解除引用时不触发 FormClosing → 文字丢失。
+            _textPreview.TextCardCommit = _fnCommitTextCardEdit;
             // 位置：卡片下方，工作区内钳制
             var wa = Screen.GetWorkingArea(new Rectangle(Location, Size));
             int px = Math.Min(Right + 4, wa.Right - w - 8);
             int py = Math.Min(Bottom + 6, wa.Bottom - h - 8);
             _textPreview.Location = new Point(Math.Max(px, wa.Left + 4), Math.Max(py, wa.Top + 4));
-            _textPreview.FormClosing += (s, e) =>
-            {
-                if (_textDirty)
-                {
-                    _item.Path = tb.Text;
-                    _textDirty = false;
-                    Config.Save();
-                    _fnRefreshTextCard();
-                }
-            };
+            _textPreview.FormClosing += (s, e) => { if (_textDirty) _fnCommitTextCardEdit(); };
             _textPreview.Show();
             // 轮询关闭（与文件预览的纯几何行为一致）：鼠标离开 卡片∪预览 400ms → 关，
             // FormClosing 里 dirty 写回内容（编辑中移开鼠标不丢字）。不看焦点——
@@ -427,12 +425,33 @@ namespace HoverExplorer
             Program.DebugLog("[pincard] text-preview open " + _item.Path.Length + " 字");
         }
 
+        // 文字卡片写回：保存按钮、关窗兜底、Pinned 预览解除引用统一走这里。
+        private void _fnCommitTextCardEdit() { _fnCommitTextCardEdit(null); }
+        // TextCardCommit(Action<string>) 回调入口；参数忽略，内容以编辑框当前文本为准。
+        private void _fnCommitTextCardEdit(string unused)
+        {
+            if (_textPreview == null || _textPreview.IsDisposed) return;
+            var rtb = _textPreview.GetTextCardTextBox();
+            if (rtb == null) return;
+            string text = rtb.Text;
+            if (string.Equals(_item.Path, text, StringComparison.Ordinal)) { _textDirty = false; return; }
+            _item.Path = text;
+            _textDirty = false;
+            Config.Save();
+            _fnRefreshTextCard();
+            Program.DebugLog("[pincard] text commit " + text.Length + " 字");
+        }
+
         private void _fnCloseTextPreview()
         {
             if (_textHoverTimer != null) { _textHoverTimer.Stop(); }
             if (_textPreview == null) return;
-            // 预览被用户拖住固定了：卡片关闭时保留预览窗口（解除引用即可，不 Dispose）
-            if (!_textPreview.IsDisposed && _textPreview.Pinned) { _textPreview = null; return; }
+            // 预览被用户拖住固定了：卡片关闭时保留预览窗口，但先把未保存的编辑写回再解除引用
+            if (!_textPreview.IsDisposed && _textPreview.Pinned)
+            {
+                if (_textDirty) _fnCommitTextCardEdit();
+                _textPreview = null; return;
+            }
             try { _textPreview.Close(); _textPreview.Dispose(); } catch { }
             _textPreview = null;
         }
@@ -618,7 +637,7 @@ namespace HoverExplorer
             }
         }
 
-        private int _targetH = 24 + ShadowPad;   // 卡片目标高度（SetBoundsCore 钳制用，_fnLayout 更新）
+        private int _targetH = 24 + 2;   // 卡片目标高度（SetBoundsCore 钳制用，_fnLayout 更新）；构造后立即被 _fnLayout 覆盖
 
         // 高度按 _targetH 钳制：AutoScale 在句柄创建/布局阶段会改写 bounds（实测 28→39），
         // 在 SetBoundsCore 统一钳制。不能用 MaximumSize=(0,H)：0 宽分量被当真实上限，
@@ -633,6 +652,12 @@ namespace HoverExplorer
         protected override void WndProc(ref Message m)
         {
             if (m.Msg == 0x21) { m.Result = (IntPtr)3; return; }
+            // 跨显示器/改缩放：卡片高度与内边距按新 DPI 重算后重绘
+            if (m.Msg == (int)Dpi.WM_DPICHANGED && Handle != IntPtr.Zero)
+            {
+                Dpi.SetFromWindow(Handle);
+                try { _fnLayout(); _fnRender(); } catch { }
+            }
             if (m.Msg == 0x84)   // WM_NCHITTEST：阴影区域点击穿透
             {
                 base.WndProc(ref m);

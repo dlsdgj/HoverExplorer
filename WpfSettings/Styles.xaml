@@ -60,6 +60,31 @@
         </Setter>
     </Style>
 
+    <!-- 顶栏分段按钮：无默认边框/底，由代码里 SetResourceReference 控制激活态 -->
+    <Style x:Key="SegmentButton" TargetType="Button">
+        <Setter Property="Height" Value="28"/>
+        <Setter Property="MinWidth" Value="34"/>
+        <Setter Property="Padding" Value="8,0"/>
+        <Setter Property="FontSize" Value="12.5"/>
+        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Foreground" Value="{DynamicResource SubTextBrush}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="b" CornerRadius="6" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="b" Property="Background" Value="{DynamicResource NavHoverBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
         <Setter Property="Foreground" Value="White"/>
         <Setter Property="Template">
@@ -140,12 +165,55 @@
     </Style>
 
     <!-- 键帽 -->
+    <!-- 快捷键键帽：浅灰底 + 细描边 + 轻投影 -->
     <Style x:Key="KeyCap" TargetType="Border">
         <Setter Property="Background" Value="{DynamicResource ChipBrush}"/>
-        <Setter Property="CornerRadius" Value="4"/>
-        <Setter Property="Padding" Value="10,4"/>
-        <Setter Property="MinWidth" Value="38"/>
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="5"/>
+        <Setter Property="Padding" Value="9,3"/>
+        <Setter Property="MinWidth" Value="30"/>
         <Setter Property="Margin" Value="3,0"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+        <Setter Property="Effect">
+            <Setter.Value><DropShadowEffect BlurRadius="3" ShadowDepth="1" Opacity="0.10" Color="#000000"/></Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- 键帽组外框：描边胶囊，点击重新录制 -->
+    <Style x:Key="KeyCapGroup" TargetType="Border">
+        <Setter Property="BorderBrush" Value="{DynamicResource LineBrush}"/>
+        <Setter Property="BorderThickness" Value="1"/>
+        <Setter Property="CornerRadius" Value="8"/>
+        <Setter Property="Padding" Value="3,3,1,3"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="VerticalAlignment" Value="Center"/>
+    </Style>
+
+    <!-- 键帽组内的清除按钮（×） -->
+    <Style x:Key="KeyCapClear" TargetType="Button">
+        <Setter Property="Width" Value="22"/>
+        <Setter Property="Height" Value="22"/>
+        <Setter Property="Margin" Value="4,0,3,0"/>
+        <Setter Property="Content" Value="✕"/>
+        <Setter Property="FontSize" Value="10"/>
+        <Setter Property="Foreground" Value="{DynamicResource SubTextBrush}"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bd" CornerRadius="4" Background="Transparent">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ChipHoverBrush}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
     </Style>
 
     <!-- 黄色提示条 -->
@@ -182,25 +250,28 @@
     <Style x:Key="NavItem" TargetType="RadioButton">
         <Setter Property="GroupName" Value="nav"/>
         <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
-        <Setter Property="FontWeight" Value="SemiBold"/>
+        <Setter Property="FontWeight" Value="Normal"/>
         <Setter Property="Cursor" Value="Hand"/>
-        <Setter Property="Padding" Value="20,0,0,0"/>
+        <Setter Property="Margin" Value="8,0,8,2"/>
         <Setter Property="Height" Value="34"/>
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="RadioButton">
-                    <Grid x:Name="g" Background="{DynamicResource NavBrush}">
-                        <Rectangle x:Name="bar" Width="3" HorizontalAlignment="Left" Fill="{DynamicResource AccentBrush}" Visibility="Collapsed"/>
-                        <ContentPresenter VerticalAlignment="Center" Margin="{TemplateBinding Padding}"/>
+                    <Grid x:Name="g">
+                        <Border x:Name="bg" CornerRadius="6" Background="Transparent"/>
+                        <Rectangle x:Name="bar" Width="3" Height="16" RadiusX="1.5" RadiusY="1.5"
+                                   HorizontalAlignment="Left" Margin="0,0,0,0" Fill="{DynamicResource AccentBrush}" Visibility="Collapsed"/>
+                        <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Left" Margin="18,0,6,0"/>
                     </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="g" Property="Background" Value="{DynamicResource NavHoverBrush}"/>
+                            <Setter TargetName="bg" Property="Background" Value="{DynamicResource NavHoverBrush}"/>
                         </Trigger>
                         <Trigger Property="IsChecked" Value="True">
-                            <Setter TargetName="g" Property="Background" Value="{DynamicResource BgBrush}"/>
+                            <Setter TargetName="bg" Property="Background" Value="{DynamicResource ChipOnBrush}"/>
                             <Setter TargetName="bar" Property="Visibility" Value="Visible"/>
                             <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                            <Setter Property="FontWeight" Value="SemiBold"/>
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -209,8 +280,7 @@
     </Style>
 
     <Style x:Key="NavSub" TargetType="RadioButton" BasedOn="{StaticResource NavItem}">
-        <Setter Property="Padding" Value="38,0,0,0"/>
-        <Setter Property="FontWeight" Value="Normal"/>
+        <Setter Property="Margin" Value="18,0,8,2"/>
     </Style>
 
     <!-- 下拉框 -->
@@ -308,7 +378,6 @@
                     </Grid>
                     <ControlTemplate.Triggers>
                         <Trigger Property="c:Cfg.Subordinate" Value="True">
-                            <Setter TargetName="accent" Property="Visibility" Value="Visible"/>
                             <Setter Property="Background" Value="{DynamicResource SubordinateTint}"/>
                         </Trigger>
                         <Trigger Property="Description" Value="">
@@ -333,14 +402,71 @@
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="28"/>
                                 <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="28"/>
                             </Grid.ColumnDefinitions>
                             <Button x:Name="PART_Minus" Content="−" Style="{DynamicResource FlatButton}"/>
-                            <TextBlock Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                       Text="{Binding DisplayText, RelativeSource={RelativeSource TemplatedParent}}"/>
-                            <Button x:Name="PART_Plus" Grid.Column="2" Content="+" Style="{DynamicResource FlatButton}"/>
+                            <TextBox x:Name="PART_Input" Grid.Column="1" HorizontalContentAlignment="Center"
+                                     VerticalContentAlignment="Center" BorderThickness="0"
+                                     Background="Transparent" Foreground="{DynamicResource TextBrush}"
+                                     CaretBrush="{DynamicResource TextBrush}"/>
+                            <!-- 单位后缀（px/%），点击切换；未设 UnitKey 时折叠 -->
+                            <Button x:Name="PART_Unit" Grid.Column="2" Style="{DynamicResource FlatButton}"
+                                    MinWidth="0" Padding="6,0" Height="26" FontSize="11"
+                                    Content="{Binding UnitText, RelativeSource={RelativeSource TemplatedParent}}"
+                                    Foreground="{DynamicResource SubTextBrush}" Cursor="Hand"/>
+                            <Button x:Name="PART_Plus" Grid.Column="3" Content="+" Style="{DynamicResource FlatButton}"/>
                         </Grid>
                     </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- 分段按钮：无边框、无悬停变色，激活态由外层白底 + 阴影表达（原型 .seg button.on） -->
+    <Style x:Key="SegBtn" TargetType="Button">
+        <Setter Property="Background" Value="Transparent"/>
+        <Setter Property="Foreground" Value="{DynamicResource TextBrush}"/>
+        <Setter Property="Padding" Value="26,4"/>
+        <Setter Property="Height" Value="26"/>
+        <Setter Property="MinWidth" Value="0"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- 内容类型 chip：可多选的胶囊开关（原型风格） -->
+    <Style x:Key="Chip" TargetType="ToggleButton">
+        <Setter Property="Margin" Value="0,0,8,8"/>
+        <Setter Property="Padding" Value="14,4"/>
+        <Setter Property="Cursor" Value="Hand"/>
+        <Setter Property="FontSize" Value="12"/>
+        <Setter Property="Foreground" Value="{DynamicResource SubTextBrush}"/>
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                    <Border x:Name="Bd" CornerRadius="6" Padding="{TemplateBinding Padding}"
+                            Background="{DynamicResource ChipBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="1">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ChipHoverBrush}"/>
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource ChipOnBrush}"/>
+                            <Setter TargetName="Bd" Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+                            <Setter Property="Foreground" Value="{DynamicResource AccentBrush}"/>
+                            <Setter Property="FontWeight" Value="SemiBold"/>
+                        </Trigger>
+                    </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
@@ -358,13 +484,27 @@
                             <ColumnDefinition Width="110"/>
                             <ColumnDefinition Width="34"/>
                             <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="{Binding Label, RelativeSource={RelativeSource TemplatedParent}}" VerticalAlignment="Center"/>
                         <Border Grid.Column="1" Width="22" Height="22" HorizontalAlignment="Left" CornerRadius="3"
                                 BorderBrush="{DynamicResource LineBrush}" BorderThickness="1"
                                 Background="{Binding Brush, RelativeSource={RelativeSource TemplatedParent}}"/>
-                        <TextBox x:Name="PART_Text" Grid.Column="2" Width="190" HorizontalAlignment="Left" FontFamily="Consolas"
+                        <TextBox x:Name="PART_Text" Grid.Column="2" MinWidth="120" Margin="0,0,8,0" HorizontalAlignment="Stretch"
+                                 FontFamily="Consolas"
                                  Text="{Binding Text, RelativeSource={RelativeSource TemplatedParent}, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"/>
+                        <!-- 屏幕取色：十字准星图标（不依赖字体字形，避免显示成文字/缺字）
+                             用 FlatButton 并清掉全局按钮的 MinWidth=64，否则会被撑宽/挤出右边缘 -->
+                        <Button x:Name="PART_Pick" Grid.Column="3" Width="26" Height="22" MinWidth="0" Margin="0,0,6,0"
+                                Padding="0" Style="{DynamicResource FlatButton}"
+                                HorizontalAlignment="Right" VerticalAlignment="Center"
+                                ToolTip="屏幕取色（点击进入，再次点击选中，WASD 微调）">
+                            <Grid Width="14" Height="14">
+                                <Rectangle Width="1.5" Height="14" RadiusX="0.75" RadiusY="0.75" Fill="{DynamicResource TextBrush}" HorizontalAlignment="Center"/>
+                                <Rectangle Width="14" Height="1.5" RadiusX="0.75" RadiusY="0.75" Fill="{DynamicResource TextBrush}" VerticalAlignment="Center"/>
+                                <Ellipse Width="4" Height="4" Stroke="{DynamicResource TextBrush}" StrokeThickness="1"/>
+                            </Grid>
+                        </Button>
                     </Grid>
                 </ControlTemplate>
             </Setter.Value>
